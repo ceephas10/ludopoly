@@ -48,6 +48,7 @@ class BoardScreen extends StatefulWidget {
 class _BoardScreenState extends State<BoardScreen> {
   GameState _game = GameState.initial();
   bool _showRing = false;
+  bool _showGrid = false;
 
   void _resetState() {
     setState(() => _game = GameState.initial());
@@ -76,6 +77,7 @@ class _BoardScreenState extends State<BoardScreen> {
                     players: BoardScreen.players,
                     game: _game,
                     showRing: _showRing,
+                    showGrid: _showGrid,
                   ),
                 ),
                 SizedBox(
@@ -84,6 +86,8 @@ class _BoardScreenState extends State<BoardScreen> {
                   child: _ControlPanel(
                     showRing: _showRing,
                     onToggleRing: (v) => setState(() => _showRing = v),
+                    showGrid: _showGrid,
+                    onToggleGrid: (v) => setState(() => _showGrid = v),
                     onReset: _resetState,
                   ),
                 ),
@@ -100,11 +104,15 @@ class _BoardScreenState extends State<BoardScreen> {
 class _ControlPanel extends StatelessWidget {
   final bool showRing;
   final ValueChanged<bool> onToggleRing;
+  final bool showGrid;
+  final ValueChanged<bool> onToggleGrid;
   final VoidCallback onReset;
 
   const _ControlPanel({
     required this.showRing,
     required this.onToggleRing,
+    required this.showGrid,
+    required this.onToggleGrid,
     required this.onReset,
   });
 
@@ -135,6 +143,18 @@ class _ControlPanel extends StatelessWidget {
             ),
             value: showRing,
             onChanged: onToggleRing,
+            activeThumbColor: Colors.amber,
+            contentPadding: EdgeInsets.zero,
+          ),
+          SwitchListTile(
+            title: const Text('Show grid 15x15',
+                style: TextStyle(color: Colors.white)),
+            subtitle: const Text(
+              'Numbered overlay of every cell (0..224)',
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+            value: showGrid,
+            onChanged: onToggleGrid,
             activeThumbColor: Colors.amber,
             contentPadding: EdgeInsets.zero,
           ),
@@ -169,11 +189,13 @@ class BoardView extends StatelessWidget {
   final List<Player> players;
   final GameState game;
   final bool showRing;
+  final bool showGrid;
   const BoardView({
     super.key,
     required this.players,
     required this.game,
     this.showRing = false,
+    this.showGrid = false,
   });
 
   // Top-left grid cell of each colored base (the board is a 15x15 grid).
@@ -286,6 +308,14 @@ class BoardView extends StatelessWidget {
                   child: CustomPaint(painter: _RingDebugPainter(cell: cell)),
                 ),
               ),
+
+            // Debug overlay: 15x15 grid with cell numbers (0..224, row-major).
+            if (showGrid)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(painter: _GridDebugPainter(cell: cell)),
+                ),
+              ),
           ],
         );
       },
@@ -340,6 +370,55 @@ class _RingDebugPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _RingDebugPainter old) => old.cell != cell;
+}
+
+/// Paints a 15x15 grid above the board with each cell's index (row-major,
+/// 0..224). Used as a coordinate ruler when designing the board geometry.
+class _GridDebugPainter extends CustomPainter {
+  final double cell;
+  _GridDebugPainter({required this.cell});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final line = Paint()
+      ..color = const Color(0xAAFF00FF)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    final side = cell * 15.0;
+    for (int i = 0; i <= 15; i++) {
+      final p = i * cell;
+      canvas.drawLine(Offset(p, 0), Offset(p, side), line);
+      canvas.drawLine(Offset(0, p), Offset(side, p), line);
+    }
+    final fontSize = cell * 0.28;
+    for (int r = 0; r < 15; r++) {
+      for (int c = 0; c < 15; c++) {
+        final idx = r * 15 + c;
+        final tp = TextPainter(
+          text: TextSpan(
+            text: '$idx',
+            style: TextStyle(
+              color: Colors.black,
+              fontSize: fontSize,
+              fontWeight: FontWeight.w700,
+              backgroundColor: const Color(0xCCFFFFFF),
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(
+          canvas,
+          Offset(
+            c * cell + (cell - tp.width) / 2,
+            r * cell + (cell - tp.height) / 2,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _GridDebugPainter old) => old.cell != cell;
 }
 
 class _PlayerLabel extends StatelessWidget {
