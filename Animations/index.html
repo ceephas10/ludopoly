@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LudoPoly Token</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+    <style>
+      /* --- PHYSICS ANIMATIONS --- */
+
+      /* BREATHING (IDLE) - Continuous */
+      @keyframes breathe {
+        0%, 100% { transform: scale(1, 1) translateY(0); }
+        50% { transform: scale(1.03, 0.97) translateY(1px); }
+      }
+
+      /* TERROR: Rapid shivering, one-shot duration */
+      @keyframes terror-shiver {
+        0%, 100% { transform: translate(0, 0) rotate(0deg); }
+        10%, 30%, 50%, 70%, 90% { transform: translate(-2px, -1px) rotate(-1deg); }
+        20%, 40%, 60%, 80% { transform: translate(2px, 1px) rotate(1deg); }
+      }
+
+      /* LAUGH: Energetic belly bounce */
+      @keyframes laugh-belly {
+        0%, 100% { transform: translateY(0) scale(1, 1) rotate(0deg); }
+        25% { transform: translateY(10px) scale(1.2, 0.8) rotate(-5deg); }
+        75% { transform: translateY(-5px) scale(0.9, 1.1) rotate(5deg); }
+      }
+
+      /* SADNESS: Deep slump */
+      @keyframes sadness-slump {
+        0%, 100% { transform: translateY(0) scale(1, 1); }
+        50% { transform: translateY(15px) scale(1.1, 0.9); }
+      }
+
+      /* CRY: Sobbing heave */
+      @keyframes cry-sobbing {
+        0%, 100% { transform: translateY(0) scale(1, 1); }
+        20%, 60% { transform: translateY(12px) scale(1.15, 0.85); }
+        40%, 80% { transform: translateY(4px) scale(0.95, 1.05); }
+      }
+
+      /* PAIN: Violent impact and recoil */
+      @keyframes pain-impact {
+        0% { transform: translateY(0) scale(1, 1); }
+        10% { transform: translateY(40px) scale(1.7, 0.3); } /* Squash */
+        25% { transform: translateY(-30px) scale(0.6, 1.4); } /* Recoil Stretch */
+        45% { transform: translateY(15px) scale(1.2, 0.8); }
+        70% { transform: translateY(-5px) scale(0.9, 1.1); }
+        100% { transform: translateY(0) scale(1, 1); }
+      }
+
+      /* JOY: High celebration bounce */
+      @keyframes joy-celebrate {
+        0% { transform: translateY(0) scale(1, 1); }
+        20% { transform: translateY(15px) scale(1.3, 0.7); }
+        50% { transform: translateY(-70px) scale(0.8, 1.2) rotate(15deg); }
+        80% { transform: translateY(10px) scale(1.2, 0.8) rotate(-5deg); }
+        100% { transform: translateY(0) scale(1, 1); }
+      }
+
+      /* PUZZLED: Pronounced side-to-side balancing */
+      @keyframes puzzled-balance {
+        0% { transform: rotate(0deg) translateX(0); }
+        25% { transform: rotate(-15deg) translateX(-8px); }
+        50% { transform: rotate(15deg) translateX(8px); }
+        75% { transform: rotate(-8deg) translateX(-4px); }
+        100% { transform: rotate(0deg) translateX(0); }
+      }
+
+      /* JUMP RIGHT (Ampleur divisée par 2) */
+      @keyframes jump-right-arc {
+        0% { transform: translate(0, 0) scale(1, 1); }
+        20% { transform: translate(0, 5px) scale(1.1, 0.9); }
+        50% { transform: translate(1.5rem, -30px) scale(0.9, 1.1); }
+        85% { transform: translate(3rem, 5px) scale(1.1, 0.9); }
+        100% { transform: translate(3rem, 0) scale(1, 1); }
+      }
+
+      /* JUMP LEFT (Ampleur divisée par 2) */
+      @keyframes jump-left-arc {
+        0% { transform: translate(0, 0) scale(1, 1); }
+        20% { transform: translate(0, 5px) scale(1.1, 0.9); }
+        50% { transform: translate(-1.5rem, -30px) scale(0.9, 1.1); }
+        85% { transform: translate(-3rem, 5px) scale(1.1, 0.9); }
+        100% { transform: translate(-3rem, 0) scale(1, 1); }
+      }
+
+      /* JUMP UP (Ampleur divisée par 2) */
+      @keyframes jump-up-arc {
+        0% { transform: translate(0, 0) scale(1, 1); }
+        20% { transform: translate(0, 5px) scale(1.1, 0.9); }
+        50% { transform: translate(0, -4.5rem) scale(0.9, 1.1); }
+        85% { transform: translate(0, -2.75rem) scale(1.1, 0.9); }
+        100% { transform: translate(0, -3rem) scale(1, 1); }
+      }
+
+      /* JUMP DOWN (Ampleur divisée par 2) */
+      @keyframes jump-down-arc {
+        0% { transform: translate(0, 0) scale(1, 1); }
+        20% { transform: translate(0, -5px) scale(0.9, 1.1); }
+        50% { transform: translate(0, 1.5rem) scale(1.05, 0.95); }
+        85% { transform: translate(0, 3.25rem) scale(1.15, 0.85); }
+        100% { transform: translate(0, 3rem) scale(1, 1); }
+      }
+
+      /* SLIDE ANIMATIONS */
+      @keyframes slide-right {
+        0% { transform: translate(0, 0) skewX(0deg); }
+        20% { transform: translate(0.5rem, 0) skewX(-10deg) scale(1.05, 0.95); }
+        80% { transform: translate(3.5rem, 0) skewX(5deg) scale(1, 1); }
+        100% { transform: translate(4rem, 0) skewX(0deg); }
+      }
+
+      @keyframes slide-left {
+        0% { transform: translate(0, 0) skewX(0deg); }
+        20% { transform: translate(-0.5rem, 0) skewX(10deg) scale(1.05, 0.95); }
+        80% { transform: translate(-3.5rem, 0) skewX(-5deg) scale(1, 1); }
+        100% { transform: translate(-4rem, 0) skewX(0deg); }
+      }
+
+      @keyframes slide-up {
+        0% { transform: translate(0, 0) scale(1, 1); }
+        20% { transform: translate(0, -0.5rem) scale(0.95, 1.05); }
+        80% { transform: translate(0, -3.5rem) scale(1, 1); }
+        100% { transform: translate(0, -4rem) scale(1, 1); }
+      }
+
+      @keyframes slide-down {
+        0% { transform: translate(0, 0) scale(1, 1); }
+        20% { transform: translate(0, 0.5rem) scale(1.05, 0.95); }
+        80% { transform: translate(0, 3.5rem) scale(1, 1); }
+        100% { transform: translate(0, 4rem) scale(1, 1); }
+      }
+
+      /* BLINK ANIMATION */
+      @keyframes blink-eye {
+        0%, 45%, 55%, 100% { transform: scaleY(1); }
+        50% { transform: scaleY(0.1); }
+      }
+
+      /* BATMAN: Moody brooding */
+      @keyframes batman-brood {
+         0%, 100% { transform: scale(1); filter: brightness(1); }
+         50% { transform: scale(1.02); filter: brightness(0.85); }
+      }
+
+      /* SPHERE PULSE: Dilate and contract by 20% */
+      @keyframes sphere-pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.2); }
+      }
+
+      /* SLEEPER ZZZZ: snake undulation + 3D zoom toward viewer */
+      @keyframes zzz-snake-3d {
+        0%   { transform: translate(0px,  4px)  scale(0.4); opacity: 0; }
+        15%  { transform: translate(3px,  0px)  scale(0.7); opacity: 0.9; }
+        35%  { transform: translate(-3px, -6px) scale(1.0); opacity: 1; }
+        55%  { transform: translate(3px,  -12px) scale(1.4); opacity: 1; }
+        75%  { transform: translate(-3px, -18px) scale(1.8); opacity: 0.8; }
+        100% { transform: translate(0px,  -26px) scale(2.4); opacity: 0; }
+      }
+
+      .animate-breathe { animation: breathe 3s infinite ease-in-out; }
+      .animate-terror { animation: terror-shiver 1s 1 linear forwards; }
+      .animate-laugh { animation: laugh-belly 0.6s 2 ease-in-out forwards; }
+      .animate-sadness { animation: sadness-slump 3s 1 ease-in-out forwards; }
+      .animate-cry { animation: cry-sobbing 2s 1 ease-in-out forwards; }
+      .animate-pain { animation: pain-impact 0.8s 1 cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+      .animate-joy { animation: joy-celebrate 1.2s 1 cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+      .animate-puzzled { animation: puzzled-balance 2s 1 ease-in-out forwards; }
+      .animate-jump-right { animation: jump-right-arc 0.8s 1 ease-out forwards; }
+      .animate-jump-left { animation: jump-left-arc 0.8s 1 ease-out forwards; }
+      .animate-jump-up { animation: jump-up-arc 0.8s 1 ease-out forwards; }
+      .animate-jump-down { animation: jump-down-arc 0.8s 1 ease-out forwards; }
+      
+      .animate-slide-right { animation: slide-right 0.6s 1 cubic-bezier(0.45, 0.05, 0.55, 0.95) forwards; }
+      .animate-slide-left { animation: slide-left 0.6s 1 cubic-bezier(0.45, 0.05, 0.55, 0.95) forwards; }
+      .animate-slide-up { animation: slide-up 0.6s 1 cubic-bezier(0.45, 0.05, 0.55, 0.95) forwards; }
+      .animate-slide-down { animation: slide-down 0.6s 1 cubic-bezier(0.45, 0.05, 0.55, 0.95) forwards; }
+
+      .animate-batman { animation: batman-brood 4s 1 ease-in-out forwards; }
+      .animate-blink { animation: blink-eye 4s infinite; transform-origin: center; }
+      .animate-zzz-letter {
+        animation: zzz-snake-3d 2s infinite ease-in-out;
+        transform-origin: center;
+        transform-box: fill-box;
+      }
+      
+      .animate-sphere-pulse { 
+        animation: sphere-pulse 3s infinite ease-in-out; 
+        transform-origin: 50px 75px; /* Center of the sphere adjusted */
+      }
+
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.555.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
