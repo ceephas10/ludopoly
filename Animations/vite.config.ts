@@ -22,7 +22,7 @@ const tokenStockSavePlugin = (): Plugin => ({
         res.end('Bad Request');
         return;
       }
-      const targetDir = path.resolve(__dirname, 'TokenStock', sub);
+      const targetDir = path.resolve(__dirname, 'AnimStock', 'Tokens', sub);
       fs.mkdirSync(targetDir, { recursive: true });
       const targetPath = path.join(targetDir, filename);
 

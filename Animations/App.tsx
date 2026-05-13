@@ -1,5 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { TokenCharacter } from './components/TokenCharacter';
+
+// Auto-load all 36 dice images (6 values × 6 colors)
+const DICE_IMAGES = import.meta.glob('./AnimStock/Dices/Dice_*.png', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
+const DICE_COLORS = ['blue', 'red', 'green', 'yellow', 'orange', 'purple'] as const;
+type DiceColor = typeof DICE_COLORS[number];
+type DiceValue = 1 | 2 | 3 | 4 | 5 | 6;
+const getDiceSrc = (value: DiceValue, color: DiceColor): string => {
+  const path = `./AnimStock/Dices/Dice_${value}_${color}.png`;
+  return DICE_IMAGES[path];
+};
 import { Emotion, CharacterType } from './types';
 import { 
   Activity, MapPin, Smile, Frown, Zap, AlertTriangle, PlayCircle, 
@@ -34,6 +44,51 @@ export default function App() {
   const [lastStaticEmotion, setLastStaticEmotion] = useState<Emotion>(Emotion.IDLE);
   const [characterType, setCharacterType] = useState<CharacterType>('normal');
   const [animationKey, setAnimationKey] = useState<number>(0);
+  const [activeTab, setActiveTab] = useState<'tokens' | 'dice'>('tokens');
+  const [isLooping, setIsLooping] = useState<boolean>(false);
+  const [diceState, setDiceState] = useState<'idle' | 'rolling'>('idle');
+  const [diceRollKey, setDiceRollKey] = useState<number>(0);
+  const [diceValue, setDiceValue] = useState<DiceValue>(1);
+  const [diceColor, setDiceColor] = useState<DiceColor>('blue');
+  const [diceDisplayValue, setDiceDisplayValue] = useState<DiceValue>(1);
+  const diceFlipTimerRef = useRef<number | null>(null);
+  const diceEndTimerRef = useRef<number | null>(null);
+  const diceRollingRef = useRef<boolean>(false);
+
+  const clearDiceTimers = () => {
+    if (diceFlipTimerRef.current !== null) {
+      window.clearInterval(diceFlipTimerRef.current);
+      diceFlipTimerRef.current = null;
+    }
+    if (diceEndTimerRef.current !== null) {
+      window.clearTimeout(diceEndTimerRef.current);
+      diceEndTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return clearDiceTimers;
+  }, []);
+
+  const rollDice = () => {
+    // Prevent re-entry even if button click slips through during state lag
+    if (diceRollingRef.current) return;
+    diceRollingRef.current = true;
+    clearDiceTimers();
+    setDiceState('rolling');
+    setDiceRollKey(k => k + 1);
+    diceFlipTimerRef.current = window.setInterval(() => {
+      setDiceDisplayValue((1 + Math.floor(Math.random() * 6)) as DiceValue);
+    }, 60);
+    diceEndTimerRef.current = window.setTimeout(() => {
+      clearDiceTimers();
+      const result = (1 + Math.floor(Math.random() * 6)) as DiceValue;
+      setDiceValue(result);
+      setDiceDisplayValue(result);
+      setDiceState('idle');
+      diceRollingRef.current = false;
+    }, 500);
+  };
   const [isPlayingDemo, setIsPlayingDemo] = useState<boolean>(false);
   const [isStudioMode, setIsStudioMode] = useState<boolean>(false);
   const [studioBg, setStudioBg] = useState<string>('bg-[#00b140]');
@@ -193,7 +248,7 @@ export default function App() {
     setIsPlayingDemo(true);
     const sequence = [
       Emotion.JOY, Emotion.LAUGH, Emotion.SADNESS, Emotion.CRY, 
-      Emotion.PAIN, Emotion.TERROR, Emotion.PUZZLED, Emotion.JUMP_UP, Emotion.JUMP_DOWN, Emotion.JUMP_RIGHT, Emotion.JUMP_LEFT,
+      Emotion.PAIN, Emotion.TERROR, Emotion.PUZZLED, Emotion.IMPATIENT, Emotion.JUMP_UP, Emotion.JUMP_DOWN, Emotion.JUMP_RIGHT, Emotion.JUMP_LEFT,
       Emotion.SLIDE_UP, Emotion.SLIDE_DOWN, Emotion.SLIDE_LEFT, Emotion.SLIDE_RIGHT
     ];
     for (const emotion of sequence) {
@@ -390,8 +445,29 @@ export default function App() {
           </button>
         </div>
       </header>
-      <main className="flex-1 w-full max-w-5xl p-6 flex flex-col gap-8">
-        
+      <main className="flex-1 w-full max-w-5xl p-6 flex flex-col gap-6">
+
+        <div className="flex gap-2 border-b border-slate-200">
+          {([
+            { id: 'tokens' as const, label: 'Jetons' },
+            { id: 'dice' as const, label: 'Dés' },
+          ]).map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-5 py-2.5 text-sm font-bold rounded-t-lg transition-colors ${
+                activeTab === tab.id
+                  ? 'bg-white text-blue-600 border border-slate-200 border-b-white -mb-px'
+                  : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === 'tokens' && (
+        <>
         <section className={`flex-1 flex items-center justify-center min-h-[400px] rounded-3xl transition-all duration-500 relative overflow-hidden ${isStudioMode ? '' : MAIN_BG_OPTIONS[mainBg] + (mainBg === 'vert' ? ' border-8 border-white/10 shadow-inner' : '')}`}>
           {!isStudioMode && mainBg === 'vert' && (
             <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, white 1px, transparent 0)', backgroundSize: '40px 40px' }} />
@@ -434,14 +510,15 @@ export default function App() {
               <div className={`relative w-[400px] h-[400px] overflow-hidden shadow-2xl ${studioBg}`}>
                   <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: `linear-gradient(to right, rgba(128,128,128,0.2) 1px, transparent 1px), linear-gradient(to bottom, rgba(128,128,128,0.2) 1px, transparent 1px)`, backgroundSize: '20px 20px' }} />
                   <div id="studio-sprite" className="absolute left-1/2 top-[360px] -translate-x-1/2 -translate-y-[100%] scale-[1.5] origin-bottom">
-                     <TokenCharacter 
-                        emotion={currentEmotion} 
+                     <TokenCharacter
+                        emotion={currentEmotion}
                         characterType={characterType}
                         visualEmotion={isActionEmotion(currentEmotion) ? lastStaticEmotion : currentEmotion}
-                        isTransitioning={isTransitioning} 
-                        color={spriteColor} 
+                        isTransitioning={isTransitioning}
+                        color={spriteColor}
                         showBoundingBox={true}
                         animationKey={animationKey}
+                        isLooping={isLooping}
                      />
                   </div>
               </div>
@@ -450,13 +527,14 @@ export default function App() {
             <div className="relative group">
               <div className={`absolute top-3/4 left-1/2 -translate-x-1/2 w-64 h-16 rounded-[100%] blur-2xl -z-10 ${mainBg === 'vert' ? 'bg-black/30' : 'bg-black/10'}`}></div>
               <div className="scale-150 transition-transform duration-500">
-                <TokenCharacter 
-                  emotion={currentEmotion} 
+                <TokenCharacter
+                  emotion={currentEmotion}
                   characterType={characterType}
                   visualEmotion={isActionEmotion(currentEmotion) ? lastStaticEmotion : currentEmotion}
-                  isTransitioning={isTransitioning} 
+                  isTransitioning={isTransitioning}
                   color={spriteColor}
                   animationKey={animationKey}
+                  isLooping={isLooping}
                 />
               </div>
             </div>
@@ -465,39 +543,58 @@ export default function App() {
 
         <section className="bg-white rounded-2xl p-6 shadow-xl border border-slate-100">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <Activity size={16} /> Émotions
-            </h2>
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-lg border border-slate-200">
-                <User size={16} className="text-slate-400 ml-2" />
-                <select value={characterType} onChange={(e) => handleCharacterChange(e.target.value as CharacterType)} className="bg-transparent text-sm font-semibold text-slate-700 focus:outline-none cursor-pointer">
-                  <option value="normal">Normal</option>
-                  <option value="batman">Batman</option>
-                  <option value="invincible">Invincible</option>
-                  <option value="injured">Blessé</option>
-                  <option value="sleeper">Dormeur</option>
-                </select>
+            <div className="flex items-center gap-3">
+              <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Activity size={16} /> Émotions
+              </h2>
+              <button
+                onClick={() => setIsLooping(l => !l)}
+                className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full transition-all ${isLooping ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                title="Rejouer en boucle l'animation sélectionnée"
+              >
+                <RotateCcw size={14} className={isLooping ? 'animate-spin' : ''} style={isLooping ? { animationDuration: '2s' } : undefined} />
+                Loop
+              </button>
+            </div>
+            <div className="flex flex-wrap items-end gap-4">
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold ml-1">Personnage</span>
+                <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-lg border border-slate-200">
+                  <User size={16} className="text-slate-400 ml-2" />
+                  <select value={characterType} onChange={(e) => handleCharacterChange(e.target.value as CharacterType)} className="bg-transparent text-sm font-semibold text-slate-700 focus:outline-none cursor-pointer">
+                    <option value="normal">Standard</option>
+                    <option value="batman">Batman</option>
+                    <option value="invincible">Invincible</option>
+                    <option value="injured">Blessé</option>
+                    <option value="sleeper">Dormeur</option>
+                  </select>
+                </div>
               </div>
-              <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-lg border border-slate-200">
-                <Palette size={16} className="text-slate-400 ml-2" />
-                <select value={spriteColor} onChange={(e) => setSpriteColor(e.target.value)} className="bg-transparent text-sm font-semibold text-slate-700 focus:outline-none cursor-pointer">
-                  <option value="blue">Bleu</option>
-                  <option value="red">Rouge vif</option>
-                  <option value="green">Vert</option>
-                  <option value="yellow">Jaune</option>
-                  <option value="orange">Orange</option>
-                  <option value="purple">Violet</option>
-                </select>
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold ml-1">Couleur</span>
+                <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-lg border border-slate-200">
+                  <Palette size={16} className="text-slate-400 ml-2" />
+                  <select value={spriteColor} onChange={(e) => setSpriteColor(e.target.value)} className="bg-transparent text-sm font-semibold text-slate-700 focus:outline-none cursor-pointer">
+                    <option value="blue">Bleu</option>
+                    <option value="red">Rouge vif</option>
+                    <option value="green">Vert</option>
+                    <option value="yellow">Jaune</option>
+                    <option value="orange">Orange</option>
+                    <option value="purple">Violet</option>
+                  </select>
+                </div>
               </div>
-              <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-lg border border-slate-200">
-                <ImageIcon size={16} className="text-slate-400 ml-2" />
-                <select value={mainBg} onChange={(e) => setMainBg(e.target.value)} className="bg-transparent text-sm font-semibold text-slate-700 focus:outline-none cursor-pointer">
-                  <option value="vert">Vert Ludo</option>
-                  <option value="blanc">Blanc</option>
-                  <option value="noir">Noir</option>
-                  <option value="transparent">Transparent</option>
-                </select>
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold ml-1">Fond</span>
+                <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-lg border border-slate-200">
+                  <ImageIcon size={16} className="text-slate-400 ml-2" />
+                  <select value={mainBg} onChange={(e) => setMainBg(e.target.value)} className="bg-transparent text-sm font-semibold text-slate-700 focus:outline-none cursor-pointer">
+                    <option value="vert">Vert Ludo</option>
+                    <option value="blanc">Blanc</option>
+                    <option value="noir">Noir</option>
+                    <option value="transparent">Transparent</option>
+                  </select>
+                </div>
               </div>
               <button onClick={playDemo} disabled={isPlayingDemo || characterType === 'sleeper'} className={`flex items-center gap-2 text-sm font-semibold px-3 py-1.5 rounded-full transition-all ${isPlayingDemo || characterType === 'sleeper' ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}>
                 {isPlayingDemo ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
@@ -508,7 +605,7 @@ export default function App() {
           
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
             {[
-              { id: Emotion.IDLE, label: 'Idle', icon: Activity, color: 'bg-slate-100 text-slate-600 hover:bg-slate-200' },
+              { id: Emotion.IDLE, label: 'Repos', icon: Activity, color: 'bg-slate-100 text-slate-600 hover:bg-slate-200' },
               { id: Emotion.JOY, label: 'Joie', icon: Smile, color: 'bg-green-100 text-green-600 hover:bg-green-200' },
               { id: Emotion.LAUGH, label: 'Rire', icon: Smile, color: 'bg-yellow-100 text-yellow-600 hover:bg-yellow-200' },
               { id: Emotion.SADNESS, label: 'Tristesse', icon: Meh, color: 'bg-indigo-100 text-indigo-600 hover:bg-indigo-200' },
@@ -516,6 +613,7 @@ export default function App() {
               { id: Emotion.PAIN, label: 'Douleur', icon: Zap, color: 'bg-red-100 text-red-600 hover:bg-red-200' },
               { id: Emotion.TERROR, label: 'Terreur', icon: AlertTriangle, color: 'bg-orange-100 text-orange-600 hover:bg-orange-200' },
               { id: Emotion.PUZZLED, label: 'Perplexe', icon: HelpCircle, color: 'bg-teal-100 text-teal-600 hover:bg-teal-200' },
+              { id: Emotion.IMPATIENT, label: 'Moi !', icon: User, color: 'bg-pink-100 text-pink-600 hover:bg-pink-200' },
             ].map((btn) => {
               const blocked = characterType === 'sleeper' && btn.id !== Emotion.IDLE;
               return (
@@ -606,6 +704,85 @@ export default function App() {
             </div>
           </div>
         </section>
+        </>
+        )}
+
+        {activeTab === 'dice' && (
+          <>
+            <section className={`flex-1 flex items-center justify-center min-h-[400px] rounded-3xl transition-all duration-500 relative overflow-hidden ${MAIN_BG_OPTIONS[mainBg]}${mainBg === 'vert' ? ' border-8 border-white/10 shadow-inner' : ''}`}>
+              {mainBg === 'vert' && (
+                <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, white 1px, transparent 0)', backgroundSize: '40px 40px' }} />
+              )}
+              <div className="relative group">
+                <div className={`absolute top-3/4 left-1/2 -translate-x-1/2 w-48 h-12 rounded-[100%] blur-2xl -z-10 ${mainBg === 'vert' ? 'bg-black/30' : 'bg-black/10'}`}></div>
+                <img
+                  key={diceRollKey}
+                  src={getDiceSrc(diceDisplayValue, diceColor)}
+                  alt={`Dé ${diceDisplayValue} ${diceColor}`}
+                  className={`w-32 h-32 object-contain drop-shadow-lg select-none ${diceState === 'rolling' ? 'animate-dice-roll' : ''}`}
+                />
+              </div>
+            </section>
+
+            <section className="bg-white rounded-2xl p-6 shadow-xl border border-slate-100">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                  <Activity size={16} /> Animations
+                </h2>
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-lg border border-slate-200">
+                    <span className="text-xs font-bold text-slate-400 ml-2 uppercase tracking-wider">Valeur dé</span>
+                    <select
+                      value={diceValue}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10) as DiceValue;
+                        setDiceValue(v);
+                        if (diceState === 'idle') setDiceDisplayValue(v);
+                      }}
+                      className="bg-transparent text-sm font-semibold text-slate-700 focus:outline-none cursor-pointer"
+                    >
+                      {[1,2,3,4,5,6].map(n => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-lg border border-slate-200">
+                    <Palette size={16} className="text-slate-400 ml-2" />
+                    <select
+                      value={diceColor}
+                      onChange={(e) => setDiceColor(e.target.value as DiceColor)}
+                      className="bg-transparent text-sm font-semibold text-slate-700 focus:outline-none cursor-pointer"
+                    >
+                      <option value="blue">Bleu</option>
+                      <option value="red">Rouge</option>
+                      <option value="green">Vert</option>
+                      <option value="yellow">Jaune</option>
+                      <option value="orange">Orange</option>
+                      <option value="purple">Violet</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+                <button
+                  onClick={() => setDiceState('idle')}
+                  className={`flex flex-col items-center justify-center p-3 rounded-xl gap-2 transition-all transform hover:scale-105 active:scale-95 ${diceState === 'idle' ? 'ring-2 ring-offset-2 ring-blue-500 shadow-md bg-slate-100 text-slate-600' : 'opacity-70 hover:opacity-100 bg-slate-50'}`}
+                >
+                  <Activity size={20} />
+                  <span className="text-xs font-bold">Repos</span>
+                </button>
+                <button
+                  onClick={rollDice}
+                  disabled={diceState === 'rolling'}
+                  className={`flex flex-col items-center justify-center p-3 rounded-xl gap-2 transition-all transform hover:scale-105 active:scale-95 ${diceState === 'rolling' ? 'ring-2 ring-offset-2 ring-orange-500 shadow-md bg-orange-100 text-orange-600' : 'opacity-70 hover:opacity-100 bg-slate-50'}`}
+                >
+                  <RotateCcw size={20} />
+                  <span className="text-xs font-bold">Roll</span>
+                </button>
+              </div>
+            </section>
+          </>
+        )}
       </main>
     </div>
   );

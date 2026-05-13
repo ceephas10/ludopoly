@@ -7,6 +7,7 @@ export enum Emotion {
   PAIN = 'PAIN',
   TERROR = 'TERROR',
   PUZZLED = 'PUZZLED',
+  IMPATIENT = 'IMPATIENT',
   JUMP_RIGHT = 'JUMP_RIGHT',
   JUMP_LEFT = 'JUMP_LEFT',
   JUMP_UP = 'JUMP_UP',

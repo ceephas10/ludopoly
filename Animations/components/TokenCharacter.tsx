@@ -9,6 +9,7 @@ interface TokenCharacterProps {
   color?: string; // 'blue' | 'red' | 'green' | 'yellow' | 'orange' | 'purple'
   showBoundingBox?: boolean; // Draw black frame around sprite container
   animationKey?: number; // Unique key to force animation restart
+  isLooping?: boolean; // Override animations to iterate infinitely
 }
 
 export const TokenCharacter: React.FC<TokenCharacterProps> = ({
@@ -18,7 +19,8 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
   isTransitioning = false,
   color = 'blue',
   showBoundingBox = false,
-  animationKey = 0
+  animationKey = 0,
+  isLooping = false,
 }) => {
   
   const isSleeper = characterType === 'sleeper';
@@ -38,6 +40,7 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
       case Emotion.PAIN: return 'animate-pain';
       case Emotion.TERROR: return 'animate-terror';
       case Emotion.PUZZLED: return 'animate-puzzled';
+      case Emotion.IMPATIENT: return 'animate-impatient';
       case Emotion.JUMP_RIGHT: return 'animate-jump-right';
       case Emotion.JUMP_LEFT: return 'animate-jump-left';
       case Emotion.JUMP_UP: return 'animate-jump-up';
@@ -152,10 +155,11 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
         ${showBoundingBox ? 'border border-black' : ''}
       `}
     >
-      <div 
-        key={`${emotion}-${animationKey}`} 
-        id="token-body" 
+      <div
+        key={`${emotion}-${animationKey}-${isLooping ? 'L' : 'N'}`}
+        id="token-body"
         className={`w-full h-full origin-bottom ${getAnimationClass()}`}
+        style={isLooping ? { animationIterationCount: 'infinite', animationFillMode: 'none' } : undefined}
       >
         <svg
           viewBox="-50 -50 200 240"
@@ -251,9 +255,9 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
                   keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
                   values="
                     M 25 50 Q 15 68 15 87 Q 16 103 7 119 Q -1 132 0 145 Q 12.5 140.5 25 145 Q 37.5 149.5 50 145 Q 62.5 140.5 75 145 Q 87.5 149.5 100 145 Q 101 132 93 119 Q 84 103 85 87 Q 85 68 75 50 Z;
-                    M 25 50 Q 25 68 15 87 Q 6 103 7 119 Q 8 128 0 137.5 Q 12.5 133 25 137.5 Q 37.5 142 50 137.5 Q 62.5 133 75 137.5 Q 87.5 142 100 137.5 Q 91 128 93 119 Q 94 103 85 87 Q 75 68 75 50 Z;
-                    M 25 50 Q 25 68 15 87 Q 6 103 7 119 Q 8 124 0 130 Q 12.5 134.5 25 130 Q 37.5 125.5 50 130 Q 62.5 134.5 75 130 Q 87.5 125.5 100 130 Q 91 124 93 119 Q 94 103 85 87 Q 75 68 75 50 Z;
-                    M 25 50 Q 15 68 15 87 Q 16 103 7 119 Q -1 128 0 137.5 Q 12.5 142 25 137.5 Q 37.5 133 50 137.5 Q 62.5 142 75 137.5 Q 87.5 133 100 137.5 Q 101 128 93 119 Q 84 103 85 87 Q 85 68 75 50 Z;
+                    M 25 50 Q 25 68 15 87 Q 6 103 7 119 Q 8 128 0 137.5 Q 12.5 132 25 136 Q 37.5 140 50 135 Q 62.5 131 75 136 Q 87.5 141 100 137.5 Q 91 128 93 119 Q 94 103 85 87 Q 75 68 75 50 Z;
+                    M 25 50 Q 25 68 15 87 Q 6 103 7 119 Q 8 124 0 130 Q 12.5 133 25 127.5 Q 37.5 122 50 125 Q 62.5 131 75 127.5 Q 87.5 124 100 130 Q 91 124 93 119 Q 94 103 85 87 Q 75 68 75 50 Z;
+                    M 25 50 Q 15 68 15 87 Q 16 103 7 119 Q -1 128 0 137.5 Q 12.5 141 25 136 Q 37.5 131 50 135 Q 62.5 140 75 136 Q 87.5 132 100 137.5 Q 101 128 93 119 Q 84 103 85 87 Q 85 68 75 50 Z;
                     M 25 50 Q 15 68 15 87 Q 16 103 7 119 Q -1 132 0 145 Q 12.5 140.5 25 145 Q 37.5 149.5 50 145 Q 62.5 140.5 75 145 Q 87.5 149.5 100 145 Q 101 132 93 119 Q 84 103 85 87 Q 85 68 75 50 Z
                   "
                 />
@@ -267,7 +271,7 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
               strokeWidth="1.5"
             >
               {emotion === Emotion.PAIN && !isInvincible && (
-                <animate attributeName="fill" values="url(#silverGradient);#f87171;#ef4444;url(#silverGradient)" dur="0.8s" repeatCount="1" />
+                <animate attributeName="fill" values="url(#silverGradient);#f87171;#ef4444;url(#silverGradient)" dur="0.8s" repeatCount={isLooping ? 'indefinite' : 1} />
               )}
             </path>
             
@@ -275,7 +279,7 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
 
             <circle cx="50" cy="50" r="25" fill={`url(#sphereGradient-${color})`}>
                 {displayEmotion === Emotion.TERROR && (
-                    <animate attributeName="fill-opacity" values="1;0.7;1" dur="0.1s" repeatCount="10" />
+                    <animate attributeName="fill-opacity" values="1;0.7;1" dur="0.1s" repeatCount={isLooping ? 'indefinite' : 10} />
                 )}
             </circle>
 
@@ -417,13 +421,13 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
                   <g>
                      {[0, 0.5].map((delay, i) => (
                        <React.Fragment key={i}>
-                         <circle cx="34" cy="52" r="2.5" fill="url(#tearGradient)">
-                           <animate attributeName="cy" from="52" to="100" dur="1s" begin={`${delay}s`} repeatCount="1" fill="freeze" />
-                           <animate attributeName="opacity" values="0;1;1;0" dur="1s" begin={`${delay}s`} repeatCount="1" fill="freeze" />
+                         <circle cx="34" cy="52" r="5" fill="url(#tearGradient)" stroke="#1e3a8a" strokeWidth="1.4">
+                           <animate attributeName="cy" from="52" to="128" dur="1s" begin={`${delay}s`} repeatCount={isLooping ? 'indefinite' : 1} fill={isLooping ? 'remove' : 'freeze'} />
+                           <animate attributeName="opacity" values="0;1;1;0" dur="1s" begin={`${delay}s`} repeatCount={isLooping ? 'indefinite' : 1} fill={isLooping ? 'remove' : 'freeze'} />
                          </circle>
-                         <circle cx="66" cy="52" r="2.5" fill="url(#tearGradient)">
-                           <animate attributeName="cy" from="52" to="100" dur="0.9s" begin={`${delay + 0.2}s`} repeatCount="1" fill="freeze" />
-                           <animate attributeName="opacity" values="0;1;1;0" dur="0.9s" begin={`${delay + 0.2}s`} repeatCount="1" fill="freeze" />
+                         <circle cx="66" cy="52" r="5" fill="url(#tearGradient)" stroke="#1e3a8a" strokeWidth="1.4">
+                           <animate attributeName="cy" from="52" to="128" dur="0.9s" begin={`${delay + 0.2}s`} repeatCount={isLooping ? 'indefinite' : 1} fill={isLooping ? 'remove' : 'freeze'} />
+                           <animate attributeName="opacity" values="0;1;1;0" dur="0.9s" begin={`${delay + 0.2}s`} repeatCount={isLooping ? 'indefinite' : 1} fill={isLooping ? 'remove' : 'freeze'} />
                          </circle>
                        </React.Fragment>
                      ))}
@@ -439,15 +443,15 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
                       <circle cx="38" cy="48" r="10" fill="white" />
                       <circle cx="62" cy="48" r="10" fill="white" />
                       <circle cx="38" cy="48" r="3" fill="black">
-                          <animateTransform attributeName="transform" type="translate" values="-2,-2; 2,2; -2,2; 2,-2; -2,-2" dur="0.08s" repeatCount="12" />
+                          <animateTransform attributeName="transform" type="translate" values="-2,-2; 2,2; -2,2; 2,-2; -2,-2" dur="0.08s" repeatCount={isLooping ? 'indefinite' : 12} />
                       </circle>
                       <circle cx="62" cy="48" r="3" fill="black">
-                           <animateTransform attributeName="transform" type="translate" values="2,-2; -2,2; 2,2; -2,-2; 2,-2" dur="0.08s" repeatCount="12" />
+                           <animateTransform attributeName="transform" type="translate" values="2,-2; -2,2; 2,2; -2,-2; 2,-2" dur="0.08s" repeatCount={isLooping ? 'indefinite' : 12} />
                       </circle>
                     </g>
                   )}
                   <ellipse cx="50" cy="75" rx="12" ry="14" fill="#111" stroke={isInjured ? "black" : "white"} strokeWidth="2">
-                     <animate attributeName="ry" values="12;16;12" dur="0.1s" repeatCount="10" />
+                     <animate attributeName="ry" values="12;16;12" dur="0.1s" repeatCount={isLooping ? 'indefinite' : 10} />
                   </ellipse>
                 </g>
               )}
@@ -463,6 +467,26 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
                 </g>
               )}
 
+              {displayEmotion === Emotion.IMPATIENT && (
+                <g id="face-impatient">
+                  {isBatman ? renderBatmanEyes() : (
+                    <g>
+                      <path d="M 28 40 L 44 47" stroke="white" strokeWidth="2.8" strokeLinecap="round" />
+                      <path d="M 72 40 L 56 47" stroke="white" strokeWidth="2.8" strokeLinecap="round" />
+                      <circle cx="38" cy="52" r="2.5" fill="white" />
+                      <circle cx="62" cy="52" r="2.5" fill="white" />
+                    </g>
+                  )}
+                  <ellipse cx="50" cy="66" rx="4.5" ry="5.5" fill={isBatman ? "#1e1e1e" : "#310b0b"} stroke={isInjured ? "black" : "white"} strokeWidth="1.8" />
+                  <g className="animate-moi-bubble" style={isLooping ? { animationIterationCount: 'infinite', animationFillMode: 'none' } : undefined}>
+                    <rect x="42" y="-57" width="112" height="52" rx="26" ry="26" fill="white" stroke="#1f2937" strokeWidth="2.5" />
+                    <path d="M 72 -6 L 76 24 L 96 -5 Z" fill="white" stroke="#1f2937" strokeWidth="2.5" strokeLinejoin="round" />
+                    <rect x="73" y="-7" width="24" height="3.5" fill="white" />
+                    <text x="98" y="-18" fontSize="34" fontWeight="bold" fontFamily="sans-serif" textAnchor="middle" fill="#1f2937">moi !</text>
+                  </g>
+                </g>
+              )}
+
               {displayEmotion === Emotion.PAIN && (
                 <g id="face-pain">
                   {isBatman ? renderBatmanEyes() : (
@@ -472,7 +496,7 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
                     </g>
                   )}
                   <path d="M 35 75 L 40 68 L 45 75 L 50 68 L 55 75 L 60 68 L 65 75" stroke={isInjured ? "black" : "white"} strokeWidth="4" fill="none" strokeLinecap="round" strokeLinejoin="round">
-                     <animate attributeName="transform" attributeType="XML" type="translate" values="0,0; 0,2; 0,0" dur="0.1s" repeatCount="8" />
+                     <animate attributeName="transform" attributeType="XML" type="translate" values="0,0; 0,2; 0,0" dur="0.1s" repeatCount={isLooping ? 'indefinite' : 8} />
                   </path>
                 </g>
               )}

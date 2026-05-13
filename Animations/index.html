@@ -153,6 +153,45 @@
         50% { transform: scale(1.2); }
       }
 
+      /* IMPATIENT: pawn stomps in place, leans side to side (clean loop) */
+      @keyframes impatient-stomp {
+        0%, 100% { transform: translate(0, 0)     rotate(0deg)  scaleY(1); }
+        15%      { transform: translate(-2px, -5px) rotate(-4deg) scaleY(1.06); }
+        30%      { transform: translate(-2px, 1px)  rotate(-2deg) scaleY(0.95); }
+        50%      { transform: translate(0, 1px)     rotate(0deg)  scaleY(0.95); }
+        70%      { transform: translate(2px, 1px)   rotate(2deg)  scaleY(0.95); }
+        85%      { transform: translate(2px, -5px)  rotate(4deg)  scaleY(1.06); }
+      }
+      .animate-impatient { animation: impatient-stomp 0.5s 1 ease-in-out forwards; }
+
+      /* MOI bubble: pop on/off every 300ms */
+      @keyframes moi-pop {
+        0%, 5%      { transform: scale(0)   translateY(2px); opacity: 0; }
+        10%         { transform: scale(1.15) translateY(-1px); opacity: 1; }
+        20%         { transform: scale(1)   translateY(0);    opacity: 1; }
+        45%         { transform: scale(1)   translateY(0);    opacity: 1; }
+        50%, 100%   { transform: scale(0)   translateY(2px);  opacity: 0; }
+      }
+      .animate-moi-bubble {
+        animation: moi-pop 0.6s 1 cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        transform-box: fill-box;
+        transform-origin: center bottom;
+      }
+
+      /* DICE ROLL: tumble + bounce + motion blur, 0.5s */
+      @keyframes dice-roll {
+        0%   { transform: translate(0, 0)         rotate(0deg)    scale(1);    filter: none; }
+        20%  { transform: translate(-14px, -38px) rotate(-220deg) scale(1.08); filter: blur(0.7px); }
+        45%  { transform: translate(10px, -62px)  rotate(-420deg) scale(1.15); filter: blur(0.7px); }
+        70%  { transform: translate(-6px, -22px)  rotate(-600deg) scale(1.05); filter: blur(0.3px); }
+        90%  { transform: translate(2px, -4px)    rotate(-700deg) scale(0.97); filter: none; }
+        100% { transform: translate(0, 0)         rotate(-720deg) scale(1);    filter: none; }
+      }
+      .animate-dice-roll {
+        animation: dice-roll 0.5s 1 cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        transform-origin: center center;
+      }
+
       /* SLEEPER ZZZZ: snake undulation + 3D zoom toward viewer */
       @keyframes zzz-snake-3d {
         0%   { transform: translate(0px,  4px)  scale(0.4); opacity: 0; }
