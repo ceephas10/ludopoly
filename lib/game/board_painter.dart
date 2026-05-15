@@ -41,11 +41,14 @@ class BoardPainter extends CustomPainter {
     canvas.drawRect(rect(6, 0, 9, 15), fill);   // vertical band
     canvas.drawRect(rect(0, 6, 15, 9), fill);   // horizontal band
 
-    // 3) 4 colored bases (6x6 corners with inner 4x4 white).
+    // 3) 4 colored bases (6x6 corners with inner 5x5 white — enlarged by
+    //    half a cell on each side compared to the standard Ludo layout, to
+    //    leave room for the LudoPoly extension content).
     void drawBase(double c0, double r0, Color color) {
       canvas.drawRect(rect(c0, r0, c0 + 6, r0 + 6), fill..color = color);
       canvas.drawRect(
-          rect(c0 + 1, r0 + 1, c0 + 5, r0 + 5), fill..color = Colors.white);
+          rect(c0 + 0.5, r0 + 0.5, c0 + 5.5, r0 + 5.5),
+          fill..color = Colors.white);
     }
     drawBase(0, 0, _red);     // top-left
     drawBase(9, 0, _green);   // top-right
@@ -64,10 +67,10 @@ class BoardPainter extends CustomPainter {
 
     // 5) Start squares (cell just outside each base, colored).
     final starts = <_Start>[
-      _Start(1, 6, _red,    _ArrowDir.right),
-      _Start(8, 1, _green,  _ArrowDir.down),
-      _Start(13, 8, _yellow, _ArrowDir.left),
-      _Start(6, 13, _blue,  _ArrowDir.up),
+      _Start(1, 6, _red),
+      _Start(8, 1, _green),
+      _Start(13, 8, _yellow),
+      _Start(6, 13, _blue),
     ];
     for (final s in starts) {
       canvas.drawRect(cr(s.col, s.row), fill..color = s.color);
@@ -103,12 +106,7 @@ class BoardPainter extends CustomPainter {
     for (int c = 0; c <= 15; c++) { vline(c * cell, 6 * cell, 9 * cell); }
     for (int r = 6; r <= 9; r++) { hline(0, 15 * cell, r * cell); }
 
-    // 8) Arrows on start squares.
-    for (final s in starts) {
-      _drawArrow(canvas, s.col, s.row, s.dir, cell);
-    }
-
-    // 9) Safe stars (4 cells on the ring).
+    // 8) Safe stars (4 cells on the ring).
     const stars = [[2, 8], [6, 2], [12, 6], [8, 12]];
     for (final s in stars) {
       _drawStar(canvas, s[0], s[1], cell);
@@ -119,41 +117,6 @@ class BoardPainter extends CustomPainter {
     fill.color = color;
     final p = Path()..moveTo(a.dx, a.dy)..lineTo(b.dx, b.dy)..lineTo(center.dx, center.dy)..close();
     c.drawPath(p, fill);
-  }
-
-  void _drawArrow(Canvas canvas, int col, int row, _ArrowDir dir, double cell) {
-    // Composite arrow: rectangular stem + triangular head, in white.
-    final pad = cell * 0.20;
-    final x0 = col * cell + pad;
-    final y0 = row * cell + pad;
-    final x1 = (col + 1) * cell - pad;
-    final y1 = (row + 1) * cell - pad;
-    final cx = (x0 + x1) / 2;
-    final cy = (y0 + y1) / 2;
-    final s = (x1 - x0) / 2;
-    final fill = Paint()..color = Colors.white;
-    Path head;
-    Rect stem;
-    switch (dir) {
-      case _ArrowDir.right:
-        head = Path()..moveTo(x1, cy)..lineTo(x1 - s, cy - s * 0.6)..lineTo(x1 - s, cy + s * 0.6)..close();
-        stem = Rect.fromLTRB(x0, cy - s * 0.22, x1 - s, cy + s * 0.22);
-        break;
-      case _ArrowDir.left:
-        head = Path()..moveTo(x0, cy)..lineTo(x0 + s, cy - s * 0.6)..lineTo(x0 + s, cy + s * 0.6)..close();
-        stem = Rect.fromLTRB(x0 + s, cy - s * 0.22, x1, cy + s * 0.22);
-        break;
-      case _ArrowDir.down:
-        head = Path()..moveTo(cx, y1)..lineTo(cx - s * 0.6, y1 - s)..lineTo(cx + s * 0.6, y1 - s)..close();
-        stem = Rect.fromLTRB(cx - s * 0.22, y0, cx + s * 0.22, y1 - s);
-        break;
-      case _ArrowDir.up:
-        head = Path()..moveTo(cx, y0)..lineTo(cx - s * 0.6, y0 + s)..lineTo(cx + s * 0.6, y0 + s)..close();
-        stem = Rect.fromLTRB(cx - s * 0.22, y0 + s, cx + s * 0.22, y1);
-        break;
-    }
-    canvas.drawRect(stem, fill);
-    canvas.drawPath(head, fill);
   }
 
   void _drawStar(Canvas canvas, int col, int row, double cell) {
@@ -188,12 +151,9 @@ class BoardPainter extends CustomPainter {
   bool shouldRepaint(covariant BoardPainter old) => false;
 }
 
-enum _ArrowDir { up, down, left, right }
-
 class _Start {
   final int col;
   final int row;
   final Color color;
-  final _ArrowDir dir;
-  const _Start(this.col, this.row, this.color, this.dir);
+  const _Start(this.col, this.row, this.color);
 }

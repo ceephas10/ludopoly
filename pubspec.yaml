@@ -58,7 +58,10 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/pawns/
+    - Animations/AnimStock/Tokens/PNG/
+    - Animations/AnimStock/Tokens/GIF/
+    - Animations/AnimStock/Tokens/WEBM/
+    - Animations/AnimStock/Dices/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

@@ -1,24 +1,20 @@
-// 1D ribbon of the 52 cells that make the Ludo ring.
+// 1D ribbon of cells that make the Ludo ring (52 cells for 4 players, more
+// for 5/6).
 //
-// The visual board is a 15x15 grid; the game logic only needs this linear
-// ring of 52 cells (indices 0..51). Each cell stores:
-//   - its (col, row) on the 15x15 visual grid (top-left = (0,0))
-//   - the displacement (dCol, dRow) leading to the NEXT cell on the ring
-//     (cell 51's next is cell 0; the ring is cyclic)
-//   - its [type] (normal / start / safeStar)
-//   - which player (if any) starts here
-//   - the [pawns] currently sitting on it (mutable runtime state)
+// Each cell stores its position and displacement to the NEXT cell as 2D
+// vectors in CELL UNITS (1.0 = the side of one grid cell). The geometry is
+// not constrained to an integer grid: 4-player rings happen to fall on a
+// 15x15 grid but 5/6-player rings will be on a polygon with diagonal
+// displacements at arbitrary angles. Consumers multiply by the pixel-per-
+// cell scale at paint time.
 //
-// Numbering convention: cell 0 is the BLUE starting square (bottom arm,
-// left col, just outside the bottom-left blue base). Indices grow clockwise:
-//   cell 13 = RED start, 26 = GREEN start, 39 = YELLOW start.
-//
-// Home columns (5 cells of the player's color leading to the center) are
-// NOT part of this ribbon — a pawn leaves the ring after one lap and enters
-// its own home column. Those are modeled separately, per player.
+// Numbering convention (4p): cell 0 is the BLUE starting square. Indices
+// grow clockwise: cell 13 = RED start, 26 = GREEN start, 39 = YELLOW start.
 
-import 'player_color.dart';
+import 'package:flutter/painting.dart' show Offset;
+
 import 'pawn.dart';
+import 'player_color.dart';
 
 /// What kind of cell this is on the ring.
 enum CellType {
@@ -31,23 +27,27 @@ enum CellType {
 }
 
 class RingCell {
-  final int index;     // 0..51
-  final int col;       // 0..14 on the visual grid
-  final int row;       // 0..14
-  final int dCol;      // displacement to next cell (col axis)
-  final int dRow;      // displacement to next cell (row axis)
+  /// 0..N-1 along the ring.
+  final int index;
+
+  /// Cell center in cell-units. For 4p this is `(col + 0.5, row + 0.5)` on
+  /// the 15×15 grid; for 5/6p it falls anywhere on a polygon.
+  final Offset pos;
+
+  /// Vector to the next ring cell, in cell-units (`ring[i+1].pos - ring[i].pos`).
+  /// Magnitude can exceed 1.0 on diagonal corners (e.g. ~√2 for a 45° turn).
+  final Offset dir;
+
   final CellType type;
   final PlayerColor? startsHere; // non-null iff type == start
 
-  /// Pawns currently sitting on this cell.
+  /// Pawns currently sitting on this cell (mutable runtime state).
   final List<Pawn> pawns = [];
 
   RingCell({
     required this.index,
-    required this.col,
-    required this.row,
-    required this.dCol,
-    required this.dRow,
+    required this.pos,
+    required this.dir,
     required this.type,
     this.startsHere,
   });
@@ -55,32 +55,42 @@ class RingCell {
   bool get isSafe => type != CellType.normal;
 }
 
-/// Path positions in (col, row) screen coords, clockwise from blue entry.
-const List<List<int>> _pathColRow = [
+/// Cell-center positions of every ring cell, in cell-units, clockwise from
+/// the BLUE entry. Stored as [Offset] so 5/6-player rings (which fall off
+/// integer grids) can use the same representation.
+const List<Offset> _path = [
   // 0..4 — bottom arm left edge (going up)
-  [6, 13], [6, 12], [6, 11], [6, 10], [6, 9],
+  Offset(6.5, 13.5), Offset(6.5, 12.5), Offset(6.5, 11.5),
+  Offset(6.5, 10.5), Offset(6.5,  9.5),
   // 5..9 — left arm lower edge (going left)
-  [5, 8], [4, 8], [3, 8], [2, 8], [1, 8],
+  Offset(5.5,  8.5), Offset(4.5,  8.5), Offset(3.5,  8.5),
+  Offset(2.5,  8.5), Offset(1.5,  8.5),
   // 10..12 — left edge (going up)
-  [0, 8], [0, 7], [0, 6],
+  Offset(0.5,  8.5), Offset(0.5,  7.5), Offset(0.5,  6.5),
   // 13..17 — left arm upper edge (going right)
-  [1, 6], [2, 6], [3, 6], [4, 6], [5, 6],
+  Offset(1.5,  6.5), Offset(2.5,  6.5), Offset(3.5,  6.5),
+  Offset(4.5,  6.5), Offset(5.5,  6.5),
   // 18..23 — top arm left edge (going up)
-  [6, 5], [6, 4], [6, 3], [6, 2], [6, 1], [6, 0],
+  Offset(6.5,  5.5), Offset(6.5,  4.5), Offset(6.5,  3.5),
+  Offset(6.5,  2.5), Offset(6.5,  1.5), Offset(6.5,  0.5),
   // 24..25 — top of top arm (going right)
-  [7, 0], [8, 0],
+  Offset(7.5,  0.5), Offset(8.5,  0.5),
   // 26..30 — top arm right edge (going down)
-  [8, 1], [8, 2], [8, 3], [8, 4], [8, 5],
+  Offset(8.5,  1.5), Offset(8.5,  2.5), Offset(8.5,  3.5),
+  Offset(8.5,  4.5), Offset(8.5,  5.5),
   // 31..36 — right arm upper edge (going right)
-  [9, 6], [10, 6], [11, 6], [12, 6], [13, 6], [14, 6],
+  Offset(9.5,  6.5), Offset(10.5, 6.5), Offset(11.5, 6.5),
+  Offset(12.5, 6.5), Offset(13.5, 6.5), Offset(14.5, 6.5),
   // 37..38 — right edge (going down)
-  [14, 7], [14, 8],
+  Offset(14.5, 7.5), Offset(14.5, 8.5),
   // 39..43 — right arm lower edge (going left)
-  [13, 8], [12, 8], [11, 8], [10, 8], [9, 8],
+  Offset(13.5, 8.5), Offset(12.5, 8.5), Offset(11.5, 8.5),
+  Offset(10.5, 8.5), Offset(9.5,  8.5),
   // 44..49 — bottom arm right edge (going down)
-  [8, 9], [8, 10], [8, 11], [8, 12], [8, 13], [8, 14],
+  Offset(8.5,  9.5), Offset(8.5, 10.5), Offset(8.5, 11.5),
+  Offset(8.5, 12.5), Offset(8.5, 13.5), Offset(8.5, 14.5),
   // 50..51 — bottom of bottom arm (going left)
-  [7, 14], [6, 14],
+  Offset(7.5, 14.5), Offset(6.5, 14.5),
 ];
 
 const Map<int, PlayerColor> _startsByIndex = {
@@ -93,10 +103,11 @@ const Map<int, PlayerColor> _startsByIndex = {
 // Stars: the 4 safe cells, 8 steps after each color's start.
 const Set<int> _safeStars = {8, 21, 34, 47};
 
-/// Pre-built ring: 52 cells with their displacement vectors and metadata.
-final List<RingCell> ring = List.generate(52, (i) {
-  final cur = _pathColRow[i];
-  final next = _pathColRow[(i + 1) % 52];
+/// Pre-built 4-player ring: 52 cells, positions on the 15×15 grid expressed
+/// as cell-center vectors (col + 0.5, row + 0.5).
+final List<RingCell> ring = List.generate(_path.length, (i) {
+  final pos = _path[i];
+  final nextPos = _path[(i + 1) % _path.length];
   final start = _startsByIndex[i];
   CellType type;
   if (start != null) {
@@ -108,10 +119,8 @@ final List<RingCell> ring = List.generate(52, (i) {
   }
   return RingCell(
     index: i,
-    col: cur[0],
-    row: cur[1],
-    dCol: next[0] - cur[0],
-    dRow: next[1] - cur[1],
+    pos: pos,
+    dir: nextPos - pos,
     type: type,
     startsHere: start,
   );
