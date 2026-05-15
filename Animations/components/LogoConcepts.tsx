@@ -64,7 +64,7 @@ export const LogoConcepts: React.FC = () => {
         <div className="relative w-32 h-32 flex items-center justify-center">
           <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
              <div className="scale-50 translate-y-2">
-                <TokenCharacter emotion={Emotion.IDLE} color="blue" characterType="normal" />
+                <TokenCharacter emotion={Emotion.IDLE} color="blue" characterType="standard" />
              </div>
           </div>
         </div>

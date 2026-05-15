@@ -10,17 +10,23 @@ interface TokenCharacterProps {
   showBoundingBox?: boolean; // Draw black frame around sprite container
   animationKey?: number; // Unique key to force animation restart
   isLooping?: boolean; // Override animations to iterate infinitely
+  idleVariant?: number; // 1..5 — selects which idle animation to play
+  joyVariant?: number;  // 1..5 — selects which joy animation to play
+  variants?: Record<string, number>;
 }
 
 export const TokenCharacter: React.FC<TokenCharacterProps> = ({
   emotion, 
-  characterType = 'normal',
+  characterType = 'standard',
   visualEmotion,
   isTransitioning = false,
   color = 'blue',
   showBoundingBox = false,
   animationKey = 0,
   isLooping = false,
+  idleVariant = 1,
+  joyVariant = 1,
+  variants = {},
 }) => {
   
   const isSleeper = characterType === 'sleeper';
@@ -31,26 +37,34 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
   const isInjured = characterType === 'injured';
 
   const getAnimationClass = () => {
-    switch (emotion) {
-      case Emotion.IDLE: return ''; 
-      case Emotion.JOY: return 'animate-joy';
-      case Emotion.LAUGH: return 'animate-laugh';
-      case Emotion.SADNESS: return 'animate-sadness';
-      case Emotion.CRY: return 'animate-cry';
-      case Emotion.PAIN: return 'animate-pain';
-      case Emotion.TERROR: return 'animate-terror';
-      case Emotion.PUZZLED: return 'animate-puzzled';
-      case Emotion.IMPATIENT: return 'animate-impatient';
-      case Emotion.JUMP_RIGHT: return 'animate-jump-right';
-      case Emotion.JUMP_LEFT: return 'animate-jump-left';
-      case Emotion.JUMP_UP: return 'animate-jump-up';
-      case Emotion.JUMP_DOWN: return 'animate-jump-down';
-      case Emotion.SLIDE_RIGHT: return 'animate-slide-right';
-      case Emotion.SLIDE_LEFT: return 'animate-slide-left';
-      case Emotion.SLIDE_UP: return 'animate-slide-up';
-      case Emotion.SLIDE_DOWN: return 'animate-slide-down';
-      default: return '';
+    const v = variants[emotion] ?? 1;
+    const suffix = v === 1 ? '' : `-${v}`;
+    // Special case: IDLE has no body animation for variants 1 & 4
+    if (emotion === Emotion.IDLE) {
+      if (v === 1 || v === 4) return '';
+      return `animate-idle-${v}`;
     }
+    const baseMap: Record<string, string> = {
+      [Emotion.JOY]: 'animate-joy',
+      [Emotion.LAUGH]: 'animate-laugh',
+      [Emotion.SADNESS]: 'animate-sadness',
+      [Emotion.CRY]: 'animate-cry',
+      [Emotion.PAIN]: 'animate-pain',
+      [Emotion.TERROR]: 'animate-terror',
+      [Emotion.PUZZLED]: 'animate-puzzled',
+      [Emotion.IMPATIENT]: 'animate-impatient',
+      [Emotion.JUMP_RIGHT]: 'animate-jump-right',
+      [Emotion.JUMP_LEFT]: 'animate-jump-left',
+      [Emotion.JUMP_UP]: 'animate-jump-up',
+      [Emotion.JUMP_DOWN]: 'animate-jump-down',
+      [Emotion.SLIDE_RIGHT]: 'animate-slide-right',
+      [Emotion.SLIDE_LEFT]: 'animate-slide-left',
+      [Emotion.SLIDE_UP]: 'animate-slide-up',
+      [Emotion.SLIDE_DOWN]: 'animate-slide-down',
+    };
+    const base = baseMap[emotion];
+    if (!base) return '';
+    return `${base}${suffix}`;
   };
 
   const colorPalettes: Record<string, { light: string, main: string, dark: string }> = {
@@ -156,7 +170,7 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
       `}
     >
       <div
-        key={`${emotion}-${animationKey}-${isLooping ? 'L' : 'N'}`}
+        key={`${emotion}-${animationKey}-${isLooping ? 'L' : 'N'}-v${variants[emotion] ?? 1}`}
         id="token-body"
         className={`w-full h-full origin-bottom ${getAnimationClass()}`}
         style={isLooping ? { animationIterationCount: 'infinite', animationFillMode: 'none' } : undefined}
@@ -283,6 +297,47 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
                 )}
             </circle>
 
+            {displayEmotion === Emotion.IMPATIENT && (
+              <g id="impatient-arm">
+                {/* Left arm (mirrored), so it does not cover the "moi" bubble on the right */}
+                <path
+                  d="M 24 78 Q 4 38 5 -2"
+                  fill="none"
+                  stroke="url(#silverGradient)"
+                  strokeWidth="14"
+                  strokeLinecap="round"
+                />
+                <path
+                  d="M 22 78 Q 6 40 7 -2"
+                  fill="none"
+                  stroke="#f8fafc"
+                  strokeWidth="4"
+                  strokeLinecap="round"
+                  opacity="0.45"
+                />
+                {/* Fist (20% bigger) */}
+                <ellipse cx="5" cy="-6" rx="11.4" ry="13.2" fill="url(#silverGradient)" stroke="#94a3b8" strokeWidth="1.5" />
+                {/* Folded fingers — 3 knuckles drawn on the outer (left) side of the fist */}
+                <g>
+                  <ellipse cx="-2.5" cy="-14" rx="3.5" ry="2.5" fill="url(#silverGradient)" stroke="#94a3b8" strokeWidth="0.8" />
+                  <ellipse cx="-3.5" cy="-7"  rx="3.8" ry="2.5" fill="url(#silverGradient)" stroke="#94a3b8" strokeWidth="0.8" />
+                  <ellipse cx="-3"   cy="0"   rx="3.5" ry="2.5" fill="url(#silverGradient)" stroke="#94a3b8" strokeWidth="0.8" />
+                  {/* Subtle crease shadows between knuckles */}
+                  <path d="M -6 -11 Q -2 -10.5 2 -11" stroke="#64748b" strokeWidth="0.5" fill="none" opacity="0.5" />
+                  <path d="M -7 -3.5 Q -2.5 -3 2 -3.5" stroke="#64748b" strokeWidth="0.5" fill="none" opacity="0.5" />
+                </g>
+                {/* Thumb wrapping around the front of the fist (toward body) */}
+                <ellipse cx="14" cy="-4" rx="4.2" ry="6" fill="url(#silverGradient)" stroke="#94a3b8" strokeWidth="1" />
+                <ellipse cx="14" cy="-3" rx="2.2" ry="3" fill="#64748b" opacity="0.2" />
+                {/* Index finger pointing up (20% bigger) */}
+                <rect x="0.8" y="-32" width="8.4" height="26" rx="3.8" fill="url(#silverGradient)" stroke="#94a3b8" strokeWidth="1.2" />
+                {/* Knuckle line between index and fist */}
+                <path d="M 0.5 -8 Q 5 -7 9.5 -8" stroke="#64748b" strokeWidth="0.6" fill="none" opacity="0.5" />
+                {/* Fingertip highlight */}
+                <ellipse cx="5" cy="-32" rx="4.2" ry="2.4" fill="#f8fafc" opacity="0.8" />
+              </g>
+            )}
+
             {isInjured && (
               <g id="injured-body-decor" clipPath="url(#bodyClip)">
                  <CurvedPlaster x={44} y={108} rot={-10} />
@@ -327,8 +382,8 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
                 <g id="face-idle">
                   {isBatman ? renderBatmanEyes() : (
                     <g>
-                      <circle cx="38" cy="48" r="3.5" fill="white" className="animate-blink" />
-                      <circle cx="62" cy="48" r="3.5" fill="white" className="animate-blink" />
+                      <circle cx="38" cy="48" r="3.5" fill="white" className={(variants[Emotion.IDLE] ?? 1) === 4 ? 'animate-idle-4-eye' : 'animate-blink'} />
+                      <circle cx="62" cy="48" r="3.5" fill="white" className={(variants[Emotion.IDLE] ?? 1) === 4 ? 'animate-idle-4-eye' : 'animate-blink'} />
                     </g>
                   )}
                   <path d="M 42 62 Q 50 66 58 62" stroke={isInjured ? "black" : "white"} strokeWidth="2.5" strokeLinecap="round" fill="none" opacity={isInjured ? 1 : 0.7}/>
@@ -471,13 +526,18 @@ export const TokenCharacter: React.FC<TokenCharacterProps> = ({
                 <g id="face-impatient">
                   {isBatman ? renderBatmanEyes() : (
                     <g>
-                      <path d="M 28 40 L 44 47" stroke="white" strokeWidth="2.8" strokeLinecap="round" />
-                      <path d="M 72 40 L 56 47" stroke="white" strokeWidth="2.8" strokeLinecap="round" />
-                      <circle cx="38" cy="52" r="2.5" fill="white" />
-                      <circle cx="62" cy="52" r="2.5" fill="white" />
+                      {/* Joyful eyes: smiling arcs ^ ^ */}
+                      <path d="M 30 50 Q 38 42 46 50" stroke="white" strokeWidth="3" strokeLinecap="round" fill="none" />
+                      <path d="M 54 50 Q 62 42 70 50" stroke="white" strokeWidth="3" strokeLinecap="round" fill="none" />
+                      {/* Cheeks (subtle blush) */}
+                      <circle cx="30" cy="60" r="3" fill={palette.light} opacity="0.7" />
+                      <circle cx="70" cy="60" r="3" fill={palette.light} opacity="0.7" />
                     </g>
                   )}
-                  <ellipse cx="50" cy="66" rx="4.5" ry="5.5" fill={isBatman ? "#1e1e1e" : "#310b0b"} stroke={isInjured ? "black" : "white"} strokeWidth="1.8" />
+                  {/* Big eager smile */}
+                  <path d="M 34 62 Q 50 78 66 62" stroke={isInjured ? "black" : "white"} strokeWidth="3.5" strokeLinecap="round" fill="none" />
+                  {/* Tongue / lower lip hint */}
+                  <path d="M 42 70 Q 50 75 58 70" stroke={isInjured ? "black" : "white"} strokeWidth="2" strokeLinecap="round" fill="none" opacity="0.7" />
                   <g className="animate-moi-bubble" style={isLooping ? { animationIterationCount: 'infinite', animationFillMode: 'none' } : undefined}>
                     <rect x="42" y="-57" width="112" height="52" rx="26" ry="26" fill="white" stroke="#1f2937" strokeWidth="2.5" />
                     <path d="M 72 -6 L 76 24 L 96 -5 Z" fill="white" stroke="#1f2937" strokeWidth="2.5" strokeLinejoin="round" />

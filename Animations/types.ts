@@ -18,7 +18,7 @@ export enum Emotion {
   SLIDE_RIGHT = 'SLIDE_RIGHT'
 }
 
-export type CharacterType = 'normal' | 'batman' | 'invincible' | 'injured' | 'sleeper';
+export type CharacterType = 'standard' | 'batman' | 'invincible' | 'injured' | 'sleeper';
 
 export interface AnimationState {
   emotion: Emotion;
