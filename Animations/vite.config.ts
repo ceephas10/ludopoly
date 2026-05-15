@@ -175,6 +175,7 @@ export default defineConfig(({ mode }) => {
         strictPort: true,
         host: '0.0.0.0',
         open: false,
+        fs: { allow: [path.resolve(__dirname, '..')] },
       },
       plugins: [react(), tokenStockSavePlugin()],
       define: {

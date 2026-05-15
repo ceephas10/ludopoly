@@ -89,12 +89,12 @@ const VariantBadges: React.FC<{ current: number; onSelect?: (n: number) => void 
 );
 
 // Selector overlays (active token indicator)
-const SELECTOR_IMAGES = import.meta.glob('./AnimStock/Selectors/Selector_*.png', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
+const SELECTOR_GIFS = import.meta.glob('./AnimStock/Selectors/GIF/Selector_*.gif', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 type SelectorKind = 'none' | 'halo' | 'spotlight' | 'chevron';
 const SELECTOR_SRC: Record<Exclude<SelectorKind, 'none'>, string> = {
-  halo:      SELECTOR_IMAGES['./AnimStock/Selectors/Selector_A_Halo.png'],
-  spotlight: SELECTOR_IMAGES['./AnimStock/Selectors/Selector_B_Spotlight.png'],
-  chevron:   SELECTOR_IMAGES['./AnimStock/Selectors/Selector_C_Chevron.png'],
+  halo:      SELECTOR_GIFS['./AnimStock/Selectors/GIF/Selector_A_Halo.gif'],
+  spotlight: SELECTOR_GIFS['./AnimStock/Selectors/GIF/Selector_B_Spotlight.gif'],
+  chevron:   SELECTOR_GIFS['./AnimStock/Selectors/GIF/Selector_C_Chevron.gif'],
 };
 const DICE_COLORS = ['blue', 'red', 'green', 'yellow', 'orange', 'purple', 'white'] as const;
 type DiceColor = typeof DICE_COLORS[number];
@@ -104,6 +104,7 @@ const getDiceSrc = (value: DiceValue, color: DiceColor): string => {
   return DICE_IMAGES[path];
 };
 import { Emotion, CharacterType } from './types';
+import tokenNomenclatureUrl from '../Documentation/Token_Nomenclature.png?url';
 import { 
   Activity, MapPin, Smile, Frown, Zap, AlertTriangle, PlayCircle, 
   Loader2, Camera, X, Save, Check, RotateCcw, Download, Video, 
@@ -186,6 +187,7 @@ export default function App() {
   const [genMovements, setGenMovements] = useState<string[]>([]);
   const [genVariants, setGenVariants] = useState<string[]>(['1']);
   const [genBusy, setGenBusy] = useState<boolean>(false);
+  const [nomZoom, setNomZoom] = useState<boolean>(false);
   const [genProgress, setGenProgress] = useState<{ current: number; total: number } | null>(null);
   const genCancelRef = useRef<boolean>(false);
   const [armedDiceRec, setArmedDiceRec] = useState<'none' | 'gif' | 'webm'>('none');
@@ -354,7 +356,7 @@ export default function App() {
             setSpriteColor(urlColor);
             hasUrlParams = true;
         }
-        if (urlChar && ['standard', 'batman', 'invincible', 'injured', 'sleeper'].includes(urlChar)) {
+        if (urlChar && ['standard', 'batman', 'invincible', 'injured', 'sleeper', 'none'].includes(urlChar)) {
             setCharacterType(urlChar);
             hasUrlParams = true;
         }
@@ -1074,7 +1076,7 @@ export default function App() {
             <MapPin size={24} />
           </div>
           <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600">
-            LudoPoly Animations
+            Studio Animations LudoPoly
           </h1>
           <div className="flex gap-1 ml-3">
             {([
@@ -1127,6 +1129,7 @@ export default function App() {
                   <option value="invincible">Invincible</option>
                   <option value="injured">Blessé</option>
                   <option value="sleeper">Dormeur</option>
+                  <option value="none">Aucun</option>
                 </select>
               </div>
             </div>
@@ -1162,9 +1165,9 @@ export default function App() {
                 <Sparkles size={16} className="text-slate-400 ml-2" />
                 <select value={selector} onChange={(e) => setSelector(e.target.value as SelectorKind)} className="bg-transparent text-sm font-semibold text-slate-700 focus:outline-none cursor-pointer">
                   <option value="none">Aucun</option>
-                  <option value="halo">Halo doré (A)</option>
-                  <option value="spotlight">Projecteur (B)</option>
-                  <option value="chevron">Chevron (C)</option>
+                  <option value="halo">Halo doré</option>
+                  <option value="spotlight">Projecteur</option>
+                  <option value="chevron">Chevron</option>
                 </select>
               </div>
             </div>
@@ -1206,67 +1209,21 @@ export default function App() {
                   style={{ width: `${110 * totalScale}px`, height: `${110 * totalScale}px` }}
                 />
               )}
-              {selector === 'halo' && (
-                <>
-                  {/* Back half (above ellipse center) — behind token */}
-                  <svg
-                    className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-[5]"
-                    style={{ width: `${110 * totalScale}px`, height: `${110 * totalScale}px` }}
-                    viewBox="0 0 400 400"
-                  >
-                    <defs>
-                      <clipPath id="halo-clip-top">
-                        <rect x="0" y="0" width="400" height="299" />
-                      </clipPath>
-                    </defs>
-                    <ellipse
-                      cx="200" cy="299" rx="65" ry="17.5"
-                      fill="none"
-                      stroke="#facc15"
-                      strokeWidth="9"
-                      strokeDasharray="14,18"
-                      strokeLinecap="round"
-                      clipPath="url(#halo-clip-top)"
-                      className="animate-halo-ring"
-                    />
-                  </svg>
-                  {/* Front half (below ellipse center) — in front of token */}
-                  <svg
-                    className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-20"
-                    style={{ width: `${110 * totalScale}px`, height: `${110 * totalScale}px` }}
-                    viewBox="0 0 400 400"
-                  >
-                    <defs>
-                      <clipPath id="halo-clip-bottom">
-                        <rect x="0" y="299" width="400" height="101" />
-                      </clipPath>
-                    </defs>
-                    <ellipse
-                      cx="200" cy="299" rx="65" ry="17.5"
-                      fill="none"
-                      stroke="#facc15"
-                      strokeWidth="9"
-                      strokeDasharray="14,18"
-                      strokeLinecap="round"
-                      clipPath="url(#halo-clip-bottom)"
-                      className="animate-halo-ring"
-                    />
-                  </svg>
-                </>
-              )}
-              <div id="studio-sprite" className="transition-transform duration-500 relative z-10" style={{ transform: `scale(${1.5 * totalScale})` }}>
-                <TokenCharacter
-                  emotion={currentEmotion}
-                  characterType={characterType}
-                  visualEmotion={isActionEmotion(currentEmotion) ? lastStaticEmotion : currentEmotion}
-                  isTransitioning={isTransitioning}
-                  color={spriteColor}
-                  animationKey={animationKey}
-                  isLooping={isLooping}
-                  idleVariant={idleVariant}
-                  joyVariant={joyVariant}
-                  variants={variants}
-                />
+<div id="studio-sprite" className="transition-transform duration-500 relative z-10" style={{ transform: `scale(${1.5 * totalScale})` }}>
+                {characterType !== 'none' && (
+                  <TokenCharacter
+                    emotion={currentEmotion}
+                    characterType={characterType}
+                    visualEmotion={isActionEmotion(currentEmotion) ? lastStaticEmotion : currentEmotion}
+                    isTransitioning={isTransitioning}
+                    color={spriteColor}
+                    animationKey={animationKey}
+                    isLooping={isLooping}
+                    idleVariant={idleVariant}
+                    joyVariant={joyVariant}
+                    variants={variants}
+                  />
+                )}
               </div>
             </div>
         </section>
@@ -1362,6 +1319,36 @@ export default function App() {
                 </div>
               </>
             )}
+
+            {/* Nomenclature reference thumbnail — under WEBM Ouvrir, hover to zoom */}
+            <div
+              className="relative mt-2"
+              onMouseEnter={() => setNomZoom(true)}
+              onMouseLeave={() => setNomZoom(false)}
+            >
+              <img
+                src={tokenNomenclatureUrl}
+                alt="Token Nomenclature"
+                className="h-20 w-auto object-contain rounded-lg border border-slate-200 bg-white p-1 cursor-zoom-in"
+              />
+              {nomZoom && (
+                <img
+                  src={tokenNomenclatureUrl}
+                  alt=""
+                  className="fixed z-50 rounded-xl border border-slate-200 bg-white p-2 shadow-2xl pointer-events-none"
+                  style={{
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    maxWidth: '90vw',
+                    maxHeight: '90vh',
+                    width: 'auto',
+                    height: 'auto',
+                  }}
+                />
+              )}
+            </div>
+
           </div>
 
           {/* Génération container */}
@@ -1484,6 +1471,7 @@ export default function App() {
               </div>
             )}
           </div>
+
         </div>
 
         <section className="bg-white rounded-2xl p-6 shadow-xl border border-slate-100">

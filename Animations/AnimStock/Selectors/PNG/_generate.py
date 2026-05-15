@@ -3,7 +3,7 @@ import os
 from PIL import Image, ImageDraw, ImageFilter
 import math
 
-OUT = r'C:/Users/jmpir/Dev/LudoPoly/Animations/AnimStock/Selectors'
+OUT = r'C:/Users/jmpir/Dev/LudoPoly/Animations/AnimStock/Selectors/PNG'
 os.makedirs(OUT, exist_ok=True)
 
 W, H = 400, 400
@@ -15,21 +15,20 @@ def save(img: Image.Image, name: str) -> None:
 
 
 def concept_a_halo() -> Image.Image:
-    """A — Gold radial halo (the dashed ring is rendered separately in SVG so it can rotate)."""
+    """A — Gold halo: saint's aureole behind the head, tilted ~30° forward (foreshortened ellipse)."""
     img = Image.new('RGBA', (W, H), (0, 0, 0, 0))
-    glow = Image.new('RGBA', (W, H), (0, 0, 0, 0))
-    gd = ImageDraw.Draw(glow)
-    cx, cy = W // 2, int(H * 0.45)
-    for r, alpha in [(180, 30), (140, 55), (100, 90), (70, 130), (45, 160)]:
-        gd.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(255, 210, 80, alpha))
-    glow = glow.filter(ImageFilter.GaussianBlur(18))
-    img.alpha_composite(glow)
-
-    core = Image.new('RGBA', (W, H), (0, 0, 0, 0))
-    cd = ImageDraw.Draw(core)
-    cd.ellipse((cx - 35, cy - 35, cx + 35, cy + 35), fill=(255, 245, 200, 110))
-    core = core.filter(ImageFilter.GaussianBlur(8))
-    img.alpha_composite(core)
+    d = ImageDraw.Draw(img)
+    cx, cy = 200, 150              # behind/above the token's head
+    rx, ry = 85, 50                # ry/rx = 0.59 -> visible tilt
+    # Concentric tilted ellipses, warmer toward the center, all full alpha.
+    layers = [
+        (1.00, (255, 220, 110, 255)),
+        (0.78, (255, 205, 80, 255)),
+        (0.55, (255, 230, 140, 255)),
+        (0.33, (255, 245, 200, 255)),
+    ]
+    for s, color in layers:
+        d.ellipse((cx - rx * s, cy - ry * s, cx + rx * s, cy + ry * s), fill=color)
     return img
 
 
