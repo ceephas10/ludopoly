@@ -58,7 +58,22 @@ class _BoardScreenState extends State<BoardScreen> {
   );
   bool _showRing = false;
   bool _showGrid = false;
+  bool _showDetails = false;
   int _playerCount = 4;
+  bool _assetsReady = false;
+
+  /// Optional override of the board's logical width. When null the board
+  /// fills the available room. Buttons in the command center set this to
+  /// device preset sizes for testing different aspect ratios.
+  double? _boardWidthOverride;
+
+  /// Manual-mode selection: which color to play next and which dice value
+  /// to force. Independent of the controller's natural turn rotation.
+  PlayerColor _manualPlayer = PlayerColor.blue;
+  int _manualValue = 1;
+
+  /// Last hover info text (token or dice), shown next to the Détails toggle.
+  String? _hoverInfo;
 
   /// Dice value displayed in each player's corner slot. Initialised to a
   /// random 1..6 so each corner shows a different face at game start. Sticks
@@ -66,6 +81,83 @@ class _BoardScreenState extends State<BoardScreen> {
   late final Map<PlayerColor, int> _diceValues = {
     for (final c in PlayerColor.values) c: math.Random().nextInt(6) + 1,
   };
+
+  /// One idle-animation index (1..5) per pawn, drawn once at startup.
+  late final Map<Pawn, int> _pawnAnimIdx;
+
+  /// Returns the GIF asset path for [pawn]'s currently assigned idle anim.
+  String _pawnAsset(Pawn pawn) =>
+      'AnimStock/Tokens/GIF/'
+      'Pawn_standard_${pawn.color.name}_idle_${_pawnAnimIdx[pawn]}.gif';
+
+  /// Active player colors derived from [_playerCount].
+  ///   1 → blue alone
+  ///   2 → blue + green (diagonal — opposite bases on the 4-player board)
+  ///   3 → blue + red + green
+  ///   4+ → all four
+  List<PlayerColor> get _activeColors {
+    switch (_playerCount.clamp(1, 4)) {
+      case 1:  return const [PlayerColor.blue];
+      case 2:  return const [PlayerColor.blue, PlayerColor.green];
+      case 3:  return const [
+        PlayerColor.blue,
+        PlayerColor.red,
+        PlayerColor.green,
+      ];
+      default: return const [
+        PlayerColor.blue,
+        PlayerColor.red,
+        PlayerColor.green,
+        PlayerColor.yellow,
+      ];
+    }
+  }
+
+  /// Filter [BoardScreen.players] to the currently-active colors.
+  List<Player> get _activePlayers => BoardScreen.players
+      .where((p) => _activeColors.contains(p.color))
+      .toList();
+
+  void _onChangePlayerCount(int n) {
+    setState(() {
+      _playerCount = n;
+      final order = _activeColors;
+      _controller.turnOrder = order;
+      if (_controller.currentPlayerIdx >= order.length) {
+        _controller.currentPlayerIdx = 0;
+      }
+      // If the manually-selected color is no longer active, fall back to the
+      // first active one.
+      if (!order.contains(_manualPlayer)) {
+        _manualPlayer = order.first;
+      }
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _bootstrap();
+  }
+
+  /// Pick a random idle animation per pawn (#1..#5), then preload all 20
+  /// token GIFs so the board renders smoothly the first time pawns appear.
+  Future<void> _bootstrap() async {
+    final rng = math.Random();
+    _pawnAnimIdx = {
+      for (final p in _game.allPawns) p: rng.nextInt(5) + 1,
+    };
+
+    final assets = <String>[
+      for (final c in PlayerColor.values)
+        for (int i = 1; i <= 5; i++)
+          'AnimStock/Tokens/GIF/'
+              'Pawn_standard_${c.name}_idle_$i.gif',
+    ];
+    await Future.wait(assets.map(_GifFrames.load));
+    if (!mounted) return;
+    setState(() => _assetsReady = true);
+  }
 
   void _rollDice() {
     if (_controller.phase != TurnPhase.rolling) return;
@@ -96,27 +188,132 @@ class _BoardScreenState extends State<BoardScreen> {
     });
   }
 
+  /// Manual-mode action: set the controller's current player to
+  /// [_manualPlayer] and force its dice to [_manualValue].
+  void _applyManual() {
+    if (_controller.phase == TurnPhase.gameOver) return;
+    final idx = _controller.turnOrder.indexOf(_manualPlayer);
+    if (idx < 0) return;
+    setState(() {
+      _controller.currentPlayerIdx = idx;
+      _controller.phase = TurnPhase.rolling;
+      _controller.consecutiveSixes = 0;
+      _controller.diceValue = 0;
+      _controller.roll(_manualValue);
+      _diceValues[_manualPlayer] = _manualValue;
+    });
+  }
+
+  void _confirmRestart(BuildContext context) {
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Redémarrer le jeu ?'),
+        content: const Text('Tous les pions retourneront dans leur base.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            child: const Text('Redémarrer'),
+          ),
+        ],
+      ),
+    ).then((confirmed) {
+      if (confirmed == true) {
+        setState(() {
+          _controller.reset();
+          _diceValues.updateAll((_, __) => math.Random().nextInt(6) + 1);
+        });
+      }
+    });
+  }
+
+  /// Hover callbacks — only active when [_showDetails] is on.
+  void _onPawnHover(Pawn? p) {
+    if (!_showDetails) return;
+    if (p == null) {
+      setState(() => _hoverInfo = null);
+      return;
+    }
+    final animIdx = _pawnAnimIdx[p];
+    String pos;
+    switch (p.location) {
+      case PawnLocation.base:        pos = 'base #${p.position}';        break;
+      case PawnLocation.ring:        pos = 'ring #${p.position}';        break;
+      case PawnLocation.homeColumn:  pos = 'home column #${p.position}'; break;
+      case PawnLocation.home:        pos = 'home';                       break;
+    }
+    setState(() {
+      _hoverInfo =
+          'Pion ${p.color.name} #${p.id} · idle anim #$animIdx · $pos';
+    });
+  }
+
+  void _onDiceHover(bool hovering) {
+    if (!_showDetails) return;
+    if (!hovering) {
+      setState(() => _hoverInfo = null);
+      return;
+    }
+    final color = _controller.currentColor;
+    final v = _diceValues[color] ?? 1;
+    setState(() {
+      _hoverInfo = 'Dé ${color.name} · valeur $v';
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (!_assetsReady) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF1A2541),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: Colors.white70),
+              SizedBox(height: 16),
+              Text(
+                'Loading tokens…',
+                style: TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return Scaffold(
       backgroundColor: const Color(0xFF1A2541),
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, c) {
-            // Defensive: clamp to finite values; reserve a minimum width for
-            // the control panel.
-            const minPanel = 260.0;
             final h = c.maxHeight.isFinite ? c.maxHeight : 800.0;
             final w = c.maxWidth.isFinite ? c.maxWidth : 1200.0;
-            final boardSide = h.clamp(0.0, w - minPanel);
+            // Command center capped at 30 % of the page width (with a sane
+            // floor for tiny windows). The board is centered in the rest.
+            final panelWidth = (w * 0.30).clamp(280.0, w * 0.5);
+            final boardArea = (w - panelWidth).clamp(120.0, w);
+            final maxBoard = h.clamp(0.0, boardArea);
+            final boardSide =
+                _boardWidthOverride?.clamp(120.0, maxBoard) ?? maxBoard;
             return Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(
-                  width: boardSide,
-                  height: boardSide,
-                  child: BoardView(
-                    players: BoardScreen.players,
+                  width: boardArea,
+                  height: h,
+                  child: Center(
+                    child: SizedBox(
+                      width: boardSide,
+                      height: boardSide,
+                      child: BoardView(
+                    players: _activePlayers,
                     game: _game,
                     showRing: _showRing,
                     showGrid: _showGrid,
@@ -127,27 +324,78 @@ class _BoardScreenState extends State<BoardScreen> {
                     movablePawns: _controller.movablePawns().toSet(),
                     onRollDice: _rollDice,
                     onPawnTap: _movePawn,
+                    pawnAsset: _pawnAsset,
+                    onPawnHover: _onPawnHover,
+                    onDiceHover: _onDiceHover,
+                    showDetails: _showDetails,
+                      ),
+                    ),
                   ),
                 ),
                 SizedBox(
-                  width: w - boardSide,
+                  width: panelWidth,
                   height: h,
                   child: _ControlPanel(
                     showRing: _showRing,
                     onToggleRing: (v) => setState(() => _showRing = v),
                     showGrid: _showGrid,
                     onToggleGrid: (v) => setState(() => _showGrid = v),
+                    showDetails: _showDetails,
+                    onToggleDetails: (v) {
+                      setState(() {
+                        _showDetails = v;
+                        if (!v) _hoverInfo = null;
+                      });
+                    },
+                    hoverInfo: _hoverInfo,
+                    boardWidthOverride: _boardWidthOverride,
+                    onDeviceSize: (w) =>
+                        setState(() => _boardWidthOverride = w),
+                    manualPlayer: _manualPlayer,
+                    onChangeManualPlayer: (c) {
+                      setState(() {
+                        _manualPlayer = c;
+                        // Immediately switch the controller's current player
+                        // so the central dice picks up the new color.
+                        final idx = _controller.turnOrder.indexOf(c);
+                        if (idx >= 0) {
+                          _controller.currentPlayerIdx = idx;
+                          if (_controller.phase != TurnPhase.gameOver) {
+                            _controller.phase = TurnPhase.rolling;
+                            _controller.diceValue = 0;
+                            _controller.consecutiveSixes = 0;
+                          }
+                        }
+                      });
+                    },
+                    manualValue: _manualValue,
+                    onChangeManualValue: (v) {
+                      setState(() {
+                        _manualValue = v;
+                        // Removing the "Continue" button means the click on a
+                        // value IS the action: force-roll for the current
+                        // (manual-selected) player.
+                        if (_controller.phase != TurnPhase.gameOver) {
+                          _controller.phase = TurnPhase.rolling;
+                          _controller.consecutiveSixes = 0;
+                          _controller.roll(v);
+                          _diceValues[_controller.currentColor] = v;
+                        }
+                      });
+                    },
                     playerCount: _playerCount,
-                    onChangePlayerCount: (n) =>
-                        setState(() => _playerCount = n),
-                    currentPlayer: BoardScreen.players[
-                        _controller.currentPlayerIdx],
+                    onChangePlayerCount: _onChangePlayerCount,
+                    activePlayers: _activePlayers,
+                    currentPlayer: _activePlayers[
+                        _controller.currentPlayerIdx
+                            .clamp(0, _activePlayers.length - 1)],
                     phase: _controller.phase,
                     diceValue: _controller.diceValue,
                     consecutiveSixes: _controller.consecutiveSixes,
                     winner: _controller.winner,
-                    onForceDice: _setDice,
+                    onRollDice: _rollDice,
                     onEndTurn: _endTurn,
+                    onRestart: () => _confirmRestart(context),
                   ),
                 ),
               ],
@@ -159,36 +407,69 @@ class _BoardScreenState extends State<BoardScreen> {
   }
 }
 
-/// Right-side panel: debug switches and developer actions.
+/// Right-side panel: command center. Two cards (Normal / Manual) on top of an
+/// overlay-toggles card. The number of players (1-6) and board-width preset
+/// (smartphone / foldable / tablet / web FHD) live on the header row.
 class _ControlPanel extends StatelessWidget {
+  // Overlays
   final bool showRing;
   final ValueChanged<bool> onToggleRing;
   final bool showGrid;
   final ValueChanged<bool> onToggleGrid;
+  final bool showDetails;
+  final ValueChanged<bool> onToggleDetails;
+  final String? hoverInfo;
+
+  // Layout
   final int playerCount;
   final ValueChanged<int> onChangePlayerCount;
+  final List<Player> activePlayers;
+  final double? boardWidthOverride;
+  final ValueChanged<double?> onDeviceSize;
+
+  // Turn state (normal mode)
   final Player currentPlayer;
   final TurnPhase phase;
   final int diceValue;
   final int consecutiveSixes;
   final PlayerColor? winner;
-  final ValueChanged<int> onForceDice;
+  final VoidCallback onRollDice;
   final VoidCallback onEndTurn;
+
+  // Restart
+  final VoidCallback onRestart;
+
+  // Manual mode
+  final PlayerColor manualPlayer;
+  final ValueChanged<PlayerColor> onChangeManualPlayer;
+  final int manualValue;
+  final ValueChanged<int> onChangeManualValue;
 
   const _ControlPanel({
     required this.showRing,
     required this.onToggleRing,
     required this.showGrid,
     required this.onToggleGrid,
+    required this.showDetails,
+    required this.onToggleDetails,
+    required this.hoverInfo,
     required this.playerCount,
     required this.onChangePlayerCount,
+    required this.activePlayers,
+    required this.boardWidthOverride,
+    required this.onDeviceSize,
     required this.currentPlayer,
     required this.phase,
     required this.diceValue,
     required this.consecutiveSixes,
     required this.winner,
-    required this.onForceDice,
+    required this.onRollDice,
     required this.onEndTurn,
+    required this.onRestart,
+    required this.manualPlayer,
+    required this.onChangeManualPlayer,
+    required this.manualValue,
+    required this.onChangeManualValue,
   });
 
   Color _playerColor(PlayerColor c) {
@@ -203,155 +484,345 @@ class _ControlPanel extends StatelessWidget {
   String _phaseText() {
     switch (phase) {
       case TurnPhase.rolling:
-        return 'roll dice…';
+        return 'En attente du lancer';
       case TurnPhase.moving:
-        return 'rolled $diceValue — pick a pawn';
+        return 'Dé $diceValue — choisis un pion';
       case TurnPhase.gameOver:
-        return 'game over';
+        return 'Partie terminée';
     }
   }
 
+  /// Device-size presets for the board width override.
+  static const Map<String, ({IconData icon, double? width})> _devicePresets = {
+    'Smartphone':   (icon: Icons.smartphone,    width: 360),
+    'Foldable':     (icon: Icons.devices_fold,  width: 720),
+    'Tablette':     (icon: Icons.tablet_mac,    width: 1024),
+    'Web FHD':      (icon: Icons.desktop_windows, width: 1920),
+  };
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      color: const Color(0xFF22305A),
-      child: SingleChildScrollView(
-        child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            'Debug controls',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 12),
-          // Current player + state info.
-          Row(
-            children: [
-              const Text('Turn: ',
-                  style: TextStyle(color: Colors.white, fontSize: 14)),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: _playerColor(currentPlayer.color),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  currentPlayer.name,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
+    return Theme(
+      data: ThemeData(
+        useMaterial3: true,
+        colorSchemeSeed: Colors.indigo,
+        brightness: Brightness.light,
+      ),
+      child: Builder(builder: (context) {
+        final theme = Theme.of(context);
+        final cs = theme.colorScheme;
+        return Material(
+          color: cs.surface,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // ---- Title ----
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 4, vertical: 8),
+                  child: Text(
+                    'Centre de commandes',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _phaseText(),
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
+
+                // ---- Row: Nb joueurs (left) + device presets (right) ----
+                _SectionCard(
+                  title: 'Setup',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text('Nb joueurs',
+                          style: theme.textTheme.labelSmall
+                              ?.copyWith(color: cs.onSurfaceVariant)),
+                      const SizedBox(height: 4),
+                      SegmentedButton<int>(
+                        segments: const [
+                          ButtonSegment(value: 1, label: Text('1')),
+                          ButtonSegment(value: 2, label: Text('2')),
+                          ButtonSegment(value: 3, label: Text('3')),
+                          ButtonSegment(value: 4, label: Text('4')),
+                          ButtonSegment(value: 5, label: Text('5')),
+                          ButtonSegment(value: 6, label: Text('6')),
+                        ],
+                        selected: {playerCount},
+                        onSelectionChanged: (s) =>
+                            onChangePlayerCount(s.first),
+                        showSelectedIcon: false,
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Text('Taille board',
+                              style: theme.textTheme.labelSmall
+                                  ?.copyWith(color: cs.onSurfaceVariant)),
+                          const Spacer(),
+                          TextButton.icon(
+                            onPressed: onRestart,
+                            icon: const Icon(Icons.restart_alt, size: 16),
+                            label: const Text('Redémarrer jeu'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: cs.error,
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          for (final entry in _devicePresets.entries)
+                            Tooltip(
+                              message:
+                                  '${entry.key} (${entry.value.width!.toInt()}px)',
+                              child: IconButton.filledTonal(
+                                isSelected: boardWidthOverride ==
+                                    entry.value.width,
+                                onPressed: () =>
+                                    onDeviceSize(entry.value.width),
+                                icon: Icon(entry.value.icon),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                // ---- Two side-by-side cards: Jeu normal / Jeu manuel ----
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(child: _normalCard(theme, cs)),
+                      const SizedBox(width: 8),
+                      Expanded(child: _manualCard(theme, cs)),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // ---- Overlays card ----
+                _SectionCard(
+                  title: 'Overlays',
+                  padding: EdgeInsets.zero,
+                  child: Column(
+                    children: [
+                      SwitchListTile(
+                        title: const Text('Show ring'),
+                        subtitle:
+                            const Text('Indices des cases du ring'),
+                        value: showRing,
+                        onChanged: onToggleRing,
+                      ),
+                      SwitchListTile(
+                        title: const Text('Show grid 15×15'),
+                        subtitle:
+                            const Text('Indices 0..224 sur chaque case'),
+                        value: showGrid,
+                        onChanged: onToggleGrid,
+                      ),
+                      SwitchListTile(
+                        title: const Text('Détails'),
+                        subtitle: Text(
+                          hoverInfo ?? 'Survole un pion ou le dé',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        value: showDetails,
+                        onChanged: onToggleDetails,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _normalCard(ThemeData theme, ColorScheme cs) {
+    return _SectionCard(
+      title: 'Jeu normal',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text('Tour :', style: theme.textTheme.bodyMedium),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Chip(
+                  label: Text(currentPlayer.name,
+                      overflow: TextOverflow.ellipsis),
+                  backgroundColor: _playerColor(currentPlayer.color),
+                  labelStyle: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.w600),
+                  visualDensity: VisualDensity.compact,
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _phaseText(),
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontStyle: FontStyle.italic,
+              color: cs.onSurfaceVariant,
+            ),
           ),
           if (consecutiveSixes > 0)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                '$consecutiveSixes × 6',
-                style: const TextStyle(color: Colors.amber, fontSize: 11),
-              ),
+              child: Text('Série de 6 : $consecutiveSixes',
+                  style: TextStyle(color: cs.tertiary, fontSize: 12)),
             ),
           if (winner != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
+              child: Row(
+                children: [
+                  Icon(Icons.emoji_events, size: 18, color: cs.tertiary),
+                  const SizedBox(width: 4),
+                  Text('${winner!.name} gagne',
+                      style: TextStyle(
+                          color: cs.tertiary,
+                          fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            icon: const Icon(Icons.casino),
+            label: const Text('Lancer le dé'),
+            onPressed: phase == TurnPhase.rolling ? onRollDice : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _manualCard(ThemeData theme, ColorScheme cs) {
+    return _SectionCard(
+      title: 'Jeu manuel',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Couleur',
+              style: theme.textTheme.labelSmall
+                  ?.copyWith(color: cs.onSurfaceVariant)),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: [
+              for (final p in activePlayers)
+                _ColorDot(
+                  color: _playerColor(p.color),
+                  selected: p.color == manualPlayer,
+                  onTap: () => onChangeManualPlayer(p.color),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text('Valeur dé',
+              style: theme.textTheme.labelSmall
+                  ?.copyWith(color: cs.onSurfaceVariant)),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: [
+              for (int v = 1; v <= 6; v++)
+                _MiniDiceButton(
+                  value: v,
+                  selected: v == manualValue,
+                  onTap: () => onChangeManualValue(v),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small color dot for the manual-mode color selector.
+class _ColorDot extends StatelessWidget {
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+  const _ColorDot({
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkResponse(
+      onTap: onTap,
+      child: Container(
+        width: 26,
+        height: 26,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: selected
+              ? Border.all(
+                  color: Theme.of(context).colorScheme.primary, width: 3)
+              : null,
+        ),
+      ),
+    );
+  }
+}
+
+/// Reusable section card with a small title above the body. Uses the ambient
+/// Material 3 theme for surface/elevation/typography.
+class _SectionCard extends StatelessWidget {
+  final String title;
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+  const _SectionCard({
+    required this.title,
+    required this.child,
+    this.padding = const EdgeInsets.all(12),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Card(
+        margin: EdgeInsets.zero,
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
               child: Text(
-                '🏆 ${winner!.name.toUpperCase()} WINS',
-                style: const TextStyle(
-                  color: Colors.amber,
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
+                title,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
-          const SizedBox(height: 8),
-          const Text('Force dice',
-              style: TextStyle(color: Colors.white70, fontSize: 12)),
-          const SizedBox(height: 4),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              for (int v = 1; v <= 6; v++)
-                _MiniDiceButton(value: v, onTap: () => onForceDice(v)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            icon: const Icon(Icons.skip_next),
-            label: const Text('End turn (skip)'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.white,
-              side: const BorderSide(color: Colors.white54),
-              padding: const EdgeInsets.symmetric(vertical: 10),
-            ),
-            onPressed: onEndTurn,
-          ),
-          const Divider(color: Colors.white24, height: 24),
-          const Text('Nb players',
-              style: TextStyle(color: Colors.white, fontSize: 14)),
-          const SizedBox(height: 4),
-          SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(value: 4, label: Text('4')),
-              ButtonSegment(value: 5, label: Text('5')),
-              ButtonSegment(value: 6, label: Text('6')),
-            ],
-            selected: {playerCount},
-            onSelectionChanged: (s) => onChangePlayerCount(s.first),
-            style: ButtonStyle(
-              foregroundColor: WidgetStateProperty.resolveWith(
-                  (s) => s.contains(WidgetState.selected)
-                      ? Colors.black
-                      : Colors.white),
-              backgroundColor: WidgetStateProperty.resolveWith(
-                  (s) => s.contains(WidgetState.selected)
-                      ? Colors.amber
-                      : Colors.transparent),
-            ),
-          ),
-          const SizedBox(height: 8),
-          SwitchListTile(
-            title: const Text('Show ring',
-                style: TextStyle(color: Colors.white)),
-            subtitle: const Text(
-              'Numbered overlay of the 52 ring cells',
-              style: TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-            value: showRing,
-            onChanged: onToggleRing,
-            activeThumbColor: Colors.amber,
-            contentPadding: EdgeInsets.zero,
-          ),
-          SwitchListTile(
-            title: const Text('Show grid 15x15',
-                style: TextStyle(color: Colors.white)),
-            subtitle: const Text(
-              'Numbered overlay of every cell (0..224)',
-              style: TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-            value: showGrid,
-            onChanged: onToggleGrid,
-            activeThumbColor: Colors.amber,
-            contentPadding: EdgeInsets.zero,
-          ),
-        ],
+            Padding(padding: padding, child: child),
+          ],
         ),
       ),
     );
@@ -372,6 +843,14 @@ class BoardView extends StatelessWidget {
   final Set<Pawn> movablePawns;
   final VoidCallback onRollDice;
   final ValueChanged<Pawn> onPawnTap;
+  /// Resolver for a pawn's currently-assigned idle GIF asset path.
+  final String Function(Pawn) pawnAsset;
+  /// Hover callback for token details. Null pawn = mouse exited.
+  final ValueChanged<Pawn?>? onPawnHover;
+  /// Hover callback for the dice. Bool = entered (true) / exited (false).
+  final ValueChanged<bool>? onDiceHover;
+  /// When true, the cursor over pawns/dice becomes a help-pointer (`?`).
+  final bool showDetails;
   const BoardView({
     super.key,
     required this.players,
@@ -382,6 +861,10 @@ class BoardView extends StatelessWidget {
     required this.movablePawns,
     required this.onRollDice,
     required this.onPawnTap,
+    required this.pawnAsset,
+    this.onPawnHover,
+    this.onDiceHover,
+    this.showDetails = false,
     this.showRing = false,
     this.showGrid = false,
     this.playerCount = 4,
@@ -401,8 +884,15 @@ class BoardView extends StatelessWidget {
   // is stuck to the top of the (enlarged) white inner area with a 3px margin.
   static const List<double> _spotsX = [1.5, 2.5, 3.5, 4.5];
 
-  /// 3px gap between the inner-white top edge and the pawn bbox top.
+  /// 3px gap between the colored base's top edge and the visible token top.
   static const double _pawnTopMarginPx = 3.0;
+
+  // ---- Pawn-image visible bounds inside its bbox -------------------------
+  // Measured on the production GIF (`PIL.getbbox()` on the 200×440 native):
+  // visible content spans y 214..299 → 48.6 %..68.0 % of the bbox height.
+  // Center at ≈ 58.3 %.
+  static const double _pawnVisibleTopFrac    = 0.486;
+  static const double _pawnVisibleCenterFrac = 0.583;
 
   // Center of each player's dice, in global cell coordinates. Each dice
   // occupies the 2x2 cell square diagonally inward from the base's outer
@@ -415,13 +905,6 @@ class BoardView extends StatelessWidget {
     PlayerColor.yellow: Offset(12.0, 12.0),
   };
 
-  static const Map<PlayerColor, String> _pawnAsset = {
-    PlayerColor.yellow: 'Animations/AnimStock/Tokens/GIF/Pawn_standard_yellow_idle_20260514_13h45.gif',
-    PlayerColor.blue:   'Animations/AnimStock/Tokens/GIF/Pawn_standard_blue_idle_20260514_13h45.gif',
-    PlayerColor.red:    'Animations/AnimStock/Tokens/GIF/Pawn_standard_red_idle_20260514_13h45.gif',
-    PlayerColor.green:  'Animations/AnimStock/Tokens/GIF/Pawn_standard_green_idle_20260514_13h45.gif',
-  };
-
   // Center (in cell units) of each player's name label, placed in the
   // bottom row of its base. Targets: red 77/78, green 86/87, blue 212/213,
   // yellow 221/222 — center sits on the shared edge of those two cells.
@@ -432,17 +915,21 @@ class BoardView extends StatelessWidget {
     PlayerColor.yellow: Offset(12.0, 14.5),
   };
 
-  /// Visual center of a pawn given its color and base slot (0..3).
-  /// The pawn image has ~1 cell of transparent padding at the top of its
-  /// bbox; we shift the bbox up by 1 cell so the visible helmet sits 3px
-  /// below the top of the colored base.
+  /// Returns the pixel that the bbox-anchor (its `_pawnVisibleCenterFrac`
+  /// line) must hit so the *visible* pawn top sits at [baseTopPx] +
+  /// [_pawnTopMarginPx].
+  ///
+  ///   visible_top = bbox_top + visibleTopFrac × H
+  ///   bbox_top    = anchor   − visibleCenterFrac × H
+  /// ⇒ anchor = base_top + margin + (visibleCenterFrac − visibleTopFrac) × H
   Offset _baseSlotCenter(
       PlayerColor color, int slot, double cell, double pawnHeight) {
     final corner = _baseCorner[color]!;
     final cx = (corner.dx + _spotsX[slot]) * cell;
     final baseTopPx = corner.dy * cell;
-    final bboxTopPx = baseTopPx + _pawnTopMarginPx - cell;
-    final cy = bboxTopPx + pawnHeight * 0.55;
+    final cy = baseTopPx +
+        _pawnTopMarginPx +
+        pawnHeight * (_pawnVisibleCenterFrac - _pawnVisibleTopFrac);
     return Offset(cx, cy);
   }
 
@@ -487,7 +974,10 @@ class BoardView extends StatelessWidget {
     // 5- and 6-player boards use a polygonal layout (no 15x15 grid, no
     // pawns/labels yet — first pass focuses on the board geometry). A single
     // shared dice sits in the central dark hexagon.
-    if (playerCount != 4) {
+    // Polygonal layout only for 5 and 6. Counts 1-4 all use the 4-player
+    // board (inactive colors are filtered out of the pawn/label rendering
+    // by the parent that builds the `players` list).
+    if (playerCount >= 5) {
       return LayoutBuilder(
         builder: (context, c) {
           final side = c.biggest.shortestSide;
@@ -550,48 +1040,54 @@ class BoardView extends StatelessWidget {
                   height: h,
                   child: Center(
                     child: _PlayerLabel(
-                        name: p.name, color: _colorOf(p.color)),
-                  ),
-                );
-              }(),
-
-            // One dice per player. The current player's dice is fully opaque
-            // and clickable while we're in the rolling phase; the others are
-            // dimmed.
-            for (final p in players)
-              () {
-                final dc = _diceCenter[p.color]!;
-                final size = cell * 2.0 * 0.70;
-                final isCurrent = p.color == currentPlayerColor;
-                final clickable = isCurrent && canRollDice;
-                return Positioned(
-                  left: dc.dx * cell - size / 2,
-                  top:  dc.dy * cell - size / 2,
-                  width: size,
-                  height: size,
-                  child: MouseRegion(
-                    cursor: clickable
-                        ? SystemMouseCursors.click
-                        : SystemMouseCursors.basic,
-                    child: GestureDetector(
-                      onTap: clickable ? onRollDice : null,
-                      child: Opacity(
-                        opacity: isCurrent ? 1.0 : 0.4,
-                        child: _DiceFace(
-                          value: diceValues[p.color] ?? 1,
-                          playerColor: p.color,
-                        ),
-                      ),
+                      name: p.name,
+                      color: _colorOf(p.color),
+                      // Scale the label font with the cell size — 14 at a
+                      // ~50 px cell (~750 px board), down to ~7 on a 360 px
+                      // smartphone preset.
+                      fontSize: (cell * 0.30).clamp(8.0, 16.0),
                     ),
                   ),
                 );
               }(),
 
+            // Single central dice in the current player's color. Clickable
+            // during the rolling phase.
+            () {
+              final size = cell * 1.6;
+              final clickable = canRollDice;
+              return Positioned(
+                left: 7.5 * cell - size / 2,
+                top:  7.5 * cell - size / 2,
+                width: size,
+                height: size,
+                child: MouseRegion(
+                  cursor: showDetails
+                      ? SystemMouseCursors.help
+                      : (clickable
+                          ? SystemMouseCursors.click
+                          : SystemMouseCursors.basic),
+                  onEnter: (_) => onDiceHover?.call(true),
+                  onExit: (_) => onDiceHover?.call(false),
+                  child: GestureDetector(
+                    onTap: clickable ? onRollDice : null,
+                    child: _DiceFace(
+                      value: diceValues[currentPlayerColor] ?? 1,
+                      playerColor: currentPlayerColor,
+                    ),
+                  ),
+                ),
+              );
+            }(),
+
             // Every pawn, rendered at its current model position. Pawns the
             // current player can move with the rolled dice are highlighted
             // and tappable.
             ...() sync* {
-              final list = game.allPawns.toList();
+              final activeColors = players.map((p) => p.color).toSet();
+              final list = game.allPawns
+                  .where((p) => activeColors.contains(p.color))
+                  .toList();
               // Per-pawn delays = the multiples of 100 ms in random order.
               // ValueKey'd state preservation means only the first build's
               // shuffle counts — subsequent rebuilds re-compute it but never
@@ -603,20 +1099,47 @@ class BoardView extends StatelessWidget {
                 final pawn = list[i];
                 final center = _pawnCenter(pawn, cell, pawnHeight);
                 final isMovable = movablePawns.contains(pawn);
+                // Halo selector behind the pawn when it is a legal move
+                // target. Sized 2.4 × cell, centered on the visible pawn
+                // anchor (so it hugs the helmet on base and the body on
+                // ring/home).
+                if (isMovable) {
+                  final haloSize = cell * 2.4;
+                  yield Positioned(
+                    left: center.dx - haloSize / 2,
+                    top:  center.dy - haloSize / 2,
+                    width: haloSize,
+                    height: haloSize,
+                    child: IgnorePointer(
+                      child: Image.asset(
+                        'AnimStock/Selectors/GIF/Selector_A_Halo.gif',
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  );
+                }
+                // `_pawnVisibleCenterFrac` is the vertical position of the
+                // visible token center inside the bbox. Anchoring the bbox
+                // so that line lands on `center.dy` makes the *visible*
+                // pawn centered on the cell (ring / home).
                 yield Positioned(
                   left: center.dx - pawnWidth / 2,
-                  top:  center.dy - pawnHeight * 0.55,
+                  top:  center.dy - pawnHeight * _pawnVisibleCenterFrac,
                   width: pawnWidth,
                   height: pawnHeight,
                   child: MouseRegion(
-                    cursor: isMovable
-                        ? SystemMouseCursors.click
-                        : SystemMouseCursors.basic,
+                    cursor: showDetails
+                        ? SystemMouseCursors.help
+                        : (isMovable
+                            ? SystemMouseCursors.click
+                            : SystemMouseCursors.basic),
+                    onEnter: (_) => onPawnHover?.call(pawn),
+                    onExit: (_) => onPawnHover?.call(null),
                     child: GestureDetector(
                       onTap: isMovable ? () => onPawnTap(pawn) : null,
                       child: _PawnAnimatedGif(
                         key: ValueKey('${pawn.color.name}_${pawn.id}'),
-                        asset: _pawnAsset[pawn.color]!,
+                        asset: pawnAsset(pawn),
                         sequentialStartDelayMs: delays[i],
                       ),
                     ),
@@ -1188,28 +1711,37 @@ class _PawnAnimatedGifState extends State<_PawnAnimatedGif>
 class _MiniDiceButton extends StatelessWidget {
   final int value;
   final VoidCallback onTap;
-  const _MiniDiceButton({required this.value, required this.onTap});
+  final bool selected;
+  const _MiniDiceButton({
+    required this.value,
+    required this.onTap,
+    this.selected = false,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return GestureDetector(
       onTap: onTap,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: Container(
-          width: 30,
-          height: 30,
+          width: 28,
+          height: 28,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: selected ? cs.primary : cs.surfaceContainerHighest,
             borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: Colors.black54),
+            border: Border.all(
+              color: selected ? cs.primary : cs.outlineVariant,
+              width: selected ? 2 : 1,
+            ),
           ),
           child: Center(
             child: Text(
               '$value',
-              style: const TextStyle(
-                color: Colors.black,
-                fontSize: 16,
+              style: TextStyle(
+                color: selected ? cs.onPrimary : cs.onSurface,
+                fontSize: 15,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -1231,7 +1763,7 @@ class _DiceFace extends StatelessWidget {
   String get _assetPath {
     final colorName = playerColor?.name ?? 'white';
     final v = value.clamp(1, 6);
-    return 'Animations/AnimStock/Dices/PNG/Dice_${v}_$colorName.png';
+    return 'AnimStock/Dices/PNG/Dice_${v}_$colorName.png';
   }
 
   @override
@@ -1250,25 +1782,43 @@ class _DiceFace extends StatelessWidget {
 class _PlayerLabel extends StatelessWidget {
   final String name;
   final Color color;
-  const _PlayerLabel({required this.name, required this.color});
+  final double fontSize;
+  const _PlayerLabel({
+    required this.name,
+    required this.color,
+    required this.fontSize,
+  });
 
   @override
   Widget build(BuildContext context) {
+    // Padding scales with fontSize so the pill stays proportional on small
+    // boards (Smartphone preset). FittedBox prevents long names from
+    // overflowing — they shrink instead of clipping.
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: EdgeInsets.symmetric(
+        horizontal: fontSize * 0.55,
+        vertical: fontSize * 0.25,
+      ),
       decoration: BoxDecoration(
         color: color,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(fontSize * 0.45),
         boxShadow: const [
-          BoxShadow(color: Color(0x33000000), blurRadius: 4, offset: Offset(0, 2)),
+          BoxShadow(
+              color: Color(0x33000000),
+              blurRadius: 4,
+              offset: Offset(0, 2)),
         ],
       ),
-      child: Text(
-        name,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w700,
-          fontSize: 14,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          name,
+          maxLines: 1,
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w700,
+            fontSize: fontSize,
+          ),
         ),
       ),
     );

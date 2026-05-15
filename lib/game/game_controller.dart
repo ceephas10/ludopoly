@@ -21,9 +21,9 @@ enum TurnPhase {
 }
 
 class GameController {
-  /// Turn order, fixed at construction time. Index `currentPlayerIdx` cycles
-  /// through this list.
-  final List<PlayerColor> turnOrder;
+  /// Turn order. Mutable so the host can swap players in/out at runtime
+  /// (e.g. when the user picks 1/2/3 players in the command center).
+  List<PlayerColor> turnOrder;
   final GameState state;
 
   int currentPlayerIdx = 0;
@@ -197,6 +197,22 @@ class GameController {
 
   /// Force the next player (debug). Resets streak + dice.
   void skipTurn() => _nextPlayer();
+
+  /// Reset all pawns to base, clear dice/turn state, restart from first player.
+  void reset() {
+    for (final pawns in state.pawnsByColor.values) {
+      for (final p in pawns) {
+        p.location = PawnLocation.base;
+        p.position = p.id;
+      }
+    }
+    currentPlayerIdx = 0;
+    diceValue = 0;
+    consecutiveSixes = 0;
+    lastMovedThisTurn = null;
+    phase = TurnPhase.rolling;
+    winner = null;
+  }
 
   // --- internal helpers -----------------------------------------------------
 

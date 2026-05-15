@@ -58,13 +58,16 @@ flutter:
   uses-material-design: true
 
   assets:
-    - Animations/AnimStock/Tokens/PNG/
-    - Animations/AnimStock/Tokens/GIF/
-    - Animations/AnimStock/Tokens/WEBM/
-    - Animations/AnimStock/Dices/
-    - Animations/AnimStock/Dices/PNG/
-    - Animations/AnimStock/Dices/GIF/
-    - Animations/AnimStock/Dices/WEBM/
+    - AnimStock/Tokens/PNG/
+    - AnimStock/Tokens/GIF/
+    - AnimStock/Tokens/WEBM/
+    - AnimStock/Dices/
+    - AnimStock/Dices/PNG/
+    - AnimStock/Dices/GIF/
+    - AnimStock/Dices/WEBM/
+    - AnimStock/Selectors/
+    - AnimStock/Selectors/GIF/
+    - AnimStock/Selectors/PNG/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
