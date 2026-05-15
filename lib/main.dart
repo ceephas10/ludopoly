@@ -60,14 +60,11 @@ class _BoardScreenState extends State<BoardScreen> {
   bool _showGrid = false;
   int _playerCount = 4;
 
-  /// Dice value displayed in each player's corner slot. Sticks to the last
-  /// rolled value so non-active players still see a face. Driven by the
-  /// controller for the current player.
-  final Map<PlayerColor, int> _diceValues = {
-    PlayerColor.blue:   1,
-    PlayerColor.red:    1,
-    PlayerColor.green:  1,
-    PlayerColor.yellow: 1,
+  /// Dice value displayed in each player's corner slot. Initialised to a
+  /// random 1..6 so each corner shows a different face at game start. Sticks
+  /// to the last rolled value so non-active players still see a face.
+  late final Map<PlayerColor, int> _diceValues = {
+    for (final c in PlayerColor.values) c: math.Random().nextInt(6) + 1,
   };
 
   void _rollDice() {
@@ -515,7 +512,7 @@ class BoardView extends StatelessWidget {
                 top: (c.biggest.height - diceSize) / 2,
                 width: diceSize,
                 height: diceSize,
-                child: const _DiceFace(value: 1, color: Colors.white),
+                child: const _DiceFace(value: 1, playerColor: null),
               ),
             ],
           );
@@ -564,7 +561,7 @@ class BoardView extends StatelessWidget {
             for (final p in players)
               () {
                 final dc = _diceCenter[p.color]!;
-                final size = cell * 2.0;
+                final size = cell * 2.0 * 0.70;
                 final isCurrent = p.color == currentPlayerColor;
                 final clickable = isCurrent && canRollDice;
                 return Positioned(
@@ -582,7 +579,7 @@ class BoardView extends StatelessWidget {
                         opacity: isCurrent ? 1.0 : 0.4,
                         child: _DiceFace(
                           value: diceValues[p.color] ?? 1,
-                          color: _colorOf(p.color),
+                          playerColor: p.color,
                         ),
                       ),
                     ),
@@ -1223,19 +1220,26 @@ class _MiniDiceButton extends StatelessWidget {
   }
 }
 
-/// Dice at rest, rendered from a photographic PNG asset. The colored player
-/// frame around it is dropped in favor of the realistic look.
+/// Dice at rest, rendered from a colored face PNG keyed by [playerColor] and
+/// [value]. When [playerColor] is null we use the generic white dice (used by
+/// the 5/6-player center slot).
 class _DiceFace extends StatelessWidget {
   final int value;
-  final Color color;
-  const _DiceFace({required this.value, required this.color});
+  final PlayerColor? playerColor;
+  const _DiceFace({required this.value, required this.playerColor});
+
+  String get _assetPath {
+    final colorName = playerColor?.name ?? 'white';
+    final v = value.clamp(1, 6);
+    return 'Animations/AnimStock/Dices/PNG/Dice_${v}_$colorName.png';
+  }
 
   @override
   Widget build(BuildContext context) {
     return Container(
       color: Colors.transparent,
       child: Image.asset(
-        'Animations/AnimStock/Dices/Dice_White_3D.png',
+        _assetPath,
         fit: BoxFit.contain,
         filterQuality: FilterQuality.high,
       ),
