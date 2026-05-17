@@ -47,3 +47,7 @@ app.*.map.json
 # Claude local settings (per-user)
 .claude/settings.local.json
 
+
+# Junction to LudoPolyAnimations (assets produced by Studio).
+# Not tracked: the canonical source lives in the LudoPolyAnimations repo.
+AnimStock/

@@ -2,21 +2,29 @@
 
 ## Architecture du repo
 
-Un **seul** repo Git contient deux projets indépendants :
+Un **seul** repo Git, deux projets en relation **producer/consumer** :
 
-| Dossier | Projet | Stack |
-|---|---|---|
-| racine (`lib/`, `pubspec.yaml`, ...) | App principale LudoPoly | Flutter / Dart |
-| `Animations/` | Prototypes d'animations de pions | React + Vite + TypeScript |
+| Dossier | Projet | Stack | Rôle |
+|---|---|---|---|
+| racine (`lib/`, `pubspec.yaml`, ...) | App LudoPoly | Flutter / Dart | **Consomme** les anims |
+| `Animations/` | Atelier d'animations | React + Vite + TS | **Produit** les anims |
 
-Les deux évoluent en parallèle, partagent la même histoire Git mais sont fonctionnellement indépendants.
+- Le **projet Animations** conçoit/exporte toutes les anims (dés qui roulent, pions qui sautent, etc.) et dépose les sorties (PNG, GIF, WebM) dans `Animations/AnimStock/<categorie>/`.
+- Le **Flutter** ne fait que `Image.asset(...)` sur ces fichiers. **Aucune animation custom côté Flutter** (pas de CustomPaint animé, pas de particles) — toute anim manquante est une demande à passer au projet Animations.
+
+### Convention des assets d'animation
+
+- Path : `Animations/AnimStock/<categorie>/<nom_en_snake_case>.{png,gif,webm}` (ex : `Animations/AnimStock/Dices/Dice_White_3D.png`).
+- **Pas d'espaces** dans les noms (bug Flutter web : double URL-encoding).
+- Déclaration : ajouter le dossier dans `pubspec.yaml` → `assets: - Animations/AnimStock/<categorie>/`.
+- **Ajout/renommage d'un asset → relancer `flutter run`** (le bundle est figé au démarrage). Modifier un asset existant → hot restart suffit.
 
 ## Convention de commit — scopes obligatoires
 
 Chaque commit DOIT être préfixé par son scope :
 
 - `flutter: ...` — modif dans l'app Flutter (`lib/`, `pubspec.yaml`, `test/`, `assets/`, etc.)
-- `anim: ...` — modif dans `Animations/`
+- `anim: ...` — modif dans `Animations/` (atelier d'anims + dépôt dans `AnimStock/`)
 - `docs: ...` — modif dans `Documentation/`
 - `repo: ...` — modif transverse (`.gitignore`, `README.md`, `CLAUDE.md`, config repo)
 
