@@ -1,0 +1,1087 @@
+{
+  "annotations": [
+    {
+      "id": 1,
+      "type": "multipoints",
+      "label": "4 tokens verts",
+      "points": [
+        {
+          "x": 330,
+          "y": 274,
+          "cell": 64
+        },
+        {
+          "x": 418,
+          "y": 250,
+          "cell": 65
+        },
+        {
+          "x": 470,
+          "y": 178,
+          "cell": 46
+        },
+        {
+          "x": 468,
+          "y": 316,
+          "cell": 86
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "multipoints",
+      "label": "4 tokens  rouge",
+      "points": [
+        {
+          "x": 878,
+          "y": 318,
+          "cell": 92
+        },
+        {
+          "x": 924,
+          "y": 246,
+          "cell": 73
+        },
+        {
+          "x": 878,
+          "y": 172,
+          "cell": 52
+        },
+        {
+          "x": 1008,
+          "y": 268,
+          "cell": 74
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "multipoints",
+      "label": "4 tokens Orange",
+      "points": [
+        {
+          "x": 196,
+          "y": 664,
+          "cell": 182
+        },
+        {
+          "x": 336,
+          "y": 700,
+          "cell": 204
+        },
+        {
+          "x": 262,
+          "y": 726,
+          "cell": 203
+        },
+        {
+          "x": 246,
+          "y": 822,
+          "cell": 223
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "multipoints",
+      "label": "4 tokens Bleu",
+      "points": [
+        {
+          "x": 584,
+          "y": 1058,
+          "cell": 308
+        },
+        {
+          "x": 670,
+          "y": 1020,
+          "cell": 289
+        },
+        {
+          "x": 670,
+          "y": 952,
+          "cell": 269
+        },
+        {
+          "x": 752,
+          "y": 1056,
+          "cell": 310
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "multipoints",
+      "label": "4 tokens Jaune",
+      "points": [
+        {
+          "x": 1000,
+          "y": 702,
+          "cell": 214
+        },
+        {
+          "x": 1140,
+          "y": 660,
+          "cell": 196
+        },
+        {
+          "x": 1084,
+          "y": 728,
+          "cell": 215
+        },
+        {
+          "x": 1090,
+          "y": 814,
+          "cell": 235
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "point",
+      "label": "Case départ Bleu",
+      "points": [
+        {
+          "x": 890,
+          "y": 1086,
+          "cell": 312
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "point",
+      "label": "Case départ Orange",
+      "points": [
+        {
+          "x": 316,
+          "y": 994,
+          "cell": 284
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "point",
+      "label": "Case départ Vert",
+      "points": [
+        {
+          "x": 226,
+          "y": 416,
+          "cell": 103
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "point",
+      "label": "Case départ Rouge",
+      "points": [
+        {
+          "x": 742,
+          "y": 156,
+          "cell": 50
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "point",
+      "label": "Case départ Jaune",
+      "points": [
+        {
+          "x": 1158,
+          "y": 556,
+          "cell": 156
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "polygone",
+      "label": "Ring depuis le départ Bleu",
+      "points": [
+        {
+          "x": 904,
+          "y": 1062,
+          "cell": 312
+        },
+        {
+          "x": 716,
+          "y": 854,
+          "cell": 250
+        },
+        {
+          "x": 620,
+          "y": 848,
+          "cell": 248
+        },
+        {
+          "x": 404,
+          "y": 1142,
+          "cell": 325
+        },
+        {
+          "x": 274,
+          "y": 1050,
+          "cell": 303
+        },
+        {
+          "x": 494,
+          "y": 758,
+          "cell": 207
+        },
+        {
+          "x": 462,
+          "y": 654,
+          "cell": 186
+        },
+        {
+          "x": 108,
+          "y": 542,
+          "cell": 141
+        },
+        {
+          "x": 154,
+          "y": 396,
+          "cell": 102
+        },
+        {
+          "x": 506,
+          "y": 512,
+          "cell": 147
+        },
+        {
+          "x": 594,
+          "y": 446,
+          "cell": 128
+        },
+        {
+          "x": 586,
+          "y": 82,
+          "cell": 28
+        },
+        {
+          "x": 734,
+          "y": 82,
+          "cell": 30
+        },
+        {
+          "x": 744,
+          "y": 444,
+          "cell": 130
+        },
+        {
+          "x": 838,
+          "y": 508,
+          "cell": 151
+        },
+        {
+          "x": 1182,
+          "y": 402,
+          "cell": 116
+        },
+        {
+          "x": 1234,
+          "y": 544,
+          "cell": 157
+        },
+        {
+          "x": 874,
+          "y": 646,
+          "cell": 192
+        },
+        {
+          "x": 852,
+          "y": 752,
+          "cell": 212
+        },
+        {
+          "x": 1068,
+          "y": 1060,
+          "cell": 315
+        },
+        {
+          "x": 944,
+          "y": 1142,
+          "cell": 333
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "point",
+      "label": "Entrée couloir maison Bleu",
+      "points": [
+        {
+          "x": 958,
+          "y": 1042,
+          "cell": 293
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "point",
+      "label": "Entrée couloir maison Orange",
+      "points": [
+        {
+          "x": 376,
+          "y": 1040,
+          "cell": 285
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "point",
+      "label": "Entrée couloir maison Vert",
+      "points": [
+        {
+          "x": 202,
+          "y": 494,
+          "cell": 142
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "point",
+      "label": "Entrée couloir maison Rouge",
+      "points": [
+        {
+          "x": 666,
+          "y": 152,
+          "cell": 49
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "point",
+      "label": "Entrée couloir maison Jaune",
+      "points": [
+        {
+          "x": 1136,
+          "y": 498,
+          "cell": 156
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "point",
+      "label": "Maison Bleu",
+      "points": [
+        {
+          "x": 738,
+          "y": 738,
+          "cell": 210
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "point",
+      "label": "Maison Orange",
+      "points": [
+        {
+          "x": 594,
+          "y": 740,
+          "cell": 208
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "point",
+      "label": "Maison Vert",
+      "points": [
+        {
+          "x": 562,
+          "y": 604,
+          "cell": 168
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "point",
+      "label": "Maison Rouge",
+      "points": [
+        {
+          "x": 668,
+          "y": 528,
+          "cell": 149
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "point",
+      "label": "Maison Jaune",
+      "points": [
+        {
+          "x": 782,
+          "y": 612,
+          "cell": 171
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "polygone",
+      "label": "Bandeau base Bleu",
+      "points": [
+        {
+          "x": 464,
+          "y": 1162,
+          "cell": 326
+        },
+        {
+          "x": 662,
+          "y": 882,
+          "cell": 249
+        },
+        {
+          "x": 876,
+          "y": 1166,
+          "cell": 332
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "polygone",
+      "label": "Bandeau base Orange",
+      "points": [
+        {
+          "x": 102,
+          "y": 610,
+          "cell": 161
+        },
+        {
+          "x": 438,
+          "y": 720,
+          "cell": 206
+        },
+        {
+          "x": 228,
+          "y": 988,
+          "cell": 283
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "polygone",
+      "label": "Bandeau base Vert",
+      "points": [
+        {
+          "x": 530,
+          "y": 96,
+          "cell": 27
+        },
+        {
+          "x": 194,
+          "y": 338,
+          "cell": 82
+        },
+        {
+          "x": 530,
+          "y": 444,
+          "cell": 127
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "type": "polygone",
+      "label": "Bandeau base Rouge",
+      "points": [
+        {
+          "x": 1138,
+          "y": 340,
+          "cell": 96
+        },
+        {
+          "x": 810,
+          "y": 440,
+          "cell": 131
+        },
+        {
+          "x": 804,
+          "y": 96,
+          "cell": 31
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "type": "polygone",
+      "label": "Bandeau base Jaune",
+      "points": [
+        {
+          "x": 1094,
+          "y": 990,
+          "cell": 295
+        },
+        {
+          "x": 896,
+          "y": 712,
+          "cell": 212
+        },
+        {
+          "x": 1226,
+          "y": 608,
+          "cell": 177
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "type": "multipoints",
+      "label": "Cases Etoile",
+      "points": [
+        {
+          "x": 490,
+          "y": 1034,
+          "cell": 287
+        },
+        {
+          "x": 248,
+          "y": 588,
+          "cell": 163
+        },
+        {
+          "x": 596,
+          "y": 230,
+          "cell": 68
+        },
+        {
+          "x": 1044,
+          "y": 444,
+          "cell": 134
+        },
+        {
+          "x": 980,
+          "y": 942,
+          "cell": 274
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "type": "point",
+      "label": "Dé",
+      "points": [
+        {
+          "x": 664,
+          "y": 634,
+          "cell": 189
+        }
+      ]
+    },
+    {
+      "id": 29,
+      "type": "surface",
+      "label": "Yard Bleu",
+      "points": [
+        {
+          "x": 518,
+          "y": 1140,
+          "cell": 327
+        },
+        {
+          "x": 674,
+          "y": 926,
+          "cell": 269
+        },
+        {
+          "x": 820,
+          "y": 1144,
+          "cell": 331
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "surface",
+      "label": "Yard Orange",
+      "points": [
+        {
+          "x": 148,
+          "y": 650,
+          "cell": 182
+        },
+        {
+          "x": 398,
+          "y": 734,
+          "cell": 205
+        },
+        {
+          "x": 246,
+          "y": 950,
+          "cell": 263
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "type": "surface",
+      "label": "Yard Vert",
+      "points": [
+        {
+          "x": 254,
+          "y": 332,
+          "cell": 83
+        },
+        {
+          "x": 502,
+          "y": 148,
+          "cell": 47
+        },
+        {
+          "x": 500,
+          "y": 412,
+          "cell": 107
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "surface",
+      "label": "Yard Rouge",
+      "points": [
+        {
+          "x": 834,
+          "y": 148,
+          "cell": 51
+        },
+        {
+          "x": 1086,
+          "y": 328,
+          "cell": 95
+        },
+        {
+          "x": 836,
+          "y": 412,
+          "cell": 111
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "type": "surface",
+      "label": "Yard Jaune",
+      "points": [
+        {
+          "x": 938,
+          "y": 730,
+          "cell": 213
+        },
+        {
+          "x": 1192,
+          "y": 646,
+          "cell": 197
+        },
+        {
+          "x": 1096,
+          "y": 944,
+          "cell": 275
+        }
+      ]
+    },
+    {
+      "id": 34,
+      "type": "surface",
+      "label": "Pentagone Dé",
+      "points": [
+        {
+          "x": 670,
+          "y": 742,
+          "cell": 209
+        },
+        {
+          "x": 578,
+          "y": 676,
+          "cell": 188
+        },
+        {
+          "x": 612,
+          "y": 568,
+          "cell": 168
+        },
+        {
+          "x": 728,
+          "y": 568,
+          "cell": 170
+        },
+        {
+          "x": 762,
+          "y": 678,
+          "cell": 190
+        }
+      ]
+    },
+    {
+      "id": 35,
+      "type": "surface",
+      "label": "Couloir maison Bleu",
+      "points": [
+        {
+          "x": 942,
+          "y": 1092,
+          "cell": 313
+        },
+        {
+          "x": 730,
+          "y": 796,
+          "cell": 230
+        },
+        {
+          "x": 790,
+          "y": 748,
+          "cell": 211
+        },
+        {
+          "x": 1010,
+          "y": 1048,
+          "cell": 294
+        }
+      ]
+    },
+    {
+      "id": 36,
+      "type": "surface",
+      "label": "Couloir maison Orange",
+      "points": [
+        {
+          "x": 330,
+          "y": 1050,
+          "cell": 304
+        },
+        {
+          "x": 548,
+          "y": 750,
+          "cell": 207
+        },
+        {
+          "x": 608,
+          "y": 794,
+          "cell": 228
+        },
+        {
+          "x": 392,
+          "y": 1094,
+          "cell": 305
+        }
+      ]
+    },
+    {
+      "id": 37,
+      "type": "surface",
+      "label": "Couloir maison Vert",
+      "points": [
+        {
+          "x": 156,
+          "y": 518,
+          "cell": 142
+        },
+        {
+          "x": 180,
+          "y": 448,
+          "cell": 122
+        },
+        {
+          "x": 532,
+          "y": 560,
+          "cell": 167
+        },
+        {
+          "x": 510,
+          "y": 632,
+          "cell": 187
+        }
+      ]
+    },
+    {
+      "id": 38,
+      "type": "surface",
+      "label": "Couloir maison Rouge",
+      "points": [
+        {
+          "x": 630,
+          "y": 120,
+          "cell": 29
+        },
+        {
+          "x": 706,
+          "y": 118,
+          "cell": 30
+        },
+        {
+          "x": 706,
+          "y": 488,
+          "cell": 130
+        },
+        {
+          "x": 630,
+          "y": 486,
+          "cell": 129
+        }
+      ]
+    },
+    {
+      "id": 39,
+      "type": "surface",
+      "label": "Couloir maison Jaune",
+      "points": [
+        {
+          "x": 806,
+          "y": 562,
+          "cell": 171
+        },
+        {
+          "x": 1158,
+          "y": 448,
+          "cell": 136
+        },
+        {
+          "x": 1182,
+          "y": 520,
+          "cell": 156
+        },
+        {
+          "x": 830,
+          "y": 634,
+          "cell": 191
+        }
+      ]
+    },
+    {
+      "id": 40,
+      "type": "surface",
+      "label": "Pentagone Home",
+      "points": [
+        {
+          "x": 558,
+          "y": 488,
+          "cell": 127
+        },
+        {
+          "x": 782,
+          "y": 486,
+          "cell": 131
+        },
+        {
+          "x": 850,
+          "y": 698,
+          "cell": 192
+        },
+        {
+          "x": 670,
+          "y": 834,
+          "cell": 229
+        },
+        {
+          "x": 488,
+          "y": 704,
+          "cell": 206
+        }
+      ]
+    },
+    {
+      "id": 41,
+      "type": "surface",
+      "label": "Home Bleu",
+      "points": [
+        {
+          "x": 672,
+          "y": 836,
+          "cell": 229
+        },
+        {
+          "x": 670,
+          "y": 744,
+          "cell": 209
+        },
+        {
+          "x": 764,
+          "y": 678,
+          "cell": 190
+        },
+        {
+          "x": 852,
+          "y": 698,
+          "cell": 192
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "type": "surface",
+      "label": "Home Orange",
+      "points": [
+        {
+          "x": 672,
+          "y": 832,
+          "cell": 229
+        },
+        {
+          "x": 490,
+          "y": 704,
+          "cell": 207
+        },
+        {
+          "x": 582,
+          "y": 676,
+          "cell": 188
+        },
+        {
+          "x": 670,
+          "y": 742,
+          "cell": 209
+        }
+      ]
+    },
+    {
+      "id": 43,
+      "type": "surface",
+      "label": "Home Vert",
+      "points": [
+        {
+          "x": 492,
+          "y": 704,
+          "cell": 207
+        },
+        {
+          "x": 558,
+          "y": 488,
+          "cell": 127
+        },
+        {
+          "x": 612,
+          "y": 570,
+          "cell": 168
+        },
+        {
+          "x": 578,
+          "y": 674,
+          "cell": 188
+        }
+      ]
+    },
+    {
+      "id": 44,
+      "type": "surface",
+      "label": "Home Rouge",
+      "points": [
+        {
+          "x": 558,
+          "y": 490,
+          "cell": 147
+        },
+        {
+          "x": 782,
+          "y": 488,
+          "cell": 131
+        },
+        {
+          "x": 728,
+          "y": 568,
+          "cell": 170
+        },
+        {
+          "x": 614,
+          "y": 570,
+          "cell": 168
+        }
+      ]
+    },
+    {
+      "id": 45,
+      "type": "surface",
+      "label": "Home Jaune",
+      "points": [
+        {
+          "x": 782,
+          "y": 488,
+          "cell": 131
+        },
+        {
+          "x": 848,
+          "y": 698,
+          "cell": 192
+        },
+        {
+          "x": 760,
+          "y": 678,
+          "cell": 190
+        },
+        {
+          "x": 728,
+          "y": 570,
+          "cell": 170
+        }
+      ]
+    },
+    {
+      "id": 46,
+      "type": "surface",
+      "label": "Board",
+      "points": [
+        {
+          "x": 410,
+          "y": 1198,
+          "cell": 345
+        },
+        {
+          "x": 226,
+          "y": 1064,
+          "cell": 303
+        },
+        {
+          "x": 62,
+          "y": 568,
+          "cell": 160
+        },
+        {
+          "x": 132,
+          "y": 350,
+          "cell": 101
+        },
+        {
+          "x": 556,
+          "y": 42,
+          "cell": 7
+        },
+        {
+          "x": 780,
+          "y": 40,
+          "cell": 11
+        },
+        {
+          "x": 1206,
+          "y": 350,
+          "cell": 117
+        },
+        {
+          "x": 1276,
+          "y": 568,
+          "cell": 178
+        },
+        {
+          "x": 1114,
+          "y": 1066,
+          "cell": 315
+        },
+        {
+          "x": 928,
+          "y": 1198,
+          "cell": 353
+        }
+      ]
+    }
+  ],
+  "nextId": 47
+}

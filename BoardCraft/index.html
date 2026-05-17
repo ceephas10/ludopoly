@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>BoardCraft</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  font-family: "Segoe UI", Arial, sans-serif;
+  margin: 0; padding: 12px;
+  background: #f2f2f5;
+  color: #222;
+  display: flex; flex-direction: column; gap: 10px;
+  min-height: 100vh;
+}
+h1 { margin: 0; font-weight: 400; font-size: 17px; color: #333; }
+
+/* ── Toolbar ── */
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tool-btn {
+  padding: 7px 14px; font-size: 13px; font-weight: 500;
+  border: 1.5px solid #aaa; background: white; color: #222;
+  border-radius: 6px; cursor: pointer; transition: background 0.12s, border-color 0.12s;
+}
+.tool-btn:hover { background: #f0f0f0; }
+.tool-btn.active { background: #FFE680; border-color: #B8860B; color: #5a3e00; }
+.tool-btn.ready {
+  background: #d4f0d4; border-color: #2E8B47; color: #1a4d1a;
+  animation: pulse 1.1s ease-in-out infinite alternate;
+}
+@keyframes pulse {
+  from { box-shadow: 0 0 0 0 rgba(46,139,71,0.35); }
+  to   { box-shadow: 0 0 0 7px rgba(46,139,71,0); }
+}
+.sep { width: 1px; height: 28px; background: #ccc; margin: 0 4px; }
+
+/* ── Main layout ── */
+.main { display: flex; gap: 14px; align-items: flex-start; }
+
+/* ── Stage ── */
+#stage {
+  position: relative; flex-shrink: 0;
+  background: white; border: 1px solid #ddd; border-radius: 4px;
+  user-select: none;
+}
+#board { display: block; width: 666px; height: auto; }
+#overlay {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none;
+}
+#overlay.active { pointer-events: auto; cursor: crosshair; }
+/* When a row is in "Modifier" mode, enable events on overlay so we can
+   catch pointerdown on drag-handle children. Cursor stays default outside
+   the handles. */
+#overlay.editing { pointer-events: auto; }
+#overlay .drag-handle { cursor: grab; }
+#overlay .drag-handle:active { cursor: grabbing; }
+
+/* ── Panel ── */
+.panel {
+  flex: 1; min-width: 280px; display: flex; flex-direction: column; gap: 8px;
+}
+.panel-header { display: flex; align-items: center; gap: 10px; }
+.panel-title { margin: 0; font-size: 13px; font-weight: 600; color: #555; }
+#btn-undo-row {
+  padding: 6px 12px; font-size: 12px; font-weight: 600;
+  border: 1.5px solid #B8860B; background: #FFE680; color: #5a3e00;
+  border-radius: 6px; cursor: pointer; transition: filter 0.12s;
+}
+#btn-undo-row:hover:not(:disabled) { filter: brightness(0.95); }
+#btn-undo-row:disabled {
+  background: white; border-color: #ddd; color: #aaa; cursor: not-allowed;
+}
+
+.annot-table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+  background: white; border-radius: 8px; overflow: hidden;
+  border: 1px solid #ddd;
+}
+.annot-table th {
+  background: #2c2c4a; color: white;
+  padding: 7px 10px; text-align: left; font-weight: 600; font-size: 11px;
+}
+.annot-table td {
+  padding: 5px 8px; border-bottom: 1px solid #eee; vertical-align: middle;
+}
+.annot-table tr:last-child td { border-bottom: none; }
+.annot-table tr:hover td { background: #f8f8ff; }
+.annot-table tr.highlighted td { background: #fff8e0; }
+
+.col-n       { width: 34px; text-align: center; font-weight: 700; color: #555; }
+.col-type    { width: 80px; }
+.col-label   { }
+.col-actions { width: 108px; white-space: nowrap; text-align: right; }
+
+.type-badge {
+  display: inline-block; padding: 2px 7px; border-radius: 10px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.tb-point      { background: #fde8d8; color: #a03010; }
+.tb-multipoints{ background: #d8eafd; color: #1050a0; }
+.tb-polygone   { background: #d8fde8; color: #106030; }
+.tb-surface    { background: #ede8fd; color: #5010a0; }
+
+.label-input {
+  width: 100%; border: 1px solid transparent; border-radius: 4px;
+  padding: 2px 5px; font-size: 12px; background: transparent; color: #222;
+}
+.label-input:focus { outline: none; border-color: #3DA4EC; background: #f0f7ff; }
+
+.btn-sm {
+  padding: 3px 7px; font-size: 11px; border-radius: 4px;
+  border: 1px solid #bbb; background: white; cursor: pointer; font-weight: 500;
+}
+.btn-sm:hover { background: #f0f0f0; }
+.btn-edit { border-color: #3DA4EC; color: #1a6fab; margin-right: 3px; }
+.btn-edit:hover { background: #e8f4ff; }
+.btn-del  { border-color: #e05050; color: #c02020; }
+.btn-del:hover  { background: #ffe8e8; }
+
+/* ── Status bar ── */
+.status { font-size: 12px; color: #666; min-height: 18px; }
+</style>
+</head>
+<body>
+
+<h1>BoardCraft — Board 5 joueurs</h1>
+
+<div class="toolbar">
+  <button class="tool-btn" data-tool="point">📍 Point</button>
+  <button class="tool-btn" data-tool="multipoints">🔢 Multipoints</button>
+  <button class="tool-btn" data-tool="polygone">🔷 Polygone</button>
+  <button class="tool-btn" data-tool="surface">🟪 Surface</button>
+  <button class="tool-btn" id="btn-undo" title="Annuler le dernier point posé">↩️ Undo</button>
+  <div class="sep"></div>
+  <div class="sep"></div>
+  <button class="tool-btn" id="btn-grid">🔲 Grid</button>
+  <div class="sep"></div>
+  <button class="tool-btn" id="btn-save">💾 Sauver</button>
+  <button class="tool-btn" id="btn-load">📂 Charger</button>
+  <span id="file-indicator" style="font-size:12px;color:#666;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+</div>
+
+<div class="status" id="status"></div>
+
+<div class="main">
+
+  <div id="stage">
+    <img id="board" src="board5_clean.jpg" alt="">
+    <svg id="overlay" viewBox="0 0 1332 1265" preserveAspectRatio="none"></svg>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <p class="panel-title">📋 Annotations</p>
+      <button id="btn-undo-row" disabled title="Restaurer la dernière ligne supprimée">↩️ Undo</button>
+    </div>
+    <table class="annot-table">
+      <thead>
+        <tr>
+          <th class="col-n">N°</th>
+          <th class="col-type">Type</th>
+          <th class="col-label">Explications</th>
+          <th class="col-actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// Constants
+// ═══════════════════════════════════════════════════════════
+const STAGE_W = 1332, STAGE_H = 1265;
+const CELL_PX = 70;
+const NS = "http://www.w3.org/2000/svg";
+const STORAGE_KEY = "boardcraft.v4";
+const CLOSE_THRESH = 28; // SVG units to detect polygon close-click
+
+// ═══════════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════════
+let annotations = [];
+let nextId = 1;
+let activeTool = null;   // null | 'point' | 'multipoints' | 'polygone' | 'surface'
+let pending = [];        // points being placed
+let highlightedId = null;
+let gridOn = false;
+// Session-only stack of deleted rows. Each entry: { index, ann }.
+// Cleared on page reload (intentional — we don't persist undo history).
+let deletedStack = [];
+
+// Load from localStorage. Supports legacy points (arrays [x,y]) and the new
+// schema (objects {x,y,cell}).
+(function load() {
+  try {
+    const d = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    if (!d) return;
+    annotations = (d.annotations || []).map(a => ({
+      ...a,
+      points: typeof normalizePoints === 'function' ? null : null,
+      _raw: a.points,
+    }));
+    // We can't call normalizePoints here because it's defined later in the
+    // file; do the conversion inline.
+    annotations = annotations.map(a => ({
+      id: a.id, type: a.type, label: a.label || '',
+      points: (a._raw || []).map(p =>
+        Array.isArray(p) ? [p[0], p[1]] :
+        (p && typeof p === 'object') ? [p.x, p.y] : [0, 0]),
+    }));
+    nextId = d.nextId || (annotations.length + 1);
+  } catch(e) {}
+})();
+
+// ═══════════════════════════════════════════════════════════
+// SVG helpers
+// ═══════════════════════════════════════════════════════════
+const svg = document.getElementById('overlay');
+
+function mkEl(tag, attrs) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+  return e;
+}
+function clearG(id) { const el = svg.querySelector('#'+id); if (el) el.remove(); }
+
+function svgPt(e) {
+  const r = svg.getBoundingClientRect();
+  return [
+    (e.clientX - r.left) / r.width  * STAGE_W,
+    (e.clientY - r.top)  / r.height * STAGE_H
+  ];
+}
+
+// Cell index in the BoardCraft numbered grid (row-major, 0 = top-left).
+// cols = ceil(STAGE_W / CELL_PX) = 20 for 1332x1265 with cell=70.
+function cellIdxOf(x, y) {
+  const cols = Math.ceil(STAGE_W / CELL_PX);
+  const cx = Math.max(0, Math.min(cols - 1, Math.floor(x / CELL_PX)));
+  const cy = Math.max(0, Math.floor(y / CELL_PX));
+  return cy * cols + cx;
+}
+
+// Build the serializable shape for a single annotation: each point gets
+// rounded x/y + its grid cell index. Used both for file export and for the
+// localStorage cache so the schemas stay in sync.
+function serialize() {
+  return {
+    annotations: annotations.map(a => ({
+      id: a.id,
+      type: a.type,
+      label: a.label,
+      points: a.points.map(([x, y]) => ({
+        x: Math.round(x),
+        y: Math.round(y),
+        cell: cellIdxOf(x, y),
+      })),
+    })),
+    nextId,
+  };
+}
+
+// Internal point representation is [[x,y], ...] for runtime simplicity.
+// Convert from either [x,y] (legacy) or {x,y,cell} (new) on load.
+function normalizePoints(pts) {
+  if (!Array.isArray(pts)) return [];
+  return pts.map(p => {
+    if (Array.isArray(p)) return [p[0], p[1]];
+    if (p && typeof p === 'object') return [p.x, p.y];
+    return [0, 0];
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// Render annotations
+// ═══════════════════════════════════════════════════════════
+function renderAnnots() {
+  clearG('annots');
+  const g = mkEl('g', {id:'annots'});
+  for (const a of annotations) {
+    const ag = drawAnnotation(a, a.id === highlightedId);
+    if (ag) g.appendChild(ag);
+  }
+  svg.appendChild(g);
+}
+
+function renderAll() {
+  renderAnnots();
+  renderPending();
+  renderTable();
+}
+
+function drawAnnotation(a, sel) {
+  const g = mkEl('g');
+  const selStroke = '#FF9800';
+
+  // Helper: build a circle for a vertex; if `sel` is true, also tag it as a
+  // drag handle so the user can move the point by drag.
+  function vertexCircle(x, y, idx, opts) {
+    const attrs = Object.assign({
+      cx: x, cy: y, r: opts.r,
+      fill: opts.fill,
+      stroke: sel ? selStroke : (opts.stroke || '#fff'),
+      'stroke-width': sel ? 3.5 : (opts.strokeW || 2),
+    }, opts.extra || {});
+    const c = mkEl('circle', attrs);
+    if (sel) {
+      c.classList.add('drag-handle');
+      c.dataset.aid = a.id;
+      c.dataset.pidx = idx;
+    }
+    return c;
+  }
+
+  if (a.type === 'point') {
+    const [x, y] = a.points[0];
+    g.appendChild(vertexCircle(x, y, 0, { r:13, fill:'#ff5722' }));
+    const t = mkEl('text', { x, y:y+5, 'text-anchor':'middle',
+      'font-size':16, fill:'white', 'font-weight':'bold', 'pointer-events':'none' });
+    t.textContent = a.id; g.appendChild(t);
+  }
+  else if (a.type === 'multipoints') {
+    a.points.forEach(([x,y], i) => {
+      g.appendChild(vertexCircle(x, y, i, { r:13, fill:'#2196F3' }));
+      const t = mkEl('text', { x, y:y+5, 'text-anchor':'middle',
+        'font-size':16, fill:'white', 'font-weight':'bold', 'pointer-events':'none' });
+      t.textContent = i+1; g.appendChild(t);
+    });
+  }
+  else if (a.type === 'polygone' || a.type === 'surface') {
+    const pts = a.points.map(p=>p.join(',')).join(' ');
+    const filled = a.type === 'surface';
+    const baseColor = filled ? '#673AB7' : '#4CAF50';
+    g.appendChild(mkEl('polygon', {
+      points: pts,
+      fill:   filled ? 'rgba(103,58,183,0.20)' : 'none',
+      stroke: sel ? selStroke : baseColor,
+      'stroke-width': sel ? 3 : 2
+    }));
+    // Numbered vertex handles (1..N) — same style as multipoints so the
+    // numbering convention is consistent across types.
+    a.points.forEach(([x,y], i) => {
+      g.appendChild(vertexCircle(x, y, i, { r:13, fill: baseColor }));
+      const t = mkEl('text', { x, y:y+5, 'text-anchor':'middle',
+        'font-size':16, fill:'white', 'font-weight':'bold', 'pointer-events':'none' });
+      t.textContent = i+1; g.appendChild(t);
+    });
+    // Annotation id displayed at centroid (offset to avoid overlapping
+    // vertex 1 when polygon is small).
+    if (a.points.length) {
+      const cx = a.points.reduce((s,p)=>s+p[0],0)/a.points.length;
+      const cy = a.points.reduce((s,p)=>s+p[1],0)/a.points.length;
+      const t = mkEl('text', { x:cx, y:cy+5, 'text-anchor':'middle',
+        'font-size':18, fill: baseColor, 'font-weight':'bold',
+        'pointer-events':'none', stroke:'white', 'stroke-width':3,
+        'paint-order':'stroke' });
+      t.textContent = '#' + a.id; g.appendChild(t);
+    }
+  }
+  return g;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Render pending (in-progress) drawing
+// ═══════════════════════════════════════════════════════════
+function renderPending() {
+  clearG('pending');
+  if (!pending.length || !activeTool) return;
+  const g = mkEl('g', {id:'pending'});
+
+  if (activeTool === 'point') {
+    const [x,y] = pending[0];
+    g.appendChild(mkEl('circle', {cx:x, cy:y, r:13, fill:'#ff5722', stroke:'#fff', 'stroke-width':2, opacity:0.75}));
+  }
+  else if (activeTool === 'multipoints') {
+    pending.forEach(([x,y], i) => {
+      g.appendChild(mkEl('circle', {cx:x, cy:y, r:13, fill:'#2196F3', stroke:'#fff', 'stroke-width':2, opacity:0.8}));
+      const t = mkEl('text', {x, y:y+5, 'text-anchor':'middle',
+        'font-size':16, fill:'white', 'font-weight':'bold', 'pointer-events':'none'});
+      t.textContent = i+1; g.appendChild(t);
+    });
+  }
+  else if (activeTool === 'polygone' || activeTool === 'surface') {
+    const filled = activeTool === 'surface';
+    const color  = filled ? '#673AB7' : '#4CAF50';
+    if (pending.length >= 2) {
+      g.appendChild(mkEl('polyline', {
+        points: pending.map(p=>p.join(',')).join(' '),
+        fill: filled ? 'rgba(103,58,183,0.10)' : 'none',
+        stroke: color, 'stroke-width':2, 'stroke-dasharray':'7,4'
+      }));
+    }
+    pending.forEach(([x,y], i) =>
+      g.appendChild(mkEl('circle', { cx:x, cy:y, r: i===0 ? 8 : 5,
+        fill: i===0 ? '#FF9800' : color, stroke:'white', 'stroke-width': i===0 ? 2.5 : 1.5 })));
+  }
+  svg.appendChild(g);
+}
+
+// ═══════════════════════════════════════════════════════════
+// Table
+// ═══════════════════════════════════════════════════════════
+function renderTable() {
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
+  for (const a of annotations) {
+    const tr = document.createElement('tr');
+    if (a.id === highlightedId) tr.classList.add('highlighted');
+    tr.innerHTML = `
+      <td class="col-n">${a.id}</td>
+      <td class="col-type"><span class="type-badge tb-${a.type}">${a.type}</span></td>
+      <td class="col-label"><input class="label-input" type="text" value="${esc(a.label)}" placeholder="Explication…" data-id="${a.id}"></td>
+      <td class="col-actions">
+        <button class="btn-sm btn-edit" data-id="${a.id}">Modifier</button>
+        <button class="btn-sm btn-del"  data-id="${a.id}">Supprimer</button>
+      </td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Tool management
+// ═══════════════════════════════════════════════════════════
+function canCommit() {
+  if (!activeTool || !pending.length) return false;
+  if (activeTool === 'polygone' || activeTool === 'surface') return pending.length >= 3;
+  return pending.length >= 1;
+}
+
+function commitPending() {
+  annotations.push({ id: nextId++, type: activeTool, points: [...pending], label: '' });
+  pending = [];
+  save();
+}
+
+function deactivate() {
+  activeTool = null; pending = [];
+  svg.classList.remove('active');
+  document.querySelectorAll('[data-tool]').forEach(b => b.classList.remove('active','ready'));
+  renderPending();
+  setStatus('');
+}
+
+function updateToolButtons() {
+  document.querySelectorAll('[data-tool]').forEach(b => {
+    const mine = b.dataset.tool === activeTool;
+    b.classList.toggle('active', mine && !canCommit());
+    b.classList.toggle('ready',  mine &&  canCommit());
+  });
+}
+
+function statusForTool(tool) {
+  if (tool === 'point')       return 'Cliquez sur le board pour placer le point (validé au clic).';
+  if (tool === 'multipoints') return 'Cliquez pour placer les points numérotés, puis recliques sur 🔢 Multipoints pour valider.';
+  if (tool === 'polygone')    return 'Cliquez pour poser les sommets. Cliquez sur le 1er point (🟠) pour fermer, ou recliques sur 🔷 Polygone.';
+  if (tool === 'surface')     return 'Cliquez pour poser les sommets. Cliquez sur le 1er point (🟠) pour fermer, ou recliques sur 🟪 Surface.';
+  return '';
+}
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+
+// ── Toolbar click ──────────────────────────────────────────
+document.querySelector('.toolbar').addEventListener('click', e => {
+  const btn = e.target.closest('[data-tool]');
+  if (!btn) return;
+  const tool = btn.dataset.tool;
+
+  if (activeTool === tool) {
+    // Same button: commit if ready
+    if (canCommit()) { commitPending(); renderAll(); }
+    deactivate();
+  } else {
+    // Switch tool (discard pending silently)
+    pending = [];
+    activeTool = tool;
+    svg.classList.add('active');
+    document.querySelectorAll('[data-tool]').forEach(b => b.classList.remove('active','ready'));
+    btn.classList.add('active');
+    setStatus(statusForTool(tool));
+  }
+});
+
+// ── Drag handles: move a vertex of the currently-edited annotation ───
+let dragState = null; // { aid, pidx, circle, moved }
+svg.addEventListener('pointerdown', e => {
+  const c = e.target.closest('.drag-handle');
+  if (!c) return;
+  const aid = +c.dataset.aid;
+  const pidx = +c.dataset.pidx;
+  const a = annotations.find(a => a.id === aid);
+  if (!a || !a.points[pidx]) return;
+  dragState = { aid, pidx, circle: c, moved: false };
+  try { c.setPointerCapture(e.pointerId); } catch(_) {}
+  e.preventDefault();
+  e.stopPropagation();
+});
+svg.addEventListener('pointermove', e => {
+  if (!dragState) return;
+  const a = annotations.find(a => a.id === dragState.aid);
+  if (!a) return;
+  const [x, y] = svgPt(e);
+  a.points[dragState.pidx] = [x, y];
+  dragState.moved = true;
+  renderAnnots();
+});
+function endDrag(e) {
+  if (!dragState) return;
+  try { dragState.circle.releasePointerCapture(e.pointerId); } catch(_) {}
+  if (dragState.moved) save();
+  dragState = null;
+}
+svg.addEventListener('pointerup', endDrag);
+svg.addEventListener('pointercancel', endDrag);
+// Swallow the synthetic click that follows a drag (so it doesn't trigger
+// tool placement on the spot where the user released).
+svg.addEventListener('click', e => {
+  if (e.target.closest('.drag-handle')) { e.stopPropagation(); }
+}, true);
+
+// ── Board click ────────────────────────────────────────────
+svg.addEventListener('click', e => {
+  if (e.target.closest('.drag-handle')) return; // drag, not placement
+  if (!activeTool) return;
+  const [x, y] = svgPt(e);
+
+  if (activeTool === 'point') {
+    // Single click = place + commit immediately (no re-click on button needed).
+    pending = [[x, y]];
+    commitPending();
+    renderAll();
+    deactivate();
+    return;
+  }
+  else if (activeTool === 'multipoints') {
+    pending.push([x, y]);
+    updateToolButtons();
+    renderPending();
+  }
+  else if (activeTool === 'polygone' || activeTool === 'surface') {
+    // Detect close-click on first point
+    if (pending.length >= 3) {
+      const [fx, fy] = pending[0];
+      if (Math.hypot(x-fx, y-fy) < CLOSE_THRESH) {
+        commitPending();
+        renderAll();
+        deactivate();
+        return;
+      }
+    }
+    pending.push([x, y]);
+    updateToolButtons();
+    renderPending();
+  }
+});
+
+// ── Table events ───────────────────────────────────────────
+document.getElementById('tbody').addEventListener('input', e => {
+  const inp = e.target.closest('.label-input');
+  if (!inp) return;
+  const a = annotations.find(a => a.id === +inp.dataset.id);
+  if (a) { a.label = inp.value; save(); }
+});
+
+document.getElementById('tbody').addEventListener('click', e => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  const id = +btn.dataset.id;
+
+  if (btn.classList.contains('btn-del')) {
+    const idx = annotations.findIndex(a => a.id === id);
+    if (idx >= 0) {
+      // Save snapshot for undo, then remove + renumber sequentially.
+      deletedStack.push({ index: idx, ann: annotations[idx] });
+      annotations.splice(idx, 1);
+      if (highlightedId === id) highlightedId = null;
+      renumberIds();
+      updateUndoRowBtn();
+      save(); renderAll();
+    }
+  }
+  if (btn.classList.contains('btn-edit')) {
+    highlightedId = (highlightedId === id) ? null : id;
+    svg.classList.toggle('editing', highlightedId !== null);
+    if (highlightedId) {
+      const a = annotations.find(a => a.id === id);
+      const npts = a ? a.points.length : 0;
+      setStatus('✏️ Édition #' + id + ' — drag les ' + npts +
+                ' point' + (npts > 1 ? 's' : '') +
+                ' pour les déplacer · texte éditable inline · re-clique "Modifier" pour terminer.');
+    } else {
+      setStatus('');
+    }
+    renderAll();
+    setTimeout(() => {
+      const inp = document.querySelector(`.label-input[data-id="${id}"]`);
+      if (inp) inp.focus();
+    }, 30);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// Grid
+// ═══════════════════════════════════════════════════════════
+document.getElementById('btn-grid').addEventListener('click', e => {
+  gridOn = !gridOn;
+  e.currentTarget.classList.toggle('active', gridOn);
+  renderGrid();
+});
+
+// ── Renumber annotations sequentially after a delete/restore ────
+function renumberIds() {
+  annotations.forEach((a, i) => { a.id = i + 1; });
+  nextId = annotations.length + 1;
+}
+
+// ── Restore last deleted row ────────────────────────────────────
+function updateUndoRowBtn() {
+  document.getElementById('btn-undo-row').disabled = deletedStack.length === 0;
+}
+document.getElementById('btn-undo-row').addEventListener('click', () => {
+  const last = deletedStack.pop();
+  if (!last) return;
+  // Splice back at original index (clamped to current length).
+  const idx = Math.min(last.index, annotations.length);
+  annotations.splice(idx, 0, last.ann);
+  renumberIds();
+  updateUndoRowBtn();
+  save(); renderAll();
+});
+
+// ── Undo (last point during placement) ──────────────────────
+document.getElementById('btn-undo').addEventListener('click', () => {
+  if (!activeTool) return;
+  if (activeTool === 'point') return; // single-click tool, nothing to undo
+  if (!pending.length) return;
+  pending.pop();
+  updateToolButtons();
+  renderPending();
+  setStatus(statusForTool(activeTool) + ' — dernier point annulé (' + pending.length + ' restant·s).');
+});
+
+function renderGrid() {
+  clearG('grid');
+  if (!gridOn) return;
+  const g = mkEl('g', {id:'grid'});
+  for (let x = 0; x <= STAGE_W; x += CELL_PX)
+    g.appendChild(mkEl('line', {x1:x,y1:0,x2:x,y2:STAGE_H,stroke:'#3DA4EC','stroke-width':0.5,opacity:0.35}));
+  for (let y = 0; y <= STAGE_H; y += CELL_PX)
+    g.appendChild(mkEl('line', {x1:0,y1:y,x2:STAGE_W,y2:y,stroke:'#3DA4EC','stroke-width':0.5,opacity:0.35}));
+  const cols = Math.ceil(STAGE_W / CELL_PX);
+  for (let cx = 0; cx < STAGE_W/CELL_PX; cx++)
+    for (let cy = 0; cy < STAGE_H/CELL_PX; cy++) {
+      const t = mkEl('text', {
+        x: cx*CELL_PX+CELL_PX/2, y: cy*CELL_PX+CELL_PX/2+7,
+        'font-size':16, fill:'#3DA4EC', opacity:0.8,
+        'font-weight':'bold', 'text-anchor':'middle'
+      });
+      t.textContent = cy*cols+cx; g.appendChild(t);
+    }
+  svg.appendChild(g);
+}
+
+// ═══════════════════════════════════════════════════════════
+// Persistence + utils
+// ═══════════════════════════════════════════════════════════
+function save() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(serialize())); } catch(e) {}
+}
+
+function esc(s) {
+  return String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+// ═══════════════════════════════════════════════════════════
+// File System Access API — 💾 Sauver / 📂 Charger
+// ═══════════════════════════════════════════════════════════
+let fileHandle = null;
+
+const FILE_OPTS = {
+  types: [{ description: 'BoardCraft JSON', accept: { 'application/json': ['.json'] } }],
+  suggestedName: 'boardcraft.json',
+};
+
+async function fileSave() {
+  try {
+    if (!fileHandle) {
+      fileHandle = await window.showSaveFilePicker(FILE_OPTS);
+      document.getElementById('file-indicator').textContent = '📄 ' + fileHandle.name;
+    }
+    const writable = await fileHandle.createWritable();
+    await writable.write(JSON.stringify(serialize(), null, 2));
+    await writable.close();
+    setStatus('💾 Sauvegardé : ' + fileHandle.name);
+    setTimeout(() => setStatus(''), 3000);
+  } catch(e) {
+    if (e.name !== 'AbortError') setStatus('⚠ ' + e.message);
+  }
+}
+
+async function fileLoad() {
+  try {
+    const [handle] = await window.showOpenFilePicker({
+      types: [{ description: 'BoardCraft JSON', accept: { 'application/json': ['.json'] } }],
+    });
+    const text = await (await handle.getFile()).text();
+    const data = JSON.parse(text);
+    annotations = (data.annotations || []).map(a => ({
+      id: a.id, type: a.type, label: a.label || '',
+      points: normalizePoints(a.points),
+    }));
+    nextId      = data.nextId      || (annotations.length + 1);
+    fileHandle  = handle;
+    document.getElementById('file-indicator').textContent = '📄 ' + handle.name;
+    save(); renderAll();
+    setStatus('📂 Chargé : ' + handle.name);
+    setTimeout(() => setStatus(''), 3000);
+  } catch(e) {
+    if (e.name !== 'AbortError') setStatus('⚠ ' + e.message);
+  }
+}
+
+document.getElementById('btn-save').addEventListener('click', fileSave);
+document.getElementById('btn-load').addEventListener('click', fileLoad);
+
+// Auto-sauve dans le fichier dès qu'un handle est ouvert
+const _save = save;
+save = () => { _save(); if (fileHandle) fileSave(); };
+
+// ═══════════════════════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════════════════════
+updateUndoRowBtn();
+renderAll();
+</script>
+</body>
+</html>
