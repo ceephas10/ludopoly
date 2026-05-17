@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'game/board_painter.dart';
+import 'game/board_painter_5p.dart';
 import 'game/board_path.dart';
 import 'game/game_controller.dart';
 import 'game/game_state.dart';
@@ -58,9 +59,21 @@ class _BoardScreenState extends State<BoardScreen> {
   );
   bool _showRing = false;
   bool _showGrid = false;
+  /// Debug overlay: draw a red rectangle around every pawn GIF bbox to
+  /// visualize their rendered footprint (`pawnWidth × pawnHeight`).
+  bool _showCanvas = false;
   bool _showDetails = false;
   int _playerCount = 4;
   bool _assetsReady = false;
+  /// Live status string shown on the loading screen — updated as `_bootstrap`
+  /// probes the token assets so the user can see which file is loading /
+  /// missing instead of staring at a blank "Loading tokens…".
+  String _loadingStatus = 'Démarrage…';
+  /// Per-color available idle-variant indices (e.g. `{blue: [1, 2]}`).
+  /// Populated by `_bootstrap` after probing the asset bundle. Kept for
+  /// future use (5/6-player extensions, runtime swap, debug overlay).
+  // ignore: unused_field
+  Map<PlayerColor, List<int>> _availableVariants = const {};
 
   /// Optional override of the board's logical width. When null the board
   /// fills the available room. Buttons in the command center set this to
@@ -85,10 +98,16 @@ class _BoardScreenState extends State<BoardScreen> {
   /// One idle-animation index (1..5) per pawn, drawn once at startup.
   late final Map<Pawn, int> _pawnAnimIdx;
 
-  /// Returns the GIF asset path for [pawn]'s currently assigned idle anim.
-  String _pawnAsset(Pawn pawn) =>
-      'AnimStock/Tokens/GIF/'
-      'Pawn_standard_${pawn.color.name}_idle_${_pawnAnimIdx[pawn]}.gif';
+  /// Returns the WebP asset path for [pawn]'s currently assigned idle anim.
+  /// Filename convention (Studio's): `Token_standard_<color>_idle_#<n>.webp`.
+  /// If no variant is available for this color, returns an empty string —
+  /// `_PawnAnimatedGif` then renders an empty placeholder.
+  String _pawnAsset(Pawn pawn) {
+    final idx = _pawnAnimIdx[pawn];
+    if (idx == null || idx <= 0) return '';
+    return 'AnimStock/Tokens/WEBP/'
+        'Token_standard_${pawn.color.name}_idle_#$idx.webp';
+  }
 
   /// Active player colors derived from [_playerCount].
   ///   1 → blue alone
@@ -140,23 +159,87 @@ class _BoardScreenState extends State<BoardScreen> {
     _bootstrap();
   }
 
-  /// Pick a random idle animation per pawn (#1..#5), then preload all 20
-  /// token GIFs so the board renders smoothly the first time pawns appear.
+  /// Probe the asset bundle to discover which idle variants exist per
+  /// color (Studio's filename: `Token_standard_<color>_idle_#<n>.gif`),
+  /// then assign each pawn a DISTINCT variant within its color pool.
+  ///
+  /// Resilient: missing files are logged but DON'T block startup.
+  /// Detailed: every probe + every assignment is `debugPrint`-ed AND
+  /// surfaced in `_loadingStatus` so the boot screen shows what's
+  /// happening instead of a blank "Loading tokens…".
   Future<void> _bootstrap() async {
+    debugPrint('[bootstrap] ==== start ====');
+    final t0 = DateTime.now();
     final rng = math.Random();
-    _pawnAnimIdx = {
-      for (final p in _game.allPawns) p: rng.nextInt(5) + 1,
-    };
+    _pawnAnimIdx = {};
 
-    final assets = <String>[
-      for (final c in PlayerColor.values)
-        for (int i = 1; i <= 5; i++)
-          'AnimStock/Tokens/GIF/'
-              'Pawn_standard_${c.name}_idle_$i.gif',
-    ];
-    await Future.wait(assets.map(_GifFrames.load));
+    // Group pawns by color for the later distribution pass.
+    final byColor = <PlayerColor, List<Pawn>>{};
+    for (final p in _game.allPawns) {
+      byColor.putIfAbsent(p.color, () => []).add(p);
+    }
+
+    // ─── Probe idle variants per color ────────────────────────────────
+    const maxVariantsToProbe = 5;
+    final available = <PlayerColor, List<int>>{};
+    int probedTotal = 0;
+    int foundTotal = 0;
+    for (final color in PlayerColor.values) {
+      final found = <int>[];
+      for (int i = 1; i <= maxVariantsToProbe; i++) {
+        probedTotal++;
+        final asset = 'AnimStock/Tokens/WEBP/'
+            'Token_standard_${color.name}_idle_#$i.webp';
+        _setLoading('Sondage ${color.name} idle #$i…');
+        try {
+          await _GifFrames.load(asset);
+          found.add(i);
+          foundTotal++;
+          debugPrint('[bootstrap]   $asset → OK');
+        } catch (e) {
+          debugPrint('[bootstrap]   $asset → MISSING ($e)');
+        }
+      }
+      available[color] = found;
+      debugPrint('[bootstrap] ${color.name}: ${found.length} variant(s) '
+          'disponibles → $found');
+    }
+    _availableVariants = available;
+    _setLoading('Tokens trouvés : $foundTotal / $probedTotal');
+
+    // ─── Assign each pawn a distinct anim from its color's pool ───────
+    for (final entry in byColor.entries) {
+      final pool = List<int>.from(available[entry.key] ?? const [])
+        ..shuffle(rng);
+      if (pool.isEmpty) {
+        for (final p in entry.value) {
+          _pawnAnimIdx[p] = 0; // no asset
+        }
+        debugPrint('[bootstrap] ${entry.key.name}: AUCUN asset → '
+            'pions rendus en placeholder');
+      } else {
+        for (int i = 0; i < entry.value.length; i++) {
+          _pawnAnimIdx[entry.value[i]] = pool[i % pool.length];
+        }
+        debugPrint('[bootstrap] ${entry.key.name}: anims = '
+            '${entry.value.map((p) => _pawnAnimIdx[p]).toList()}');
+      }
+    }
+
+    final dt = DateTime.now().difference(t0).inMilliseconds;
+    debugPrint('[bootstrap] ==== done in ${dt}ms '
+        '($foundTotal/$probedTotal tokens) ====');
     if (!mounted) return;
-    setState(() => _assetsReady = true);
+    setState(() {
+      _loadingStatus = '$foundTotal token(s) chargés en ${dt}ms';
+      _assetsReady = true;
+    });
+  }
+
+  void _setLoading(String msg) {
+    debugPrint('[loading] $msg');
+    if (!mounted) return;
+    setState(() => _loadingStatus = msg);
   }
 
   void _rollDice() {
@@ -180,6 +263,20 @@ class _BoardScreenState extends State<BoardScreen> {
     setState(() {
       _controller.movePawn(p);
     });
+  }
+
+  /// Pawn descriptor shown in the "Détails" cursor tooltip.
+  /// Same string we used to print in the right-panel subtitle.
+  String _pawnInfo(Pawn p) {
+    final animIdx = _pawnAnimIdx[p];
+    String pos;
+    switch (p.location) {
+      case PawnLocation.base:        pos = 'base #${p.position}';        break;
+      case PawnLocation.ring:        pos = 'ring #${p.position}';        break;
+      case PawnLocation.homeColumn:  pos = 'home column #${p.position}'; break;
+      case PawnLocation.home:        pos = 'home';                       break;
+    }
+    return 'Pion ${p.color.name} #${p.id} · idle anim #$animIdx · $pos';
   }
 
   void _endTurn() {
@@ -271,17 +368,27 @@ class _BoardScreenState extends State<BoardScreen> {
   @override
   Widget build(BuildContext context) {
     if (!_assetsReady) {
-      return const Scaffold(
-        backgroundColor: Color(0xFF1A2541),
+      return Scaffold(
+        backgroundColor: const Color(0xFF1A2541),
         body: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              CircularProgressIndicator(color: Colors.white70),
-              SizedBox(height: 16),
-              Text(
+              const CircularProgressIndicator(color: Colors.white70),
+              const SizedBox(height: 16),
+              const Text(
                 'Loading tokens…',
                 style: TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+              const SizedBox(height: 6),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 460),
+                child: Text(
+                  _loadingStatus,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: Colors.white54, fontSize: 12),
+                ),
               ),
             ],
           ),
@@ -317,6 +424,7 @@ class _BoardScreenState extends State<BoardScreen> {
                     game: _game,
                     showRing: _showRing,
                     showGrid: _showGrid,
+                    showCanvas: _showCanvas,
                     playerCount: _playerCount,
                     diceValues: _diceValues,
                     currentPlayerColor: _controller.currentColor,
@@ -325,6 +433,7 @@ class _BoardScreenState extends State<BoardScreen> {
                     onRollDice: _rollDice,
                     onPawnTap: _movePawn,
                     pawnAsset: _pawnAsset,
+                    pawnInfo: _pawnInfo,
                     onPawnHover: _onPawnHover,
                     onDiceHover: _onDiceHover,
                     showDetails: _showDetails,
@@ -340,6 +449,9 @@ class _BoardScreenState extends State<BoardScreen> {
                     onToggleRing: (v) => setState(() => _showRing = v),
                     showGrid: _showGrid,
                     onToggleGrid: (v) => setState(() => _showGrid = v),
+                    showCanvas: _showCanvas,
+                    onToggleCanvas: (v) =>
+                        setState(() => _showCanvas = v),
                     showDetails: _showDetails,
                     onToggleDetails: (v) {
                       setState(() {
@@ -416,6 +528,8 @@ class _ControlPanel extends StatelessWidget {
   final ValueChanged<bool> onToggleRing;
   final bool showGrid;
   final ValueChanged<bool> onToggleGrid;
+  final bool showCanvas;
+  final ValueChanged<bool> onToggleCanvas;
   final bool showDetails;
   final ValueChanged<bool> onToggleDetails;
   final String? hoverInfo;
@@ -450,6 +564,8 @@ class _ControlPanel extends StatelessWidget {
     required this.onToggleRing,
     required this.showGrid,
     required this.onToggleGrid,
+    required this.showCanvas,
+    required this.onToggleCanvas,
     required this.showDetails,
     required this.onToggleDetails,
     required this.hoverInfo,
@@ -530,67 +646,102 @@ class _ControlPanel extends StatelessWidget {
                   ),
                 ),
 
-                // ---- Row: Nb joueurs (left) + device presets (right) ----
-                _SectionCard(
-                  title: 'Setup',
-                  child: Column(
+                // ---- Setup card (left, half width) + nomenclature
+                //      thumbnail (right, half width, hover-zoom) ----
+                IntrinsicHeight(
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text('Nb joueurs',
-                          style: theme.textTheme.labelSmall
-                              ?.copyWith(color: cs.onSurfaceVariant)),
-                      const SizedBox(height: 4),
-                      SegmentedButton<int>(
-                        segments: const [
-                          ButtonSegment(value: 1, label: Text('1')),
-                          ButtonSegment(value: 2, label: Text('2')),
-                          ButtonSegment(value: 3, label: Text('3')),
-                          ButtonSegment(value: 4, label: Text('4')),
-                          ButtonSegment(value: 5, label: Text('5')),
-                          ButtonSegment(value: 6, label: Text('6')),
-                        ],
-                        selected: {playerCount},
-                        onSelectionChanged: (s) =>
-                            onChangePlayerCount(s.first),
-                        showSelectedIcon: false,
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Text('Taille board',
-                              style: theme.textTheme.labelSmall
-                                  ?.copyWith(color: cs.onSurfaceVariant)),
-                          const Spacer(),
-                          TextButton.icon(
-                            onPressed: onRestart,
-                            icon: const Icon(Icons.restart_alt, size: 16),
-                            label: const Text('Redémarrer jeu'),
-                            style: TextButton.styleFrom(
-                              foregroundColor: cs.error,
-                              padding: const EdgeInsets.symmetric(horizontal: 8),
-                              visualDensity: VisualDensity.compact,
-                            ),
+                      Expanded(
+                        flex: 3,
+                        child: _SectionCard(
+                          title: 'Setup',
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text('Nb joueurs',
+                                  style: theme.textTheme.labelSmall
+                                      ?.copyWith(color: cs.onSurfaceVariant)),
+                              const SizedBox(height: 4),
+                              SegmentedButton<int>(
+                                segments: const [
+                                  ButtonSegment(value: 1, label: Text('1')),
+                                  ButtonSegment(value: 2, label: Text('2')),
+                                  ButtonSegment(value: 3, label: Text('3')),
+                                  ButtonSegment(value: 4, label: Text('4')),
+                                  ButtonSegment(value: 5, label: Text('5')),
+                                  ButtonSegment(value: 6, label: Text('6')),
+                                ],
+                                selected: {playerCount},
+                                onSelectionChanged: (s) =>
+                                    onChangePlayerCount(s.first),
+                                showSelectedIcon: false,
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                children: [
+                                  Text('Taille board',
+                                      style: theme.textTheme.labelSmall
+                                          ?.copyWith(
+                                              color: cs.onSurfaceVariant)),
+                                  const Spacer(),
+                                  TextButton.icon(
+                                    onPressed: onRestart,
+                                    icon: const Icon(Icons.restart_alt,
+                                        size: 16),
+                                    label: const Text('Redémarrer jeu'),
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: cs.error,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8),
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [
+                                  for (final entry
+                                      in _devicePresets.entries)
+                                    Tooltip(
+                                      message:
+                                          '${entry.key} (${entry.value.width!.toInt()}px)',
+                                      child: IconButton.filledTonal(
+                                        isSelected: boardWidthOverride ==
+                                            entry.value.width,
+                                        onPressed: () => onDeviceSize(
+                                            entry.value.width),
+                                        icon: Icon(entry.value.icon),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
-                      const SizedBox(height: 4),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          for (final entry in _devicePresets.entries)
-                            Tooltip(
-                              message:
-                                  '${entry.key} (${entry.value.width!.toInt()}px)',
-                              child: IconButton.filledTonal(
-                                isSelected: boardWidthOverride ==
-                                    entry.value.width,
-                                onPressed: () =>
-                                    onDeviceSize(entry.value.width),
-                                icon: Icon(entry.value.icon),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Column(
+                          children: [
+                            Expanded(
+                              child: _HoverZoomImage(
+                                asset:
+                                    'Documentation/Board4_Nomenclature.png',
                               ),
                             ),
-                        ],
+                            SizedBox(height: 8),
+                            Expanded(
+                              child: _HoverZoomImage(
+                                asset:
+                                    'Documentation/Token_Nomenclature.png',
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -629,6 +780,13 @@ class _ControlPanel extends StatelessWidget {
                             const Text('Indices 0..224 sur chaque case'),
                         value: showGrid,
                         onChanged: onToggleGrid,
+                      ),
+                      SwitchListTile(
+                        title: const Text('Show canvas'),
+                        subtitle: const Text(
+                            'Bbox rouge autour du GIF de chaque pion'),
+                        value: showCanvas,
+                        onChanged: onToggleCanvas,
                       ),
                       SwitchListTile(
                         title: const Text('Détails'),
@@ -836,6 +994,8 @@ class BoardView extends StatelessWidget {
   final GameState game;
   final bool showRing;
   final bool showGrid;
+  /// Debug overlay: draw a red rectangle around each pawn's bbox.
+  final bool showCanvas;
   final int playerCount;
   final Map<PlayerColor, int> diceValues;
   final PlayerColor currentPlayerColor;
@@ -845,6 +1005,9 @@ class BoardView extends StatelessWidget {
   final ValueChanged<Pawn> onPawnTap;
   /// Resolver for a pawn's currently-assigned idle GIF asset path.
   final String Function(Pawn) pawnAsset;
+  /// Resolver for a pawn's detail string (shown in the cursor tooltip
+  /// when `showDetails` is true).
+  final String Function(Pawn) pawnInfo;
   /// Hover callback for token details. Null pawn = mouse exited.
   final ValueChanged<Pawn?>? onPawnHover;
   /// Hover callback for the dice. Bool = entered (true) / exited (false).
@@ -862,11 +1025,13 @@ class BoardView extends StatelessWidget {
     required this.onRollDice,
     required this.onPawnTap,
     required this.pawnAsset,
+    required this.pawnInfo,
     this.onPawnHover,
     this.onDiceHover,
     this.showDetails = false,
     this.showRing = false,
     this.showGrid = false,
+    this.showCanvas = false,
     this.playerCount = 4,
   });
 
@@ -884,15 +1049,12 @@ class BoardView extends StatelessWidget {
   // is stuck to the top of the (enlarged) white inner area with a 3px margin.
   static const List<double> _spotsX = [1.5, 2.5, 3.5, 4.5];
 
-  /// 3px gap between the colored base's top edge and the visible token top.
-  static const double _pawnTopMarginPx = 3.0;
-
   // ---- Pawn-image visible bounds inside its bbox -------------------------
-  // Measured on the production GIF (`PIL.getbbox()` on the 200×440 native):
-  // visible content spans y 214..299 → 48.6 %..68.0 % of the bbox height.
-  // Center at ≈ 58.3 %.
-  static const double _pawnVisibleTopFrac    = 0.486;
-  static const double _pawnVisibleCenterFrac = 0.583;
+  // The content-bbox-based scaling in `_PawnAnimatedGif` already aligns the
+  // visible token's CENTER with the parent container's center, so we only
+  // need to remember where the container is anchored on screen — which is
+  // the cell center for every position (base / ring / home column).
+  static const double _pawnVisibleCenterFrac = 0.5;
 
   // Center of each player's dice, in global cell coordinates. Each dice
   // occupies the 2x2 cell square diagonally inward from the base's outer
@@ -915,40 +1077,40 @@ class BoardView extends StatelessWidget {
     PlayerColor.yellow: Offset(12.0, 14.5),
   };
 
-  /// Returns the pixel that the bbox-anchor (its `_pawnVisibleCenterFrac`
-  /// line) must hit so the *visible* pawn top sits at [baseTopPx] +
-  /// [_pawnTopMarginPx].
-  ///
-  ///   visible_top = bbox_top + visibleTopFrac × H
-  ///   bbox_top    = anchor   − visibleCenterFrac × H
-  /// ⇒ anchor = base_top + margin + (visibleCenterFrac − visibleTopFrac) × H
-  Offset _baseSlotCenter(
-      PlayerColor color, int slot, double cell, double pawnHeight) {
+  /// Geometric center of the BASE slot cell the pawn rests in. Slots sit
+  /// in row 0.5 of the base 6×6 (i.e. just inside the colored ribbon),
+  /// raised by 1/2 cell vs the previous layout so 4 pions don't crowd
+  /// against the player name banner.
+  Offset _baseSlotCenter(PlayerColor color, int slot, double cell) {
     final corner = _baseCorner[color]!;
     final cx = (corner.dx + _spotsX[slot]) * cell;
-    final baseTopPx = corner.dy * cell;
-    final cy = baseTopPx +
-        _pawnTopMarginPx +
-        pawnHeight * (_pawnVisibleCenterFrac - _pawnVisibleTopFrac);
+    final cy = (corner.dy + 1.1) * cell;
     return Offset(cx, cy);
   }
 
-  /// Visual center of a pawn sitting on ring cell [index]. The cell stores
-  /// its center in cell-units; we just scale to pixels.
+  /// Geometric center of ring cell [index] in pixels.
   Offset _ringCellCenter(int index, double cell) => ring[index].pos * cell;
 
-  /// Resolve a pawn's visual center in board coordinates.
+  /// Resolve a pawn's visual ANCHOR in board coordinates — the point where
+  /// `_pawnVisibleCenterFrac × pawnHeight` lands. Universal rule: the
+  /// token's **pointe** (the bottom tip = feet, contact with the cell)
+  /// sits at `(cell_center.x, cell_center.y + 0.1 cell)`. The body
+  /// extends UPWARD from there, overflowing into the cell above.
+  ///
+  /// With `visibleCenterFrac = 0.5` and content filling the full bbox,
+  /// visible_bottom = anchor + 0.5 pawnHeight, so
+  ///   anchor = cell_center + (0, 0.1 cell − 0.5 pawnHeight).
   Offset _pawnCenter(Pawn p, double cell, double pawnHeight) {
-    switch (p.location) {
-      case PawnLocation.base:
-        return _baseSlotCenter(p.color, p.position, cell, pawnHeight);
-      case PawnLocation.ring:
-        return _ringCellCenter(p.position, cell);
-      case PawnLocation.homeColumn:
-        return _homeColumnCenter(p.color, p.position, cell);
-      case PawnLocation.home:
-        return Offset(7.5 * cell, 7.5 * cell);
-    }
+    final cellCenter = switch (p.location) {
+      PawnLocation.base       => _baseSlotCenter(p.color, p.position, cell),
+      PawnLocation.ring       => _ringCellCenter(p.position, cell),
+      PawnLocation.homeColumn => _homeColumnCenter(p.color, p.position, cell),
+      PawnLocation.home       => Offset(7.5 * cell, 7.5 * cell),
+    };
+    return Offset(
+      cellCenter.dx,
+      cellCenter.dy + 0.1 * cell - 0.5 * pawnHeight,
+    );
   }
 
   /// Center of home-column cell [position] (0..4) for the given [color].
@@ -977,6 +1139,17 @@ class BoardView extends StatelessWidget {
     // Polygonal layout only for 5 and 6. Counts 1-4 all use the 4-player
     // board (inactive colors are filtered out of the pawn/label rendering
     // by the parent that builds the `players` list).
+    if (playerCount == 5) {
+      // 5-player board: vector-painted from the BoardCraft geometry
+      // (lib/game/board5p_geometry.dart + lib/game/board_painter_5p.dart).
+      // The painter draws its own dice cell at the center, so no separate
+      // _DiceFace overlay here (pawn/dice interaction layer is TBD).
+      return const Stack(
+        children: [
+          Positioned.fill(child: CustomPaint(painter: BoardPainter5P())),
+        ],
+      );
+    }
     if (playerCount >= 5) {
       return LayoutBuilder(
         builder: (context, c) {
@@ -1015,10 +1188,12 @@ class BoardView extends StatelessWidget {
         final side = c.biggest.shortestSide;
         final cell = side / 15.0;
 
-        // Pawn ~ 4 cells tall (user requested "2x bigger" vs previous 2-cell).
-        final pawnHeight = cell * 4.0;
-        // Pawn aspect ratio derived from the source image bbox (236x338).
-        final pawnWidth = pawnHeight * (236.0 / 338.0);
+        // Visible token target ≈ 0.84 cells tall (≈30 % smaller than the
+        // previous 1.2 so the pion doesn't overflow neighbouring cells
+        // and no longer masks the gold-arrow selector behind it).
+        final pawnHeight = cell * 0.84;
+        // Aspect ≈ 0.7 — close to a typical idle WebP (64/93 = 0.69).
+        final pawnWidth = pawnHeight * 0.7;
 
         return Stack(
           children: [
@@ -1083,6 +1258,13 @@ class BoardView extends StatelessWidget {
             // Every pawn, rendered at its current model position. Pawns the
             // current player can move with the rolled dice are highlighted
             // and tappable.
+            //
+            // Two passes:
+            //   1) yield all `Selector_D_Arrow` GIFs for movable pawns first
+            //      → guaranteed behind ALL pawns (selectors never occlude
+            //      another pawn's MouseRegion).
+            //   2) yield all pawn MouseRegions next → topmost in their bbox,
+            //      hover/click hit-testing stays simple per pawn.
             ...() sync* {
               final activeColors = players.map((p) => p.color).toSet();
               final list = game.allPawns
@@ -1095,52 +1277,102 @@ class BoardView extends StatelessWidget {
               final delays =
                   List.generate(list.length, (i) => i * 100)
                     ..shuffle(math.Random());
+
+              // Studio spec for Selector_D_Arrow.gif (400×400, transparent,
+              // pawn logical center at (200,200), ring at (200,299) — under
+              // feet, arrow at y 95..131 — above head):
+              //   - SQUARE width == height (here +4 vertical viewbox extension)
+              //   - centered on the visible pawn anchor (NOT bbox center)
+              //   - pointer-events: none (IgnorePointer)
+              final selSize = cell * 1.8 + 4;
+
+              // ---- Pass 1: selectors (all behind all pawns) ----
+              for (final pawn in list) {
+                if (!movablePawns.contains(pawn)) continue;
+                final center = _pawnCenter(pawn, cell, pawnHeight);
+                final visCx = center.dx;
+                final visCy = center.dy;
+                yield Positioned(
+                  left: visCx - selSize / 2,
+                  top:  visCy - (selSize + 4) / 2 - 7,
+                  width: selSize,
+                  height: selSize + 4,
+                  child: IgnorePointer(
+                    child: Image.asset(
+                      'AnimStock/Selectors/GIF/Selector_D_Arrow.gif',
+                      fit: BoxFit.fill,
+                    ),
+                  ),
+                );
+              }
+
+              // ---- Pass 2: pawn IMAGES (no hit-test, full bbox for visual) ---
               for (int i = 0; i < list.length; i++) {
                 final pawn = list[i];
                 final center = _pawnCenter(pawn, cell, pawnHeight);
-                final isMovable = movablePawns.contains(pawn);
-                // Halo selector behind the pawn when it is a legal move
-                // target. Sized 2.4 × cell, centered on the visible pawn
-                // anchor (so it hugs the helmet on base and the body on
-                // ring/home).
-                if (isMovable) {
-                  final haloSize = cell * 2.4;
-                  yield Positioned(
-                    left: center.dx - haloSize / 2,
-                    top:  center.dy - haloSize / 2,
-                    width: haloSize,
-                    height: haloSize,
-                    child: IgnorePointer(
-                      child: Image.asset(
-                        'AnimStock/Selectors/GIF/Selector_A_Halo.gif',
-                        fit: BoxFit.contain,
-                      ),
-                    ),
-                  );
-                }
-                // `_pawnVisibleCenterFrac` is the vertical position of the
-                // visible token center inside the bbox. Anchoring the bbox
-                // so that line lands on `center.dy` makes the *visible*
-                // pawn centered on the cell (ring / home).
+                final bboxLeft = center.dx - pawnWidth / 2;
+                final bboxTop  = center.dy - pawnHeight * _pawnVisibleCenterFrac;
                 yield Positioned(
-                  left: center.dx - pawnWidth / 2,
-                  top:  center.dy - pawnHeight * _pawnVisibleCenterFrac,
+                  left: bboxLeft,
+                  top:  bboxTop,
                   width: pawnWidth,
                   height: pawnHeight,
+                  child: IgnorePointer(
+                    child: _PawnAnimatedGif(
+                      key: ValueKey('${pawn.color.name}_${pawn.id}'),
+                      asset: pawnAsset(pawn),
+                      sequentialStartDelayMs: delays[i],
+                      showCanvas: showCanvas,
+                    ),
+                  ),
+                );
+                // (Canvas debug overlay is drawn inside `_PawnAnimatedGif`
+                // when `showCanvas` is true, using the GIF's native pixel
+                // dimensions so the rectangle matches the actual rendered
+                // image — not the layout bbox.)
+              }
+
+              // ---- Pass 3: HIT zones (tight square around the visible
+              //              token only — no more giant bbox swallowing
+              //              the empty halo around the sprite). ----
+              // Hit zone is cell × 1.0 centered on the visible token anchor.
+              // Visible token spans cell×0.776 vertically inside its bbox, so
+              // cell×1.0 wraps it tightly with a tiny margin.
+              final hitSize = cell * 1.0;
+              for (final pawn in list) {
+                final center = _pawnCenter(pawn, cell, pawnHeight);
+                final isMovable = movablePawns.contains(pawn);
+                yield Positioned(
+                  left: center.dx - hitSize / 2,
+                  top:  center.dy - hitSize / 2,
+                  width: hitSize,
+                  height: hitSize,
                   child: MouseRegion(
                     cursor: showDetails
                         ? SystemMouseCursors.help
                         : (isMovable
                             ? SystemMouseCursors.click
                             : SystemMouseCursors.basic),
-                    onEnter: (_) => onPawnHover?.call(pawn),
-                    onExit: (_) => onPawnHover?.call(null),
-                    child: GestureDetector(
-                      onTap: isMovable ? () => onPawnTap(pawn) : null,
-                      child: _PawnAnimatedGif(
-                        key: ValueKey('${pawn.color.name}_${pawn.id}'),
-                        asset: pawnAsset(pawn),
-                        sequentialStartDelayMs: delays[i],
+                    onEnter: (_) {
+                      debugPrint('[hover] enter ${pawn.color.name}#${pawn.id}');
+                      onPawnHover?.call(pawn);
+                    },
+                    onExit: (_) {
+                      debugPrint('[hover] exit  ${pawn.color.name}#${pawn.id}');
+                      onPawnHover?.call(null);
+                    },
+                    child: Tooltip(
+                      message: showDetails ? pawnInfo(pawn) : '',
+                      waitDuration: const Duration(milliseconds: 150),
+                      preferBelow: true,
+                      verticalOffset: 18,
+                      child: GestureDetector(
+                        // Without `opaque`, an invisible SizedBox doesn't
+                        // absorb taps → clicks on the pawn would fall
+                        // through to the parent, breaking `onPawnTap`.
+                        behavior: HitTestBehavior.opaque,
+                        onTap: isMovable ? () => onPawnTap(pawn) : null,
+                        child: const SizedBox.expand(),
                       ),
                     ),
                   ),
@@ -1597,7 +1829,13 @@ class _PolygonBoardPainter extends CustomPainter {
 class _GifFrames {
   final List<ui.Image> images;
   final List<Duration> durations;
-  _GifFrames(this.images, this.durations);
+  /// Bounding box of non-transparent pixels in frame 0 (the "rest" pose).
+  /// In native pixel coords of the GIF canvas. Used by `_PawnAnimatedGif`
+  /// to size and position the token consistently across anims with
+  /// different canvas paddings (e.g. idle_#1 64×93 vs idle_#5 82×123 —
+  /// both have a 58×86 content bbox).
+  final Rect contentBbox;
+  _GifFrames(this.images, this.durations, this.contentBbox);
 
   static final Map<String, Future<_GifFrames>> _cache = {};
 
@@ -1615,8 +1853,42 @@ class _GifFrames {
         durations.add(f.duration);
       }
       codec.dispose();
-      return _GifFrames(images, durations);
+      final bbox = await _findContentBbox(images.first);
+      return _GifFrames(images, durations, bbox);
     });
+  }
+
+  /// Scan the image's RGBA bytes to find the bounding box of pixels with
+  /// alpha > 0. Returns the full image rect if everything is opaque or
+  /// the data can't be read.
+  static Future<Rect> _findContentBbox(ui.Image img) async {
+    final byteData =
+        await img.toByteData(format: ui.ImageByteFormat.rawRgba);
+    final W = img.width;
+    final H = img.height;
+    final fullRect = Rect.fromLTWH(0, 0, W.toDouble(), H.toDouble());
+    if (byteData == null) return fullRect;
+    final data = byteData.buffer.asUint8List();
+    int minX = W, minY = H, maxX = -1, maxY = -1;
+    for (int y = 0; y < H; y++) {
+      final row = y * W * 4;
+      for (int x = 0; x < W; x++) {
+        final alpha = data[row + x * 4 + 3];
+        if (alpha > 0) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < 0) return fullRect;
+    return Rect.fromLTRB(
+      minX.toDouble(),
+      minY.toDouble(),
+      (maxX + 1).toDouble(),
+      (maxY + 1).toDouble(),
+    );
   }
 }
 
@@ -1627,10 +1899,15 @@ class _GifFrames {
 class _PawnAnimatedGif extends StatefulWidget {
   final String asset;
   final int sequentialStartDelayMs;
+  /// Debug: when true, overlay a red rectangle of the GIF's NATIVE canvas
+  /// size (after BoxFit.contain scaling) so we see the actual rendered
+  /// footprint, not the parent's layout bbox.
+  final bool showCanvas;
   const _PawnAnimatedGif({
     super.key,
     required this.asset,
     required this.sequentialStartDelayMs,
+    this.showCanvas = false,
   });
 
   @override
@@ -1640,10 +1917,21 @@ class _PawnAnimatedGif extends StatefulWidget {
 class _PawnAnimatedGifState extends State<_PawnAnimatedGif>
     with SingleTickerProviderStateMixin {
   _GifFrames? _frames;
+  /// True when we can't display the pawn (empty asset path, asset not in
+  /// the bundle, or decode failed). The widget then renders a clearly
+  /// visible red "X" placeholder instead of staying blank.
+  bool _failed = false;
   int _frameIdx = 0;
   Ticker? _ticker;
   Duration _accum = Duration.zero;
   Duration? _lastTickTime;
+  /// Per-pawn playback rate in [0.8, 1.2]. Drawn once at first build (the
+  /// widget's state is preserved across rebuilds via the parent's
+  /// ValueKey, so this value stays stable for the lifetime of the pawn).
+  /// Variations de-synchronize the 16 pawns naturally on top of the
+  /// startup `sequentialStartDelayMs` jitter.
+  late final double _speed =
+      0.8 + math.Random().nextDouble() * 0.4;
 
   @override
   void initState() {
@@ -1651,7 +1939,30 @@ class _PawnAnimatedGifState extends State<_PawnAnimatedGif>
     _init();
   }
 
+  @override
+  void didUpdateWidget(covariant _PawnAnimatedGif oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If the asset prop changed under a preserved State (same ValueKey but
+    // new GIF picked by _bootstrap on hot reload, etc.), reload frames from
+    // scratch so the displayed animation matches the current asset.
+    if (widget.asset != oldWidget.asset) {
+      _ticker?.dispose();
+      _ticker = null;
+      _frames = null;
+      _frameIdx = 0;
+      _accum = Duration.zero;
+      _lastTickTime = null;
+      _init();
+    }
+  }
+
   Future<void> _init() async {
+    if (widget.asset.isEmpty) {
+      // No asset assigned for this pawn (e.g. no idle variant available
+      // for its color). Show the missing-asset placeholder.
+      if (mounted) setState(() => _failed = true);
+      return;
+    }
     try {
       final frames = await _GifFrames.load(widget.asset);
       if (!mounted) return;
@@ -1664,6 +1975,7 @@ class _PawnAnimatedGifState extends State<_PawnAnimatedGif>
       _ticker = createTicker(_onTick)..start();
     } catch (e, st) {
       debugPrint('Animated GIF load failed for ${widget.asset}: $e\n$st');
+      if (mounted) setState(() => _failed = true);
     }
   }
 
@@ -1674,7 +1986,9 @@ class _PawnAnimatedGifState extends State<_PawnAnimatedGif>
     _lastTickTime ??= elapsed;
     final dt = elapsed - _lastTickTime!;
     _lastTickTime = elapsed;
-    _accum += dt;
+    // Scale dt by the per-pawn speed so each pion advances frames at its
+    // own pace (0.8..1.2 of the WebP's native cadence).
+    _accum += dt * _speed;
 
     bool changed = false;
     // Loop over frames until the accumulated time fits in the current one.
@@ -1695,15 +2009,110 @@ class _PawnAnimatedGifState extends State<_PawnAnimatedGif>
 
   @override
   Widget build(BuildContext context) {
+    if (_failed) {
+      return const SizedBox.expand(
+        child: CustomPaint(painter: _MissingTokenPainter()),
+      );
+    }
     final frames = _frames;
     if (frames == null) return const SizedBox.expand();
-    return SizedBox.expand(
-      child: FittedBox(
-        fit: BoxFit.contain,
-        child: RawImage(image: frames.images[_frameIdx]),
-      ),
+    final imgW = frames.images[_frameIdx].width.toDouble();
+    final imgH = frames.images[_frameIdx].height.toDouble();
+    final bbox = frames.contentBbox; // non-transparent extent
+
+    // Scaling rule: every pawn's CONTENT (the non-transparent token area)
+    // renders at the same on-screen height = container height. The canvas
+    // pixels around the content are extra padding from the artist (room
+    // for animations) and must NOT influence the displayed size — that's
+    // why we scale by `bbox.height`, not `imgH`.
+    //
+    // Position the image so the content bbox center lands on the
+    // container center. Tokens with smaller / larger canvases or off-
+    // center content (e.g. idle_#5 with extra top padding) still render
+    // identically because we anchor by the content bbox, not the canvas.
+    return LayoutBuilder(
+      builder: (ctx, c) {
+        final scale = c.maxHeight / bbox.height;
+        final imgRenderW = imgW * scale;
+        final imgRenderH = imgH * scale;
+        final left = c.maxWidth / 2 - bbox.center.dx * scale;
+        final top  = c.maxHeight / 2 - bbox.center.dy * scale;
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              left: left,
+              top: top,
+              width: imgRenderW,
+              height: imgRenderH,
+              child: RawImage(image: frames.images[_frameIdx]),
+            ),
+            if (widget.showCanvas)
+              // Red rectangle around the GIF's NATIVE canvas as rendered.
+              Positioned(
+                left: left,
+                top: top,
+                width: imgRenderW,
+                height: imgRenderH,
+                child: IgnorePointer(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                          color: const Color(0xFFD32F2F), width: 1.5),
+                      color: const Color(0x14D32F2F),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
+}
+
+/// Visible placeholder drawn when a pawn's idle GIF asset is missing
+/// (e.g. Studio hasn't produced the file yet for this color/variant).
+/// Renders a red rectangle with a white "X" inside the visible-token
+/// area of the bbox so the missing slot is obvious in-game.
+class _MissingTokenPainter extends CustomPainter {
+  const _MissingTokenPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // The full bbox is much bigger than the visible token (visible content
+    // sits at ~48.6 %..68.0 % vertical, ~50 % horizontal). Draw the marker
+    // roughly where the token would be so it doesn't look like a giant
+    // banner.
+    final w = size.width * 0.55;
+    final h = size.height * 0.22;
+    final cx = size.width / 2;
+    final cy = size.height * 0.583;
+    final rect = Rect.fromCenter(
+        center: Offset(cx, cy), width: w, height: h);
+    canvas.drawRect(rect, Paint()..color = const Color(0xFFD32F2F));
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+    final pad = math.min(w, h) * 0.18;
+    final p = Paint()
+      ..color = Colors.white
+      ..strokeWidth = math.max(3.0, math.min(w, h) * 0.10)
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+        Offset(rect.left + pad, rect.top + pad),
+        Offset(rect.right - pad, rect.bottom - pad), p);
+    canvas.drawLine(
+        Offset(rect.right - pad, rect.top + pad),
+        Offset(rect.left + pad, rect.bottom - pad), p);
+  }
+
+  @override
+  bool shouldRepaint(covariant _MissingTokenPainter old) => false;
 }
 
 /// Small clickable dice button used in the debug panel to force a specific
@@ -1820,6 +2229,78 @@ class _PlayerLabel extends StatelessWidget {
             fontSize: fontSize,
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Thumbnail of a static asset that pops up a centered, enlarged view via
+/// an [OverlayEntry] while the mouse hovers it. Used in the right panel for
+/// the board nomenclature reference image.
+class _HoverZoomImage extends StatefulWidget {
+  final String asset;
+  const _HoverZoomImage({required this.asset});
+
+  @override
+  State<_HoverZoomImage> createState() => _HoverZoomImageState();
+}
+
+class _HoverZoomImageState extends State<_HoverZoomImage> {
+  OverlayEntry? _entry;
+
+  void _show() {
+    if (_entry != null) return;
+    _entry = OverlayEntry(
+      builder: (ctx) => Positioned.fill(
+        child: IgnorePointer(
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.85),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.5),
+                    blurRadius: 24,
+                  ),
+                ],
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: 800,
+                  maxHeight: 800,
+                ),
+                child: Image.asset(widget.asset, fit: BoxFit.contain),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    Overlay.of(context).insert(_entry!);
+  }
+
+  void _hide() {
+    _entry?.remove();
+    _entry = null;
+  }
+
+  @override
+  void dispose() {
+    _hide();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.zoomIn,
+      onEnter: (_) => _show(),
+      onExit: (_) => _hide(),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.asset(widget.asset, fit: BoxFit.contain),
       ),
     );
   }
