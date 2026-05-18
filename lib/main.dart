@@ -51,7 +51,8 @@ class BoardScreen extends StatefulWidget {
   State<BoardScreen> createState() => _BoardScreenState();
 }
 
-class _BoardScreenState extends State<BoardScreen> {
+class _BoardScreenState extends State<BoardScreen>
+    with TickerProviderStateMixin {
   final GameState _game = GameState.initial();
   late final GameController _controller = GameController(
     turnOrder: BoardScreen.players.map((p) => p.color).toList(),
@@ -84,6 +85,35 @@ class _BoardScreenState extends State<BoardScreen> {
   /// to force. Independent of the controller's natural turn rotation.
   PlayerColor _manualPlayer = PlayerColor.blue;
   int _manualValue = 1;
+
+  /// Right-panel tab. `'commandes'` = Centre de commandes (default),
+  /// `'rules'` = Règles du jeu.
+  String _panelTab = 'commandes';
+
+  /// Game rules state. **In-memory for now** — persistence across app
+  /// reloads is TODO (was attempted with shared_preferences but hits a
+  /// Flutter web path-resolution bug that maps `..\..\AppData\...` to a
+  /// non-existent location). Default values match "classic" Ludo.
+  bool _ruleStartWith1TokenOut = false;
+  bool _ruleTeamMode = false;
+
+  /// Per-pawn slide duration tracked for the LAST move. Read by the
+  /// AnimatedPositioned wrapping each pawn in BoardView — that widget
+  /// interpolates left/top smoothly when the pawn's cell changes between
+  /// rebuilds. Only the moving pawn's Positioned animates; the rest of
+  /// the board does NOT rebuild during the slide.
+  final Map<Pawn, Duration> _moveDuration = {};
+  /// Active explosions on the board (capture markers). Each carries its
+  /// own AnimationController; popped from the list when done.
+  final List<ExplosionFx> _explosions = [];
+
+  /// Slide duration table per dice value (cells crossed). 1 cell jumps
+  /// quickly; 6 cells take longer to read the trajectory.
+  static const Map<int, int> _slideMs = {
+    1: 150, 2: 250, 3: 330, 4: 400, 5: 450, 6: 500,
+  };
+  Duration _durationForDistance(int n) =>
+      Duration(milliseconds: _slideMs[n] ?? 0);
 
   /// Last hover info text (token or dice), shown next to the Détails toggle.
   String? _hoverInfo;
@@ -157,6 +187,22 @@ class _BoardScreenState extends State<BoardScreen> {
   void initState() {
     super.initState();
     _bootstrap();
+  }
+
+  /// Move pawn #0 of every active color from its base slot onto its ring
+  /// start cell. Idempotent: a pawn already on the ring stays put.
+  void _applyRuleStartWith1TokenOut() {
+    for (final color in _activeColors) {
+      final pawns = _game.pawnsByColor[color];
+      if (pawns == null || pawns.isEmpty) continue;
+      final firstInBase = pawns.firstWhere(
+        (p) => p.location == PawnLocation.base,
+        orElse: () => pawns.first,
+      );
+      if (firstInBase.location != PawnLocation.base) continue;
+      firstInBase.location = PawnLocation.ring;
+      firstInBase.position = GameController.startIdx(color);
+    }
   }
 
   /// Probe the asset bundle to discover which idle variants exist per
@@ -242,27 +288,170 @@ class _BoardScreenState extends State<BoardScreen> {
     setState(() => _loadingStatus = msg);
   }
 
-  void _rollDice() {
-    if (_controller.phase != TurnPhase.rolling) return;
+  /// Roll the dice and auto-move if a single pion can play.
+  ///
+  /// One function, one rule. The trigger is THE ROLL — random / manual /
+  /// debug all funnel through here, none knows about "mode".
+  /// [forPlayer] optionally pins a specific color before rolling (used
+  /// by the manual picker; null = roll for whoever the controller says
+  /// is currently up).
+  void _roll(int value, {PlayerColor? forPlayer}) {
+    if (_controller.phase == TurnPhase.gameOver) return;
     setState(() {
-      _controller.rollRandom();
-      _diceValues[_controller.currentColor] = _controller.diceValue;
+      if (forPlayer != null) {
+        final idx = _controller.turnOrder.indexOf(forPlayer);
+        if (idx >= 0) _controller.currentPlayerIdx = idx;
+        _manualValue = value;
+      }
+      _controller.phase = TurnPhase.rolling;
+      _controller.diceValue = 0;
+      _controller.consecutiveSixes = 0;
+      _controller.roll(value);
+      _diceValues[_controller.currentColor] = value;
+      // The ONLY rule, applied to every roll:
+      // 1 pion movable → play it.
+      if (_controller.phase == TurnPhase.moving) {
+        final m = _controller.movablePawns();
+        if (m.length == 1) _controller.movePawn(m.single);
+      }
     });
   }
 
-  void _setDice(int value) {
+  /// Cryptographically-strong RNG — backed by the OS entropy pool
+  /// (`/dev/urandom` on Linux, `BCryptGenRandom` on Windows, Web Crypto
+  /// on the browser). Unlike `Random()` (a deterministic XorShift seeded
+  /// from the clock) this gives genuinely uniform 1..6 with NO bias and
+  /// no recoverable seed — the opposite of LudoKing's tweaked dice.
+  final math.Random _secureRng = math.Random.secure();
+
+  void _rollDiceRandom() {
     if (_controller.phase != TurnPhase.rolling) return;
-    setState(() {
-      _controller.roll(value);
-      _diceValues[_controller.currentColor] = _controller.diceValue;
-    });
+    _roll(_secureRng.nextInt(6) + 1);
   }
+
+  void _rollDiceManual(PlayerColor player, int value) =>
+      _roll(value, forPlayer: player);
 
   void _movePawn(Pawn p) {
     if (_controller.phase != TurnPhase.moving) return;
+    final distance = _controller.diceValue;
+    final oldLoc = p.location;
+    // Snapshot capture state to spawn explosions for any pawn that got
+    // sent back to base by this move.
+    final beforeLoc = {
+      for (final pp in _game.allPawns) pp: pp.location,
+    };
+    // Base exit teleports from yard to start cell (not 6 cells of
+    // travel), so animate as if 1 cell (snappy 150 ms).
+    final dur = (oldLoc == PawnLocation.base)
+        ? _durationForDistance(1)
+        : _durationForDistance(distance);
     setState(() {
+      _moveDuration[p] = dur; // read by AnimatedPositioned wrapping `p`
       _controller.movePawn(p);
     });
+    // Capture-explosion at end of slide.
+    final captures = _game.allPawns
+        .where((pp) =>
+            pp != p &&
+            beforeLoc[pp] != PawnLocation.base &&
+            pp.location == PawnLocation.base)
+        .toList();
+    if (captures.isNotEmpty) {
+      Future.delayed(dur, () {
+        if (!mounted) return;
+        setState(() {
+          for (final cap in captures) {
+            final fx = ExplosionFx(
+              colorRgb: _colorOfPawn(cap.color),
+              targetPawn: p,
+              vsync: this,
+            )..start();
+            _explosions.add(fx);
+            fx.controller.addStatusListener((s) {
+              if (s == AnimationStatus.completed && mounted) {
+                setState(() {
+                  _explosions.remove(fx);
+                  fx.controller.dispose();
+                });
+              }
+            });
+          }
+        });
+      });
+    }
+  }
+
+  Color _colorOfPawn(PlayerColor c) {
+    switch (c) {
+      case PlayerColor.yellow: return const Color(0xFFE6B800);
+      case PlayerColor.blue:   return const Color(0xFF3DA4EC);
+      case PlayerColor.red:    return const Color(0xFFD33232);
+      case PlayerColor.green:  return const Color(0xFF2E8B47);
+    }
+  }
+
+  /// Manual setup helper: force EXACTLY [targetCount] of [_manualPlayer]'s
+  /// pawns into the **home** (center). Bi-directional:
+  ///   - If current_in_home < target: pull pawns IN, taking the MOST
+  ///     advanced ones first (homeColumn near home → ring near home →
+  ///     base last).
+  ///   - If current_in_home > target: push pawns OUT back to their base
+  ///     slot (lowest pawn-id first).
+  void _fillManualHome(int targetCount) {
+    setState(() {
+      final pawns = _game.pawnsByColor[_manualPlayer]!;
+      final inHome = pawns
+          .where((p) => p.location == PawnLocation.home)
+          .toList();
+      final outside = pawns
+          .where((p) => p.location != PawnLocation.home)
+          .toList();
+      final delta = targetCount - inHome.length;
+      if (delta > 0) {
+        // ADD: pull `delta` pawns INTO home (most-advanced first).
+        outside.sort((a, b) =>
+            _progressOf(b).compareTo(_progressOf(a)));
+        for (int i = 0; i < delta && i < outside.length; i++) {
+          outside[i].location = PawnLocation.home;
+          outside[i].position = 0;
+        }
+      } else if (delta < 0) {
+        // REMOVE: send `-delta` pawns from home back to their base slot.
+        inHome.sort((a, b) => a.id.compareTo(b.id));
+        final toRemove = -delta;
+        for (int i = 0; i < toRemove && i < inHome.length; i++) {
+          inHome[i].location = PawnLocation.base;
+          inHome[i].position = inHome[i].id;
+        }
+      }
+      // If the manual player (or their team-mate when team-mode is on)
+      // had won, re-evaluate: a player without all 4 pawns home is no
+      // longer a winner.
+      final w = _controller.winner;
+      if (w != null &&
+          (w == _manualPlayer ||
+              _controller.partnerOf(w) == _manualPlayer)) {
+        _controller.winner = null;
+        _controller.phase = TurnPhase.rolling;
+      }
+    });
+  }
+
+  /// Progress score (lower = closer to base, higher = closer to home).
+  int _progressOf(Pawn p) {
+    switch (p.location) {
+      case PawnLocation.base:
+        return 0;
+      case PawnLocation.ring:
+        final start = GameController.startIdx(p.color);
+        return (p.position - start + GameController.ringSize) %
+            GameController.ringSize;
+      case PawnLocation.homeColumn:
+        return GameController.ringSize + p.position;
+      case PawnLocation.home:
+        return GameController.totalStepsToHome;
+    }
   }
 
   /// Pawn descriptor shown in the "Détails" cursor tooltip.
@@ -282,22 +471,6 @@ class _BoardScreenState extends State<BoardScreen> {
   void _endTurn() {
     setState(() {
       _controller.skipTurn();
-    });
-  }
-
-  /// Manual-mode action: set the controller's current player to
-  /// [_manualPlayer] and force its dice to [_manualValue].
-  void _applyManual() {
-    if (_controller.phase == TurnPhase.gameOver) return;
-    final idx = _controller.turnOrder.indexOf(_manualPlayer);
-    if (idx < 0) return;
-    setState(() {
-      _controller.currentPlayerIdx = idx;
-      _controller.phase = TurnPhase.rolling;
-      _controller.consecutiveSixes = 0;
-      _controller.diceValue = 0;
-      _controller.roll(_manualValue);
-      _diceValues[_manualPlayer] = _manualValue;
     });
   }
 
@@ -326,6 +499,7 @@ class _BoardScreenState extends State<BoardScreen> {
         setState(() {
           _controller.reset();
           _diceValues.updateAll((_, __) => math.Random().nextInt(6) + 1);
+          if (_ruleStartWith1TokenOut) _applyRuleStartWith1TokenOut();
         });
       }
     });
@@ -402,49 +576,65 @@ class _BoardScreenState extends State<BoardScreen> {
           builder: (context, c) {
             final h = c.maxHeight.isFinite ? c.maxHeight : 800.0;
             final w = c.maxWidth.isFinite ? c.maxWidth : 1200.0;
-            // Command center capped at 30 % of the page width (with a sane
-            // floor for tiny windows). The board is centered in the rest.
-            final panelWidth = (w * 0.30).clamp(280.0, w * 0.5);
-            final boardArea = (w - panelWidth).clamp(120.0, w);
-            final maxBoard = h.clamp(0.0, boardArea);
+            // Narrow = phone-ish (folded foldable, portrait, ...).
+            // Below this threshold, stack board on top + panel below.
+            // Above, side-by-side (current desktop layout).
+            final isNarrow = w < 700;
+            // Command center: ~39 % of the page width (was 30 %, +30 %).
+            // On very narrow screens (folded phones), shrink the floor
+            // proportionally so we don't end up with min > max in clamp().
+            final panelMax = w * 0.55;
+            final panelMin = math.min(280.0, panelMax);
+            final panelWidth = (w * 0.39).clamp(panelMin, panelMax);
+            final boardArea = isNarrow ? w : (w - panelWidth).clamp(120.0, w);
+            // 15 px top + 15 px bottom breathing room around the board.
+            const boardMarginV = 15.0;
+            final maxBoardSquare = isNarrow
+                ? math.min(w, h * 0.6) // narrow: board takes ~60 % of height
+                : (h - 2 * boardMarginV).clamp(0.0, boardArea);
             final boardSide =
-                _boardWidthOverride?.clamp(120.0, maxBoard) ?? maxBoard;
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: boardArea,
-                  height: h,
-                  child: Center(
-                    child: SizedBox(
-                      width: boardSide,
-                      height: boardSide,
-                      child: BoardView(
-                    players: _activePlayers,
-                    game: _game,
-                    showRing: _showRing,
-                    showGrid: _showGrid,
-                    showCanvas: _showCanvas,
-                    playerCount: _playerCount,
-                    diceValues: _diceValues,
-                    currentPlayerColor: _controller.currentColor,
-                    canRollDice: _controller.phase == TurnPhase.rolling,
-                    movablePawns: _controller.movablePawns().toSet(),
-                    onRollDice: _rollDice,
-                    onPawnTap: _movePawn,
-                    pawnAsset: _pawnAsset,
-                    pawnInfo: _pawnInfo,
-                    onPawnHover: _onPawnHover,
-                    onDiceHover: _onDiceHover,
-                    showDetails: _showDetails,
-                      ),
+                _boardWidthOverride?.clamp(120.0, maxBoardSquare) ??
+                    maxBoardSquare;
+
+            final boardWidget = SizedBox(
+              width: boardArea,
+              height: isNarrow ? boardSide + 2 * boardMarginV : h,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    vertical: boardMarginV),
+                child: Center(
+                  child: SizedBox(
+                    width: boardSide,
+                    height: boardSide,
+                    child: BoardView(
+                      players: _activePlayers,
+                      game: _game,
+                      showRing: _showRing,
+                      showGrid: _showGrid,
+                      showCanvas: _showCanvas,
+                      playerCount: _playerCount,
+                      diceValues: _diceValues,
+                      currentPlayerColor: _controller.currentColor,
+                      canRollDice:
+                          _controller.phase == TurnPhase.rolling,
+                      movablePawns:
+                          _controller.movablePawns().toSet(),
+                      onRollDice: _rollDiceRandom,
+                      onPawnTap: _movePawn,
+                      pawnAsset: _pawnAsset,
+                      pawnInfo: _pawnInfo,
+                      onPawnHover: _onPawnHover,
+                      onDiceHover: _onDiceHover,
+                      showDetails: _showDetails,
+                      moveDuration: _moveDuration,
+                      explosions: _explosions,
                     ),
                   ),
                 ),
-                SizedBox(
-                  width: panelWidth,
-                  height: h,
-                  child: _ControlPanel(
+              ),
+            );
+
+            final panel = _ControlPanel(
                     showRing: _showRing,
                     onToggleRing: (v) => setState(() => _showRing = v),
                     showGrid: _showGrid,
@@ -481,18 +671,32 @@ class _BoardScreenState extends State<BoardScreen> {
                       });
                     },
                     manualValue: _manualValue,
-                    onChangeManualValue: (v) {
+                    onChangeManualValue: (v) =>
+                        _rollDiceManual(_manualPlayer, v),
+                    onFillManualHome: _fillManualHome,
+                    panelTab: _panelTab,
+                    onChangePanelTab: (t) =>
+                        setState(() => _panelTab = t),
+                    ruleStartWith1TokenOut: _ruleStartWith1TokenOut,
+                    onToggleRuleStartWith1TokenOut: (v) {
                       setState(() {
-                        _manualValue = v;
-                        // Removing the "Continue" button means the click on a
-                        // value IS the action: force-roll for the current
-                        // (manual-selected) player.
-                        if (_controller.phase != TurnPhase.gameOver) {
-                          _controller.phase = TurnPhase.rolling;
-                          _controller.consecutiveSixes = 0;
-                          _controller.roll(v);
-                          _diceValues[_controller.currentColor] = v;
+                        _ruleStartWith1TokenOut = v;
+                        // Don't retroactively change the running game;
+                        // the rule applies at the next reset (or now
+                        // if no pawn has moved yet — simple heuristic:
+                        // apply if every pawn is still in base).
+                        final allInBase = _game.allPawns.every(
+                            (p) => p.location == PawnLocation.base);
+                        if (v && allInBase) {
+                          _applyRuleStartWith1TokenOut();
                         }
+                      });
+                    },
+                    ruleTeamMode: _ruleTeamMode,
+                    onToggleRuleTeamMode: (v) {
+                      setState(() {
+                        _ruleTeamMode = v;
+                        _controller.teamMode = v;
                       });
                     },
                     playerCount: _playerCount,
@@ -505,10 +709,29 @@ class _BoardScreenState extends State<BoardScreen> {
                     diceValue: _controller.diceValue,
                     consecutiveSixes: _controller.consecutiveSixes,
                     winner: _controller.winner,
-                    onRollDice: _rollDice,
+                    onRollDice: _rollDiceRandom,
                     onEndTurn: _endTurn,
                     onRestart: () => _confirmRestart(context),
-                  ),
+                  );
+
+            // ── Responsive root: stack on narrow screens, side-by-side
+            //    on wide ones. ───────────────────────────────────────
+            if (isNarrow) {
+              return Column(
+                children: [
+                  boardWidget,
+                  Expanded(child: panel),
+                ],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                boardWidget,
+                SizedBox(
+                  width: panelWidth,
+                  height: h,
+                  child: panel,
                 ),
               ],
             );
@@ -558,6 +781,17 @@ class _ControlPanel extends StatelessWidget {
   final ValueChanged<PlayerColor> onChangeManualPlayer;
   final int manualValue;
   final ValueChanged<int> onChangeManualValue;
+  /// Force N pawns of [manualPlayer] back into the base (1..4). Removes
+  /// home pawns first, then the least-advanced.
+  final ValueChanged<int> onFillManualHome;
+
+  // Tab + persistent rules
+  final String panelTab;
+  final ValueChanged<String> onChangePanelTab;
+  final bool ruleStartWith1TokenOut;
+  final ValueChanged<bool> onToggleRuleStartWith1TokenOut;
+  final bool ruleTeamMode;
+  final ValueChanged<bool> onToggleRuleTeamMode;
 
   const _ControlPanel({
     required this.showRing,
@@ -586,6 +820,13 @@ class _ControlPanel extends StatelessWidget {
     required this.onChangeManualPlayer,
     required this.manualValue,
     required this.onChangeManualValue,
+    required this.onFillManualHome,
+    required this.panelTab,
+    required this.onChangePanelTab,
+    required this.ruleStartWith1TokenOut,
+    required this.onToggleRuleStartWith1TokenOut,
+    required this.ruleTeamMode,
+    required this.onToggleRuleTeamMode,
   });
 
   Color _playerColor(PlayerColor c) {
@@ -634,23 +875,64 @@ class _ControlPanel extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // ---- Title ----
+                // ---- Tab selector ----
                 Padding(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 4, vertical: 8),
-                  child: Text(
-                    'Centre de commandes',
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
+                  child: SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(
+                        value: 'commandes',
+                        label: Text('Centre de commandes'),
+                        icon: Icon(Icons.tune, size: 18),
+                      ),
+                      ButtonSegment(
+                        value: 'rules',
+                        label: Text('Règles du jeu'),
+                        icon: Icon(Icons.rule, size: 18),
+                      ),
+                    ],
+                    selected: {panelTab},
+                    onSelectionChanged: (s) => onChangePanelTab(s.first),
+                    showSelectedIcon: false,
                   ),
                 ),
+                if (panelTab == 'rules') ...[
+                  _SectionCard(
+                    title: 'Règles persistantes',
+                    padding: EdgeInsets.zero,
+                    child: Column(
+                      children: [
+                        SwitchListTile(
+                          title: const Text(
+                              'Démarrer avec 1 token sorti'),
+                          subtitle: const Text(
+                              'Au début de chaque partie, 1 pion de '
+                              'chaque couleur est déjà sur sa case '
+                              'départ.'),
+                          value: ruleStartWith1TokenOut,
+                          onChanged: onToggleRuleStartWith1TokenOut,
+                        ),
+                        SwitchListTile(
+                          title: const Text('Jeu en équipe (2v2)'),
+                          subtitle: const Text(
+                              'Bleu + Vert vs Jaune + Rouge. '
+                              "Pas de capture entre coéquipiers · "
+                              "un joueur dont les 4 pions sont à la maison "
+                              "joue avec ceux de son partenaire · victoire "
+                              "= 8 pions au centre."),
+                          value: ruleTeamMode,
+                          onChanged: onToggleRuleTeamMode,
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else ...[
 
                 // ---- Setup card (left, half width) + nomenclature
                 //      thumbnail (right, half width, hover-zoom) ----
-                IntrinsicHeight(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
                         flex: 3,
@@ -727,14 +1009,22 @@ class _ControlPanel extends StatelessWidget {
                       const Expanded(
                         child: Column(
                           children: [
-                            Expanded(
+                            // Fixed-aspect thumbnails (instead of Expanded
+                            // inside a column) so the layout has a known
+                            // intrinsic height — otherwise IntrinsicHeight
+                            // or any size-query upstream crashes with
+                            // 'hasSize is not true' on tighter constraints
+                            // (esp. on Android).
+                            AspectRatio(
+                              aspectRatio: 1.6,
                               child: _HoverZoomImage(
                                 asset:
                                     'Documentation/Board4_Nomenclature.png',
                               ),
                             ),
                             SizedBox(height: 8),
-                            Expanded(
+                            AspectRatio(
+                              aspectRatio: 1.6,
                               child: _HoverZoomImage(
                                 asset:
                                     'Documentation/Token_Nomenclature.png',
@@ -745,62 +1035,84 @@ class _ControlPanel extends StatelessWidget {
                       ),
                     ],
                   ),
-                ),
 
                 // ---- Two side-by-side cards: Jeu normal / Jeu manuel ----
                 IntrinsicHeight(
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Expanded(child: _normalCard(theme, cs)),
+                      Expanded(flex: 1, child: _normalCard(theme, cs)),
                       const SizedBox(width: 8),
-                      Expanded(child: _manualCard(theme, cs)),
+                      Expanded(flex: 3, child: _manualCard(theme, cs)),
                     ],
                   ),
                 ),
 
                 const SizedBox(height: 12),
 
-                // ---- Overlays card ----
+                // ---- Overlays card (2 toggles per row) ----
                 _SectionCard(
                   title: 'Overlays',
                   padding: EdgeInsets.zero,
                   child: Column(
                     children: [
-                      SwitchListTile(
-                        title: const Text('Show ring'),
-                        subtitle:
-                            const Text('Indices des cases du ring'),
-                        value: showRing,
-                        onChanged: onToggleRing,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: SwitchListTile(
+                              title: const Text('Show ring'),
+                              subtitle: const Text(
+                                  'Indices des cases du ring'),
+                              value: showRing,
+                              onChanged: onToggleRing,
+                              dense: true,
+                            ),
+                          ),
+                          Expanded(
+                            child: SwitchListTile(
+                              title: const Text('Show grid 15×15'),
+                              subtitle: const Text(
+                                  'Indices 0..224 sur chaque case'),
+                              value: showGrid,
+                              onChanged: onToggleGrid,
+                              dense: true,
+                            ),
+                          ),
+                        ],
                       ),
-                      SwitchListTile(
-                        title: const Text('Show grid 15×15'),
-                        subtitle:
-                            const Text('Indices 0..224 sur chaque case'),
-                        value: showGrid,
-                        onChanged: onToggleGrid,
-                      ),
-                      SwitchListTile(
-                        title: const Text('Show canvas'),
-                        subtitle: const Text(
-                            'Bbox rouge autour du GIF de chaque pion'),
-                        value: showCanvas,
-                        onChanged: onToggleCanvas,
-                      ),
-                      SwitchListTile(
-                        title: const Text('Détails'),
-                        subtitle: Text(
-                          hoverInfo ?? 'Survole un pion ou le dé',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        value: showDetails,
-                        onChanged: onToggleDetails,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: SwitchListTile(
+                              title: const Text('Show canvas'),
+                              subtitle: const Text(
+                                  'Bbox rouge autour du GIF de chaque pion'),
+                              value: showCanvas,
+                              onChanged: onToggleCanvas,
+                              dense: true,
+                            ),
+                          ),
+                          Expanded(
+                            child: SwitchListTile(
+                              title: const Text('Détails'),
+                              subtitle: Text(
+                                hoverInfo ?? 'Survole un pion ou le dé',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              value: showDetails,
+                              onChanged: onToggleDetails,
+                              dense: true,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
+                ], // end of panelTab == 'commandes' branch
               ],
             ),
           ),
@@ -893,20 +1205,57 @@ class _ControlPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          Text('Valeur dé',
-              style: theme.textTheme.labelSmall
-                  ?.copyWith(color: cs.onSurfaceVariant)),
-          const SizedBox(height: 4),
-          Wrap(
-            spacing: 4,
-            runSpacing: 4,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              for (int v = 1; v <= 6; v++)
-                _MiniDiceButton(
-                  value: v,
-                  selected: v == manualValue,
-                  onTap: () => onChangeManualValue(v),
+              // ─── Valeur dé (left) ───
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Valeur dé',
+                        style: theme.textTheme.labelSmall
+                            ?.copyWith(color: cs.onSurfaceVariant)),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: [
+                        for (int v = 1; v <= 6; v++)
+                          _MiniDiceButton(
+                            value: v,
+                            selected: v == manualValue,
+                            onTap: () => onChangeManualValue(v),
+                          ),
+                      ],
+                    ),
+                  ],
                 ),
+              ),
+              const SizedBox(width: 12),
+              // ─── Pions à la base (right) ───
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Pions dans la Maison',
+                        style: theme.textTheme.labelSmall
+                            ?.copyWith(color: cs.onSurfaceVariant)),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: [
+                        for (int n = 1; n <= 4; n++)
+                          _MiniDiceButton(
+                            value: n,
+                            onTap: () => onFillManualHome(n),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ],
@@ -939,6 +1288,15 @@ class _ColorDot extends StatelessWidget {
           border: selected
               ? Border.all(
                   color: Theme.of(context).colorScheme.primary, width: 3)
+              : null,
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.45),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ]
               : null,
         ),
       ),
@@ -1014,6 +1372,13 @@ class BoardView extends StatelessWidget {
   final ValueChanged<bool>? onDiceHover;
   /// When true, the cursor over pawns/dice becomes a help-pointer (`?`).
   final bool showDetails;
+  /// Per-pawn slide duration applied to the AnimatedPositioned wrapping
+  /// the pawn's image. Pawns that just moved get their distance-based
+  /// duration; pawns that didn't move see no change in position so the
+  /// animation is a no-op.
+  final Map<Pawn, Duration> moveDuration;
+  /// Active explosion FX painted on top of the board (capture markers).
+  final List<ExplosionFx> explosions;
   const BoardView({
     super.key,
     required this.players,
@@ -1030,6 +1395,8 @@ class BoardView extends StatelessWidget {
     this.onDiceHover,
     this.showDetails = false,
     this.showRing = false,
+    this.moveDuration = const {},
+    this.explosions = const [],
     this.showGrid = false,
     this.showCanvas = false,
     this.playerCount = 4,
@@ -1105,12 +1472,28 @@ class BoardView extends StatelessWidget {
       PawnLocation.base       => _baseSlotCenter(p.color, p.position, cell),
       PawnLocation.ring       => _ringCellCenter(p.position, cell),
       PawnLocation.homeColumn => _homeColumnCenter(p.color, p.position, cell),
-      PawnLocation.home       => Offset(7.5 * cell, 7.5 * cell),
+      PawnLocation.home       => _homeCenter(p.color, cell),
     };
     return Offset(
       cellCenter.dx,
       cellCenter.dy + 0.1 * cell - 0.5 * pawnHeight,
     );
+  }
+
+  /// Geometric center of the colored home triangle for [color]. Each
+  /// triangle sits one cell away from the board center in its cardinal
+  /// direction:
+  ///   blue  → bottom (south)
+  ///   red   → left   (west)
+  ///   green → top    (north)
+  ///   yellow→ right  (east)
+  Offset _homeCenter(PlayerColor color, double cell) {
+    switch (color) {
+      case PlayerColor.blue:   return Offset(7.5 * cell, 8.5 * cell);
+      case PlayerColor.red:    return Offset(6.5 * cell, 7.5 * cell);
+      case PlayerColor.green:  return Offset(7.5 * cell, 6.5 * cell);
+      case PlayerColor.yellow: return Offset(8.5 * cell, 7.5 * cell);
+    }
   }
 
   /// Center of home-column cell [position] (0..4) for the given [color].
@@ -1267,9 +1650,55 @@ class BoardView extends StatelessWidget {
             //      hover/click hit-testing stays simple per pawn.
             ...() sync* {
               final activeColors = players.map((p) => p.color).toSet();
-              final list = game.allPawns
+              final rawList = game.allPawns
                   .where((p) => activeColors.contains(p.color))
                   .toList();
+
+              // ── Stacking: pawns sharing the same cell get a lateral
+              //    offset so all colors stay visible, and the CURRENT
+              //    player's pawn is rendered LAST (so it sits on top of
+              //    the pile). Same-color stacks (ring blocks, home
+              //    column doubles) keep a deterministic id order.
+              String stackKey(Pawn p) {
+                switch (p.location) {
+                  case PawnLocation.base:
+                    return 'base_${p.color.name}_${p.position}';
+                  case PawnLocation.ring:
+                    return 'ring_${p.position}';
+                  case PawnLocation.homeColumn:
+                    return 'hc_${p.color.name}_${p.position}';
+                  case PawnLocation.home:
+                    return 'home_${p.color.name}';
+                }
+              }
+              final groups = <String, List<Pawn>>{};
+              for (final p in rawList) {
+                groups.putIfAbsent(stackKey(p), () => []).add(p);
+              }
+              for (final g in groups.values) {
+                g.sort((a, b) {
+                  final aCur = a.color == currentPlayerColor ? 1 : 0;
+                  final bCur = b.color == currentPlayerColor ? 1 : 0;
+                  if (aCur != bCur) return aCur - bCur; // current last
+                  return a.id.compareTo(b.id);
+                });
+              }
+              // Render order: flatten groups; within each group the
+              // current player's pawn is last → z-on-top.
+              final list = groups.values.expand((g) => g).toList();
+              // Lateral spread inside each group.
+              final stackOffsets = <Pawn, Offset>{};
+              const stackDxFrac = 0.18; // 18 % of a cell between siblings
+              for (final g in groups.values) {
+                final n = g.length;
+                for (int i = 0; i < n; i++) {
+                  final dx = (n == 1)
+                      ? 0.0
+                      : (i - (n - 1) / 2) * stackDxFrac * cell;
+                  stackOffsets[g[i]] = Offset(dx, 0);
+                }
+              }
+
               // Per-pawn delays = the multiples of 100 ms in random order.
               // ValueKey'd state preservation means only the first build's
               // shuffle counts — subsequent rebuilds re-compute it but never
@@ -1289,7 +1718,8 @@ class BoardView extends StatelessWidget {
               // ---- Pass 1: selectors (all behind all pawns) ----
               for (final pawn in list) {
                 if (!movablePawns.contains(pawn)) continue;
-                final center = _pawnCenter(pawn, cell, pawnHeight);
+                final center =
+                    _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
                 final visCx = center.dx;
                 final visCy = center.dy;
                 yield Positioned(
@@ -1299,20 +1729,26 @@ class BoardView extends StatelessWidget {
                   height: selSize + 4,
                   child: IgnorePointer(
                     child: Image.asset(
-                      'AnimStock/Selectors/GIF/Selector_D_Arrow.gif',
+                      'AnimStock/Selectors/WEBP/Selector_D_Arrow.webp',
                       fit: BoxFit.fill,
                     ),
                   ),
                 );
               }
 
-              // ---- Pass 2: pawn IMAGES (no hit-test, full bbox for visual) ---
+              // ---- Pass 2: pawn IMAGES (no hit-test, full bbox for visual).
+              //  AnimatedPositioned interpolates left/top when the cell
+              //  changes — Flutter handles the slide internally, no extra
+              //  rebuild of the rest of the board. ----
               for (int i = 0; i < list.length; i++) {
                 final pawn = list[i];
-                final center = _pawnCenter(pawn, cell, pawnHeight);
+                final center =
+                    _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
                 final bboxLeft = center.dx - pawnWidth / 2;
                 final bboxTop  = center.dy - pawnHeight * _pawnVisibleCenterFrac;
-                yield Positioned(
+                yield AnimatedPositioned(
+                  duration: moveDuration[pawn] ?? Duration.zero,
+                  curve: Curves.easeInOut,
                   left: bboxLeft,
                   top:  bboxTop,
                   width: pawnWidth,
@@ -1323,6 +1759,10 @@ class BoardView extends StatelessWidget {
                       asset: pawnAsset(pawn),
                       sequentialStartDelayMs: delays[i],
                       showCanvas: showCanvas,
+                      // Only the current player's pawns animate. The
+                      // others stay on their rest frame so the board
+                      // doesn't get visually overloaded.
+                      paused: pawn.color != currentPlayerColor,
                     ),
                   ),
                 );
@@ -1340,7 +1780,8 @@ class BoardView extends StatelessWidget {
               // cell×1.0 wraps it tightly with a tiny margin.
               final hitSize = cell * 1.0;
               for (final pawn in list) {
-                final center = _pawnCenter(pawn, cell, pawnHeight);
+                final center =
+                    _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
                 final isMovable = movablePawns.contains(pawn);
                 yield Positioned(
                   left: center.dx - hitSize / 2,
@@ -1393,6 +1834,33 @@ class BoardView extends StatelessWidget {
               Positioned.fill(
                 child: IgnorePointer(
                   child: CustomPaint(painter: _GridDebugPainter(cell: cell)),
+                ),
+              ),
+
+            // Capture explosions painted on top of everything.
+            for (final fx in explosions)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: AnimatedBuilder(
+                    animation: fx.controller,
+                    builder: (ctx, _) {
+                      final c = _pawnCenter(fx.targetPawn, cell, pawnHeight);
+                      // Explosion FX is anchored on the captured cell.
+                      // Use the visible pawn center (above the pointe).
+                      final visCenter = Offset(
+                        c.dx,
+                        c.dy + 0.5 * pawnHeight - 0.5 * cell * 0.5,
+                      );
+                      return CustomPaint(
+                        painter: _ExplosionPainter(
+                          progress: fx.controller.value,
+                          color: fx.colorRgb,
+                          center: visCenter,
+                          scale: cell * 1.4,
+                        ),
+                      );
+                    },
+                  ),
                 ),
               ),
           ],
@@ -1903,11 +2371,16 @@ class _PawnAnimatedGif extends StatefulWidget {
   /// size (after BoxFit.contain scaling) so we see the actual rendered
   /// footprint, not the parent's layout bbox.
   final bool showCanvas;
+  /// When true, freeze the animation on frame 0 (rest pose). Only the
+  /// current player's pawns animate — the other 12 stand still so the
+  /// board isn't visually overloaded.
+  final bool paused;
   const _PawnAnimatedGif({
     super.key,
     required this.asset,
     required this.sequentialStartDelayMs,
     this.showCanvas = false,
+    this.paused = false,
   });
 
   @override
@@ -1953,6 +2426,23 @@ class _PawnAnimatedGifState extends State<_PawnAnimatedGif>
       _accum = Duration.zero;
       _lastTickTime = null;
       _init();
+      return;
+    }
+    // Pause/resume on `paused` toggle. Only the current player's pawns
+    // run their idle anim; everyone else is frozen on frame 0.
+    if (widget.paused != oldWidget.paused) {
+      if (widget.paused) {
+        _ticker?.stop();
+        setState(() {
+          _frameIdx = 0;
+          _accum = Duration.zero;
+          _lastTickTime = null;
+        });
+      } else if (_frames != null && _ticker == null) {
+        _ticker = createTicker(_onTick)..start();
+      } else {
+        _ticker?.start();
+      }
     }
   }
 
@@ -1972,7 +2462,10 @@ class _PawnAnimatedGifState extends State<_PawnAnimatedGif>
         Duration(milliseconds: widget.sequentialStartDelayMs),
       );
       if (!mounted) return;
-      _ticker = createTicker(_onTick)..start();
+      // Skip the ticker entirely if this pawn shouldn't animate.
+      if (!widget.paused) {
+        _ticker = createTicker(_onTick)..start();
+      }
     } catch (e, st) {
       debugPrint('Animated GIF load failed for ${widget.asset}: $e\n$st');
       if (mounted) setState(() => _failed = true);
@@ -2304,4 +2797,88 @@ class _HoverZoomImageState extends State<_HoverZoomImage> {
       ),
     );
   }
+}
+
+/// One capture explosion. Drives its own AnimationController (vsync from
+/// the parent State) and exposes the current `progress` (0..1). The
+/// painter reads progress to render particles + shockwave + flash.
+///
+/// Position is resolved at paint time from [targetPawn]'s NEW cell so
+/// the explosion stays anchored even if the board resizes mid-anim.
+class ExplosionFx {
+  static const Duration totalDuration = Duration(milliseconds: 700);
+  final Color colorRgb;
+  final Pawn targetPawn;
+  final AnimationController controller;
+  ExplosionFx({
+    required this.colorRgb,
+    required this.targetPawn,
+    required TickerProvider vsync,
+  }) : controller =
+            AnimationController(vsync: vsync, duration: totalDuration);
+  void start() => controller.forward();
+}
+
+/// Paints one explosion: a central white flash (expanding + fading), an
+/// outer shockwave ring (colored, expanding), and 12 particles flying
+/// outward from the center.
+class _ExplosionPainter extends CustomPainter {
+  final double progress;       // 0..1
+  final Color color;
+  final Offset center;
+  final double scale;          // cell-relative radius unit (so the FX is
+                               // sized consistently across resolutions)
+  _ExplosionPainter({
+    required this.progress,
+    required this.color,
+    required this.center,
+    required this.scale,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final t = progress.clamp(0.0, 1.0);
+    // Flash: large white opaque at start, shrinks (visually) by fading.
+    final flashAlpha = (1.0 - t) * 0.85;
+    if (flashAlpha > 0) {
+      final fr = scale * (0.35 + 0.45 * t);
+      canvas.drawCircle(
+        center, fr,
+        Paint()..color = Colors.white.withValues(alpha: flashAlpha),
+      );
+    }
+    // Shockwave: ring outline expanding outward, alpha fading.
+    final ringR = scale * (0.4 + 1.4 * t);
+    final ringAlpha = (1.0 - t);
+    if (ringAlpha > 0) {
+      canvas.drawCircle(
+        center, ringR,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(1.5, scale * 0.06 * (1 - t * 0.5))
+          ..color = color.withValues(alpha: ringAlpha * 0.9),
+      );
+    }
+    // 12 particles flying outward.
+    const n = 12;
+    final particleAlpha = (1.0 - t);
+    final particleR = math.max(2.0, scale * 0.09 * (1.0 - t * 0.6));
+    final distance = scale * (0.1 + 1.5 * t);
+    for (int i = 0; i < n; i++) {
+      final a = (i / n) * math.pi * 2 + t * 0.6; // slight rotation
+      final dx = center.dx + math.cos(a) * distance;
+      final dy = center.dy + math.sin(a) * distance;
+      canvas.drawCircle(
+        Offset(dx, dy), particleR,
+        Paint()..color = color.withValues(alpha: particleAlpha),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ExplosionPainter old) =>
+      old.progress != progress ||
+      old.color != color ||
+      old.center != center ||
+      old.scale != scale;
 }

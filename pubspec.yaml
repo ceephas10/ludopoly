@@ -60,7 +60,7 @@ flutter:
   assets:
     - AnimStock/Tokens/WEBP/
     - AnimStock/Dices/PNG/
-    - AnimStock/Selectors/GIF/
+    - AnimStock/Selectors/WEBP/
     - AnimStock/Selectors/PNG/
     - Documentation/Board4_Nomenclature.png
     - Documentation/Token_Nomenclature.png

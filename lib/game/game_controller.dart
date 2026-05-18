@@ -33,6 +33,34 @@ class GameController {
   TurnPhase phase = TurnPhase.rolling;
   PlayerColor? winner;
 
+  /// 2v2 team mode toggle. When ON :
+  ///   - blue + green form one team, yellow + red form the other ([_partners])
+  ///   - capture is suppressed BETWEEN partners (a pion landing on a same-
+  ///     team pion's cell does NOT send it back)
+  ///   - a player whose 4 pawns are all home keeps playing on their turn,
+  ///     but moves their partner's remaining pawns instead
+  ///   - victory = a team has its 8 pawns home (4 + 4)
+  bool teamMode = false;
+
+  /// Static team mapping. Each color points to its teammate.
+  static const Map<PlayerColor, PlayerColor> _partners = {
+    PlayerColor.blue:   PlayerColor.green,
+    PlayerColor.green:  PlayerColor.blue,
+    PlayerColor.yellow: PlayerColor.red,
+    PlayerColor.red:    PlayerColor.yellow,
+  };
+
+  /// Public lookup for teammate (used by UI to label the current
+  /// "playing-for-partner" state). Returns `null` outside team mode or
+  /// for a color with no defined partner.
+  PlayerColor? partnerOf(PlayerColor c) =>
+      teamMode ? _partners[c] : null;
+
+  /// True when [a] and [b] are on the same team (themselves included).
+  /// In non-team mode this collapses to identity.
+  bool _sameTeam(PlayerColor a, PlayerColor b) =>
+      a == b || (teamMode && _partners[a] == b);
+
   final math.Random _rng;
 
   GameController({
@@ -56,6 +84,11 @@ class GameController {
     PlayerColor.green:  26,
     PlayerColor.yellow: 39,
   };
+
+  /// Public lookup for [_startIdx] — used by rules like
+  /// "start with 1 token out" that need to place a pawn directly on
+  /// its color's ring start cell.
+  static int startIdx(PlayerColor color) => _startIdx[color]!;
 
   /// Cells where capture is forbidden (4 starts + 4 stars).
   static const Set<int> _safeCells = {0, 13, 26, 39, 8, 21, 34, 47};
@@ -97,15 +130,40 @@ class GameController {
     phase = TurnPhase.moving;
   }
 
-  /// All pawns of the current player that can legally move with [diceValue].
+  /// All pawns the current player can legally move with [diceValue]. In
+  /// team mode, when the current player's 4 pawns are all home, this
+  /// switches to their partner's still-in-play pawns (the "help partner"
+  /// rule).
   List<Pawn> movablePawns() {
     if (winner != null) return [];
-    final pawns = state.pawnsByColor[currentColor]!;
-    return pawns.where((p) => _canMove(p, diceValue)).toList();
+    final own = state.pawnsByColor[currentColor]!;
+    final result = own.where((p) => _canMoveAs(p, diceValue, currentColor))
+        .toList();
+    if (result.isNotEmpty) return result;
+    if (teamMode && _allPawnsHome(currentColor)) {
+      final partner = _partners[currentColor];
+      if (partner != null) {
+        final partnerPawns = state.pawnsByColor[partner]!;
+        return partnerPawns
+            .where((p) => _canMoveAs(p, diceValue, currentColor))
+            .toList();
+      }
+    }
+    return const [];
   }
 
-  bool _canMove(Pawn p, int v) {
-    if (p.color != currentColor || v <= 0) return false;
+  bool _canMove(Pawn p, int v) => _canMoveAs(p, v, currentColor);
+
+  /// Legality check for moving [p] on behalf of [playingFor]. In team mode
+  /// a partner can be playing the pawn (so [p.color] is the teammate's,
+  /// not [playingFor]) — but ONLY if [playingFor]'s own 4 pawns are all
+  /// home (the "help partner" rule kicks in only after you've finished).
+  bool _canMoveAs(Pawn p, int v, PlayerColor playingFor) {
+    if (v <= 0) return false;
+    if (!_sameTeam(p.color, playingFor)) return false;
+    // Helping the partner: only allowed once [playingFor]'s own pions
+    // are all at home.
+    if (p.color != playingFor && !_allPawnsHome(playingFor)) return false;
     switch (p.location) {
       case PawnLocation.base:
         return v == 6;
@@ -162,12 +220,12 @@ class GameController {
         return; // never happens (filtered by _canMove)
     }
 
-    // Capture: opponent pawn(s) on the same non-safe ring cell go back to
-    // base. (Blocks of 2+ same-color opponents are NOT handled yet — they
-    // simply get all captured for now; see Phase 3 for block rules.)
+    // Capture: opposing-team pawn(s) on the same non-safe ring cell go
+    // back to base. In team mode, partner pawns on the cell are NEVER
+    // captured.
     if (p.location == PawnLocation.ring && !_safeCells.contains(p.position)) {
       for (final color in state.pawnsByColor.keys) {
-        if (color == p.color) continue;
+        if (_sameTeam(color, p.color)) continue;
         for (final other in state.pawnsByColor[color]!) {
           if (other.location == PawnLocation.ring &&
               other.position == p.position) {
@@ -180,8 +238,20 @@ class GameController {
 
     lastMovedThisTurn = p;
 
-    if (_allPawnsHome(currentColor)) {
-      winner = currentColor;
+    // Win check. In team mode: a team wins when its 8 pawns are home.
+    // In classic mode: a player wins with their 4 pawns home.
+    final colorToCheck = p.color;
+    if (teamMode) {
+      final partner = _partners[colorToCheck];
+      if (partner != null &&
+          _allPawnsHome(colorToCheck) &&
+          _allPawnsHome(partner)) {
+        winner = colorToCheck;
+        phase = TurnPhase.gameOver;
+        return;
+      }
+    } else if (_allPawnsHome(colorToCheck)) {
+      winner = colorToCheck;
       phase = TurnPhase.gameOver;
       return;
     }
