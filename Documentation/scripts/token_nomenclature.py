@@ -1,38 +1,48 @@
-"""Generate a labelled diagram of the standard pawn (token) for shared
-vocabulary between the user and Claude.
+"""Generate a labelled diagram of the standard token (pion) for shared
+vocabulary between human and AI.
 
-Loads the production blue idle GIF, scales it up, places it on a wider
-canvas and draws labelled arrows pointing to each named part. Output:
-``Documentation/Token_Nomenclature.png``.
+Loads the production blue idle WebP (frame 0), scales it up on a wide
+canvas, then draws labelled arrows pointing to each named part.
+
+Output: ``Documentation/Token_Nomenclature.png``.
 """
 
-from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[2]
-TOKEN_GIF = ROOT / "Animations" / "AnimStock" / "Tokens" / "GIF" / \
-            "Token_standard_blue_idle_1.gif"
+TOKEN_SRC = ROOT / "AnimStock" / "Tokens" / "WEBP" / \
+    "Token_standard_blue_idle_#1.webp"
 OUTPUT = ROOT / "Documentation" / "Token_Nomenclature.png"
 
-# Output canvas size (BIG).
+# Output canvas (large enough to fit big labels on both sides).
 CANVAS_W, CANVAS_H = 2400, 1600
-# Where to draw the (scaled) token inside the canvas.
-TOKEN_W, TOKEN_H = 800, 1760  # token native is 200×440 → 4× scale
-TOKEN_X = (CANVAS_W - TOKEN_W) // 2
-TOKEN_Y = (CANVAS_H - TOKEN_H) // 2
 
-# Measured visible bbox in the 200×440 native: x 71..129, y 214..299.
-# Scaled ×4 → x 284..516, y 856..1196 inside the 800×1760 token rectangle.
-# Targets below are (x, y) in token-relative coords (0..TOKEN_W × 0..TOKEN_H).
+# Source token is 64×93 px. Scale uniformly so it stays in shape.
+SCALE = 12  # → rendered token 768×1116 px
+
+# Eye / face / body coords measured on the 64×93 native WebP (frame 0):
+#   left eye  : (22.5, 27)
+#   right eye : (40.5, 27)
+#   centre between eyes  → (31.5, 27)  ← the NEW canonical center
+#   sommet (top of helmet halo): around (32, 8)
+#   visage centre  : (32, 26)
+#   smile / bouche : (32, 36)
+#   anneau visage  : (15, 30)  (left edge of the face ring)
+#   corps          : (32, 60)
+#   pointe (tip)   : (32, 88)
+#   halo (contour vert), outer edge: (54, 50)
 LABELS = [
-    ("Sommet (casque)",      (400,  855), (TOKEN_X - 120,  TOKEN_Y + 830),  'L'),
-    ("Visage",               (400,  920), (TOKEN_X + TOKEN_W + 120, TOKEN_Y + 860), 'R'),
-    ("Œil",                  (370,  960), (TOKEN_X - 120,  TOKEN_Y + 930),  'L'),
-    ("Bouche",               (420, 1000), (TOKEN_X + TOKEN_W + 120, TOKEN_Y + 1000), 'R'),
-    ("Anneau visage",        (316,  980), (TOKEN_X - 120,  TOKEN_Y + 1060), 'L'),
-    ("Corps",                (420, 1090), (TOKEN_X + TOKEN_W + 120, TOKEN_Y + 1130), 'R'),
-    ("Pointe",               (400, 1190), (TOKEN_X + TOKEN_W + 120, TOKEN_Y + 1260), 'R'),
-    ("Halo (contour vert)",  (296, 1110), (TOKEN_X - 120,  TOKEN_Y + 1200), 'L'),
+    # (text, native_target_xy, on_left, badge_y_in_canvas)
+    ("Sommet (casque)",                 (32,  8),  True,  340),
+    ("Visage",                          (32, 23), False,  330),
+    ("Œil",                             (22, 27),  True,  440),
+    ("Centre du pion (entre les yeux)", (31, 27), False,  450),
+    ("Bouche",                          (32, 36), False,  570),
+    ("Anneau visage",                   (15, 30),  True,  570),
+    ("Corps",                           (32, 60), False,  720),
+    ("Halo (contour vert)",             (54, 50),  True,  720),
+    ("Pointe",                          (32, 90), False,  880),
 ]
 
 
@@ -40,77 +50,91 @@ def main() -> None:
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 
     canvas = Image.new("RGBA", (CANVAS_W, CANVAS_H), (250, 250, 252, 255))
-    token = Image.open(TOKEN_GIF).convert("RGBA")
-    token = token.resize((TOKEN_W, TOKEN_H), Image.LANCZOS)
-    canvas.paste(token, (TOKEN_X, TOKEN_Y), token)
+    token = Image.open(TOKEN_SRC).convert("RGBA")
+    native_w, native_h = token.size
+    token_w = native_w * SCALE
+    token_h = native_h * SCALE
+    token = token.resize((token_w, token_h), Image.LANCZOS)
+
+    token_x = (CANVAS_W - token_w) // 2
+    token_y = (CANVAS_H - token_h) // 2 + 80  # leave room for the title
+    canvas.paste(token, (token_x, token_y), token)
 
     draw = ImageDraw.Draw(canvas)
 
-    # Title.
     try:
         title_font = ImageFont.truetype("arial.ttf", 64)
-        label_font = ImageFont.truetype("arial.ttf", 40)
+        sub_font   = ImageFont.truetype("arial.ttf", 30)
+        label_font = ImageFont.truetype("arial.ttf", 36)
     except OSError:
-        title_font = ImageFont.load_default()
-        label_font = ImageFont.load_default()
-    draw.text(
-        (60, 40),
-        "Nomenclature du Token",
-        fill=(20, 20, 30, 255),
-        font=title_font,
-    )
-    draw.text(
-        (60, 120),
-        "Vocabulaire partagé pour parler des parties d'un pion.",
-        fill=(80, 80, 90, 255),
-        font=label_font,
-    )
+        title_font = sub_font = label_font = ImageFont.load_default()
 
-    for name, target, anchor, side in LABELS:
-        tx = TOKEN_X + target[0]
-        ty = TOKEN_Y + target[1]
-        lx, ly = anchor
-        # Arrow line.
+    draw.text((60, 40), "Nomenclature du Token",
+              fill=(20, 20, 30, 255), font=title_font)
+    draw.text((60, 120),
+              "Vocabulaire partagé pour parler des parties d'un pion. "
+              "Le centre du pion = le point entre les 2 yeux (idle).",
+              fill=(80, 80, 90, 255), font=sub_font)
+
+    # Draw a small red crosshair on the canonical center (between the eyes).
+    cx_native_x, cx_native_y = 31, 27
+    cx_canvas_x = token_x + cx_native_x * SCALE
+    cx_canvas_y = token_y + cx_native_y * SCALE
+    cross = 18
+    draw.line([(cx_canvas_x - cross, cx_canvas_y),
+               (cx_canvas_x + cross, cx_canvas_y)],
+              fill=(220, 30, 30, 255), width=3)
+    draw.line([(cx_canvas_x, cx_canvas_y - cross),
+               (cx_canvas_x, cx_canvas_y + cross)],
+              fill=(220, 30, 30, 255), width=3)
+
+    margin = 80
+    for name, (nx, ny), on_left, by in LABELS:
+        tx = token_x + nx * SCALE
+        ty = token_y + ny * SCALE
+        if on_left:
+            badge_x_anchor = margin               # left padding
+        else:
+            badge_x_anchor = CANVAS_W - margin    # right padding
+
+        # Draw label badge first to know its width.
+        text_bbox = draw.textbbox((0, 0), name, font=label_font)
+        text_w = text_bbox[2] - text_bbox[0]
+        text_h = text_bbox[3] - text_bbox[1]
+        pad = 14
+        if on_left:
+            bx0 = badge_x_anchor
+        else:
+            bx0 = badge_x_anchor - text_w - pad * 2
+        by0 = by - text_h // 2 - pad
+        bx1 = bx0 + text_w + pad * 2
+        by1 = by0 + text_h + pad * 2
+        draw.rounded_rectangle((bx0, by0, bx1, by1), radius=18,
+                               fill=(255, 235, 130, 255),
+                               outline=(180, 150, 30, 255), width=3)
+        draw.text((bx0 + pad, by0 + pad - 6), name,
+                  fill=(40, 30, 0, 255), font=label_font)
+
+        # Arrow from badge edge to target.
+        if on_left:
+            lx, ly = bx1, by
+        else:
+            lx, ly = bx0, by
         draw.line([(lx, ly), (tx, ty)], fill=(50, 50, 60, 255), width=4)
-        # Arrowhead near the target.
-        head_size = 20
+        # Arrowhead.
+        head_size = 24
         dx, dy = tx - lx, ty - ly
         length = (dx ** 2 + dy ** 2) ** 0.5 or 1
         ux, uy = dx / length, dy / length
-        px, py = -uy, ux  # perpendicular
+        px, py = -uy, ux
         p1 = (tx - ux * head_size + px * head_size * 0.5,
               ty - uy * head_size + py * head_size * 0.5)
         p2 = (tx - ux * head_size - px * head_size * 0.5,
               ty - uy * head_size - py * head_size * 0.5)
         draw.polygon([(tx, ty), p1, p2], fill=(50, 50, 60, 255))
-        # Label badge.
-        text_bbox = draw.textbbox((0, 0), name, font=label_font)
-        text_w = text_bbox[2] - text_bbox[0]
-        text_h = text_bbox[3] - text_bbox[1]
-        pad = 14
-        if side == 'L':
-            bx0 = lx - text_w - pad * 2
-        else:
-            bx0 = lx
-        by0 = ly - text_h // 2 - pad
-        bx1 = bx0 + text_w + pad * 2
-        by1 = by0 + text_h + pad * 2
-        draw.rounded_rectangle(
-            (bx0, by0, bx1, by1),
-            radius=18,
-            fill=(255, 235, 130, 255),
-            outline=(180, 150, 30, 255),
-            width=3,
-        )
-        draw.text(
-            (bx0 + pad, by0 + pad - 4),
-            name,
-            fill=(40, 30, 0, 255),
-            font=label_font,
-        )
 
     canvas.save(OUTPUT, "PNG")
-    print(f"Wrote {OUTPUT}")
+    print(f"Wrote {OUTPUT}  ({CANVAS_W}×{CANVAS_H})")
 
 
 if __name__ == "__main__":

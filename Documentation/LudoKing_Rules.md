@@ -115,6 +115,17 @@ Le plateau comporte **8 cases protégées** au total :
 - Gameplay plus stratégique et compétitif
 - Variantes de règles renforcées (tactique, anticipation)
 
+### Team Mode (Mode en équipe / 2v2)
+
+- **4 joueurs obligatoirement**, organisés en **2 équipes de 2**
+- Les coéquipiers sont en **diagonale** sur le plateau (cases opposées)
+  - Configuration LudoPoly : **Bleu + Vert** vs **Jaune + Rouge**
+- **1 dé par tour** (comme en mode normal), rotation horaire des 4 joueurs inchangée
+- **Pas de capture entre coéquipiers** : un pion qui atterrit sur une case occupée par un pion de son **partenaire** **ne le mange pas** (ils peuvent cohabiter). La capture ne concerne **que les pions de l'équipe adverse**.
+- **Aide au partenaire** : si un joueur a déjà ses **4 pions** au centre, à son tour il continue de lancer le dé mais joue avec les **pions de son coéquipier** restés en jeu
+- **Condition de victoire** : la **première équipe** à amener ses **8 pions** (4 + 4) au centre gagne
+- Toutes les autres règles standard (blocks, cases protégées, 6 pour sortir, tours bonus) restent en vigueur
+
 ### Autres modes
 
 | Mode | Description |
