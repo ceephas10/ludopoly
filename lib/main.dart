@@ -587,7 +587,15 @@ class _BoardScreenState extends State<BoardScreen>
         _animating = false;
         _travelStep.remove(p);
         // Les pions capturés peuvent disparaître : le trajet est terminé.
-        _captureOverride.clear();
+        // Mais garder les captures visibles jusqu'au prochain coup si pas encore enlever.
+        // (Ils seront enlever quand l'attaquant arrive exactement sur leur case,
+        // ou ici si le trajet est trop court)
+        final finalStep = path.isNotEmpty ? path.last : null;
+        if (finalStep != null) {
+          _captureOverride.removeWhere((cap, capturedLoc) =>
+              finalStep.location == capturedLoc.location &&
+              finalStep.position == capturedLoc.position);
+        }
         // Le pion est arrivé : c'est MAINTENANT que le dé prend la couleur
         // du joueur suivant.
         _diceColorHold = null;
