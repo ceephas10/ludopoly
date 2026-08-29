@@ -144,8 +144,14 @@ class _BoardScreenState extends State<BoardScreen>
   /// Pause pendant laquelle l'attaquant ET le pion qu'il vient de capturer
   /// restent affichés ENSEMBLE sur la même case. Elle ne commence qu'une
   /// fois l'attaquant VISUELLEMENT arrivé ; le pion capturé n'a pas bougé
-  /// d'un pixel avant cet instant, et ne disparaît qu'à la fin de la pause.
-  static const Duration _captureHold = Duration(milliseconds: 520);
+  /// d'un pixel avant cet instant, et ne quitte la case qu'à la fin.
+  static const Duration _captureHold = Duration(milliseconds: 340);
+
+  /// Durée d'UNE case pendant le retour à contre-sens du pion capturé. Il
+  /// rembobine son parcours — de la case où il s'est fait manger jusqu'à sa
+  /// flèche d'entrée — avant de rentrer dans sa base. Nettement plus rapide
+  /// qu'un déplacement joué : c'est un rembobinage, pas un coup.
+  static const Duration _returnStep = Duration(milliseconds: 55);
 
   /// Position VISUELLE d'un pion pendant son trajet. Tant qu'une entrée est
   /// présente, le plateau dessine le pion sur cette case-là et non sur sa
@@ -162,6 +168,11 @@ class _BoardScreenState extends State<BoardScreen>
   /// Timer du trajet en cours et du coup automatique en attente.
   Timer? _travelTimer;
   Timer? _autoMoveTimer;
+
+  /// Timers des retours à contre-sens des pions capturés. Il peut y en
+  /// avoir plusieurs en vol (deux pions mangés d'un coup), et ils survivent
+  /// au tour suivant — c'est de l'habillage, il ne bloque pas la partie.
+  final List<Timer> _returnTimers = [];
 
   /// Last hover info text (token or dice), shown next to the Détails toggle.
   String? _hoverInfo;
@@ -603,16 +614,16 @@ class _BoardScreenState extends State<BoardScreen>
       setState(() {
         _animating = false;
         _travelStep.remove(p);
-        // L'attaquant est arrivé et la pause est écoulée : les pions
-        // capturés repartent MAINTENANT dans leur base, d'un coup net
-        // (leur `_moveDuration` a été mis à zéro plus haut).
-        for (final cap in capturedNow) {
-          _captureOverride.remove(cap);
-        }
         // Le pion est arrivé : c'est MAINTENANT que le dé prend la couleur
         // du joueur suivant.
         _diceColorHold = null;
       });
+      // L'attaquant est arrivé et la pause est écoulée : les pions capturés
+      // quittent MAINTENANT la case, en rembobinant leur parcours à
+      // contre-sens jusqu'à leur flèche d'entrée puis dans leur base.
+      for (final cap in capturedNow) {
+        _startReturnTravel(cap);
+      }
       _scheduleAiTurn();
     });
     // Explosion de capture : au moment EXACT où le pion capturé s'efface.
@@ -640,6 +651,57 @@ class _BoardScreenState extends State<BoardScreen>
         });
       });
     }
+  }
+
+  /// Retour du pion [cap] qui vient d'être capturé : il rembobine son
+  /// parcours à CONTRE-SENS depuis la case où il s'est fait manger jusqu'à
+  /// sa flèche d'entrée, puis rentre dans sa base.
+  ///
+  /// Le moteur a déjà remis le pion en base ; c'est `_captureOverride` qui
+  /// tient sa position VISUELLE, case après case, jusqu'à ce qu'on la
+  /// retire — le pion se retrouve alors dessiné à sa vraie place, la base,
+  /// exactement là où le rembobinage l'a mené. La transition est invisible.
+  ///
+  /// Purement décoratif : le verrou est déjà levé et la main déjà passée,
+  /// donc ce retour n'empêche personne de jouer pendant qu'il se déroule.
+  void _startReturnTravel(Pawn cap) {
+    final from = _captureOverride[cap];
+    if (from == null) return;
+    final path = _controller.returnPathFor(cap.color, from, cap.position);
+    if (path.length < 2) {
+      setState(() => _captureOverride.remove(cap));
+      return;
+    }
+    setState(() {
+      // Le pion glisse d'une case à l'autre au rythme du rembobinage.
+      _moveDuration[cap] = _returnStep;
+      _captureOverride[cap] = path.first;
+    });
+    int i = 0;
+    late final Timer t;
+    t = Timer.periodic(_returnStep, (timer) {
+      // Le pion est ressorti de sa base entre-temps (un 6 l'a fait
+      // repartir) : son trajet normal reprend la main, on s'efface.
+      if (!mounted || cap.location != PawnLocation.base) {
+        timer.cancel();
+        _returnTimers.remove(t);
+        if (mounted) setState(() => _captureOverride.remove(cap));
+        return;
+      }
+      i++;
+      setState(() {
+        if (i >= path.length - 1) {
+          // Dernière étape = la base, sa position réelle : on retire
+          // l'override plutôt que de l'y poser, c'est le même point.
+          _captureOverride.remove(cap);
+          timer.cancel();
+          _returnTimers.remove(t);
+        } else {
+          _captureOverride[cap] = path[i];
+        }
+      });
+    });
+    _returnTimers.add(t);
   }
 
   Color _colorOfPawn(PlayerColor c) {
@@ -752,6 +814,10 @@ class _BoardScreenState extends State<BoardScreen>
     _aiTimer?.cancel();
     _travelTimer?.cancel();
     _autoMoveTimer?.cancel();
+    for (final t in _returnTimers) {
+      t.cancel();
+    }
+    _returnTimers.clear();
     _travelStep.clear();
     _diceColorHold = null;
     _captureOverride.clear();

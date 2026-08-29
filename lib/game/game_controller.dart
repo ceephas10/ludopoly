@@ -20,6 +20,61 @@ enum TurnPhase {
   gameOver,
 }
 
+/// Une case traversée par un pion pendant son déplacement.
+///
+/// Sert UNIQUEMENT à l'affichage : l'interface fait glisser le pion d'une
+/// [PawnStep] à la suivante pour qu'on voie chaque case. Le moteur, lui,
+/// applique le coup d'un bloc — l'animation ne décide jamais d'une règle.
+class PawnStep {
+  final PawnLocation location;
+  final int position;
+  const PawnStep(this.location, this.position);
+
+  @override
+  String toString() => '${location.name}:$position';
+}
+
+/// Position figée d'un pion dans un [GameSnapshot].
+class PawnSnapshot {
+  final PawnLocation location;
+  final int position;
+  const PawnSnapshot(this.location, this.position);
+}
+
+/// Instantané complet d'une partie : la position des 16 pions PLUS tout
+/// l'état de tour (joueur courant, dé, série de 6, phase, classement).
+///
+/// Sert au bouton « Retour » : on empile un instantané AVANT chaque action,
+/// et [GameController.stepBack] le réapplique tel quel. Un instantané ne
+/// contient que des valeurs, jamais de références aux pions vivants — le
+/// restaurer ne peut donc pas ré-introduire un état partiellement modifié.
+class GameSnapshot {
+  final Map<PlayerColor, List<PawnSnapshot>> pawns;
+  final int currentPlayerIdx;
+  final int diceValue;
+  final int lastRoll;
+  final int consecutiveSixes;
+  final TurnPhase phase;
+  final PlayerColor? winner;
+  final List<PlayerColor> ranking;
+
+  /// Libellé lisible de l'action qui a suivi cet instantané, p. ex.
+  /// « red · dé 4 ». Affiché dans l'infobulle du bouton Retour.
+  final String label;
+
+  const GameSnapshot({
+    required this.pawns,
+    required this.currentPlayerIdx,
+    required this.diceValue,
+    required this.lastRoll,
+    required this.consecutiveSixes,
+    required this.phase,
+    required this.winner,
+    required this.ranking,
+    required this.label,
+  });
+}
+
 class GameController {
   /// Turn order. Mutable so the host can swap players in/out at runtime
   /// (e.g. when the user picks 1/2/3 players in the command center).
@@ -28,10 +83,28 @@ class GameController {
 
   int currentPlayerIdx = 0;
   int diceValue = 0;
+
+  /// Dernière valeur SORTIE du dé, tous joueurs confondus. Contrairement à
+  /// [diceValue] — qui retombe à 0 dès que le tour passe — celle-ci persiste :
+  /// c'est ce que le plateau affiche pendant que le joueur suivant réfléchit.
+  /// 0 = aucun lancer depuis le début de la partie.
+  int lastRoll = 0;
   int consecutiveSixes = 0;
   Pawn? lastMovedThisTurn;
   TurnPhase phase = TurnPhase.rolling;
   PlayerColor? winner;
+
+  /// Ordre d'arrivée : `ranking[0]` = 1er, `ranking[1]` = 2e, etc. Une
+  /// couleur y entre dès que ses 4 pions sont au centre. La partie NE
+  /// s'arrête PAS au premier arrivé : les autres continuent à jouer pour
+  /// les places suivantes, jusqu'à ce qu'il ne reste qu'un joueur.
+  final List<PlayerColor> ranking = [];
+
+  /// Règle des blocs (barrière). Quand elle est ON, 2 pions ou plus de la
+  /// même couleur sur une case du ring forment un BLOC : un pion adverse
+  /// ne peut ni s'y poser, ni le traverser. Configurable parce que les
+  /// variantes de Ludo ne traitent pas l'empilement de la même manière.
+  bool blockRule = false;
 
   /// 2v2 team mode toggle. When ON :
   ///   - blue + green form one team, yellow + red form the other ([_partners])
@@ -103,8 +176,9 @@ class GameController {
   /// Set the dice value (random or forced) and update [phase]. If no pawn can
   /// move (or the streak-of-3 sixes triggers), advances to the next player.
   void roll(int value) {
-    if (phase != TurnPhase.rolling || winner != null) return;
+    if (phase != TurnPhase.rolling) return;
     diceValue = value;
+    lastRoll = value;
 
     if (value == 6) {
       consecutiveSixes++;
@@ -135,7 +209,7 @@ class GameController {
   /// switches to their partner's still-in-play pawns (the "help partner"
   /// rule).
   List<Pawn> movablePawns() {
-    if (winner != null) return [];
+    if (phase == TurnPhase.gameOver) return [];
     final own = state.pawnsByColor[currentColor]!;
     final result = own.where((p) => _canMoveAs(p, diceValue, currentColor))
         .toList();
@@ -166,16 +240,79 @@ class GameController {
     if (p.color != playingFor && !_allPawnsHome(playingFor)) return false;
     switch (p.location) {
       case PawnLocation.base:
-        return v == 6;
+        if (v != 6) return false;
+        // Sortie de base : la case départ doit être libre de tout bloc adverse.
+        return !_barriersFor(playingFor).contains(_startIdx[p.color]!);
       case PawnLocation.ring:
         final taken = _stepsTaken(p);
-        return taken + v <= totalStepsToHome;
+        if (taken + v > totalStepsToHome) return false;
+        return _pathIsClear(p, taken, v, playingFor);
       case PawnLocation.homeColumn:
         // Home column has 5 cells (indices 0..4); the 6th step reaches home.
         return p.position + v <= 5;
       case PawnLocation.home:
         return false;
     }
+  }
+
+  /// Les cases successivement traversées par [p] avec un dé de [v], case
+  /// d'ARRIVÉE comprise et case de départ exclue. Une sortie de base ne
+  /// compte qu'une étape (le pion est téléporté sur sa case départ, il ne
+  /// parcourt pas 6 cases). Liste vide si le coup est illégal.
+  ///
+  /// Purement géométrique : ne modifie rien, sert à animer le trajet.
+  List<PawnStep> pathFor(Pawn p, int v) {
+    if (!_canMoveAs(p, v, currentColor)) return const [];
+    switch (p.location) {
+      case PawnLocation.base:
+        return [PawnStep(PawnLocation.ring, _startIdx[p.color]!)];
+      case PawnLocation.ring:
+        final taken = _stepsTaken(p);
+        final start = _startIdx[p.color]!;
+        return [
+          for (int s = taken + 1; s <= taken + v; s++)
+            if (s <= 51)
+              PawnStep(PawnLocation.ring, (start + s) % ringSize)
+            else if (s == totalStepsToHome)
+              const PawnStep(PawnLocation.home, 0)
+            else
+              PawnStep(PawnLocation.homeColumn, s - 52),
+        ];
+      case PawnLocation.homeColumn:
+        return [
+          for (int s = p.position + 1; s <= p.position + v; s++)
+            if (s == 5)
+              const PawnStep(PawnLocation.home, 0)
+            else
+              PawnStep(PawnLocation.homeColumn, s),
+        ];
+      case PawnLocation.home:
+        return const [];
+    }
+  }
+
+  /// Chemin de RETOUR d'un pion capturé, case par case et case de capture
+  /// EXCLUE : depuis [from], la case de l'anneau où il vient de se faire
+  /// manger, il remonte l'anneau À CONTRE-SENS jusqu'à sa flèche d'entrée
+  /// (la case de départ de sa couleur), puis rentre dans sa base sur le
+  /// créneau [baseSlot]. La dernière étape est donc toujours la base.
+  ///
+  /// Un pion capturé est forcément sur l'anneau, et jamais sur une case
+  /// sûre — les 4 cases de départ en font partie — donc le chemin compte
+  /// au moins une case d'anneau. Tout autre cas retombe sur le saut direct.
+  ///
+  /// Purement géométrique : ne modifie rien, sert à animer le retour.
+  List<PawnStep> returnPathFor(PlayerColor color, PawnStep from, int baseSlot) {
+    if (from.location != PawnLocation.ring) {
+      return [PawnStep(PawnLocation.base, baseSlot)];
+    }
+    final start = _startIdx[color]!;
+    final taken = (from.position - start + ringSize) % ringSize;
+    return [
+      for (int s = taken - 1; s >= 0; s--)
+        PawnStep(PawnLocation.ring, (start + s) % ringSize),
+      PawnStep(PawnLocation.base, baseSlot),
+    ];
   }
 
   /// Move [p] by [diceValue]. No-op if illegal. Resolves capture, home
@@ -238,9 +375,18 @@ class GameController {
 
     lastMovedThisTurn = p;
 
-    // Win check. In team mode: a team wins when its 8 pawns are home.
-    // In classic mode: a player wins with their 4 pawns home.
+    // Classement : dès qu'une couleur a ses 4 pions au centre elle prend le
+    // rang suivant. Le 1er arrivé est le gagnant, mais la partie CONTINUE
+    // pour les places 2e / 3e / 4e.
     final colorToCheck = p.color;
+    if (_allPawnsHome(colorToCheck) && !ranking.contains(colorToCheck)) {
+      ranking.add(colorToCheck);
+      winner ??= colorToCheck;
+    }
+
+    // Fin de partie. En mode équipe : une équipe a ses 8 pions au centre.
+    // En mode classique : il ne reste plus qu'un joueur non classé, il
+    // prend automatiquement la dernière place.
     if (teamMode) {
       final partner = _partners[colorToCheck];
       if (partner != null &&
@@ -250,8 +396,11 @@ class GameController {
         phase = TurnPhase.gameOver;
         return;
       }
-    } else if (_allPawnsHome(colorToCheck)) {
-      winner = colorToCheck;
+    } else if (ranking.isNotEmpty &&
+        ranking.length >= turnOrder.length - 1) {
+      for (final c in turnOrder) {
+        if (!ranking.contains(c)) ranking.add(c);
+      }
       phase = TurnPhase.gameOver;
       return;
     }
@@ -278,16 +427,264 @@ class GameController {
     }
     currentPlayerIdx = 0;
     diceValue = 0;
+    lastRoll = 0;
     consecutiveSixes = 0;
     lastMovedThisTurn = null;
     phase = TurnPhase.rolling;
     winner = null;
+    ranking.clear();
+    clearHistory();
+  }
+
+  // --- IA locale (mode "contre ordinateur") ---------------------------------
+
+  /// Choisit le meilleur pion à jouer pour le joueur courant, par ordre de
+  /// priorité décroissante :
+  ///   1. un coup qui CAPTURE un pion adverse ;
+  ///   2. un coup qui rentre un pion à la MAISON ;
+  ///   3. un coup qui entre dans le COULOIR final ;
+  ///   4. une SORTIE de base (occuper le plateau) ;
+  ///   5. un coup qui termine sur une case SÛRE ;
+  ///   6. à défaut, le pion le plus AVANCÉ.
+  /// Retourne `null` si aucun coup n'est jouable.
+  Pawn? pickAiPawn() {
+    final options = movablePawns();
+    if (options.isEmpty) return null;
+    Pawn? best;
+    int bestScore = -1 << 30;
+    for (final p in options) {
+      final s = _aiScore(p);
+      if (s > bestScore) {
+        bestScore = s;
+        best = p;
+      }
+    }
+    return best;
+  }
+
+  int _aiScore(Pawn p) {
+    final taken = p.location == PawnLocation.ring ? _stepsTaken(p) : 0;
+    int score = 0;
+    switch (p.location) {
+      case PawnLocation.base:
+        score = 400; // sortir occupe le plateau
+        break;
+      case PawnLocation.ring:
+        final newSteps = taken + diceValue;
+        if (newSteps == totalStepsToHome) {
+          score = 1000; // arrivée exacte à la maison
+        } else if (newSteps > 51) {
+          score = 600; // entrée dans le couloir final
+        } else {
+          final target = (_startIdx[p.color]! + newSteps) % ringSize;
+          if (_wouldCaptureAt(target, p.color)) {
+            score = 900; // capture = tour supplémentaire
+          } else if (_safeCells.contains(target)) {
+            score = 500;
+          } else {
+            score = 100 + newSteps; // sinon, faire avancer le plus avancé
+          }
+        }
+        break;
+      case PawnLocation.homeColumn:
+        score = (p.position + diceValue == 5) ? 1000 : 600 + p.position;
+        break;
+      case PawnLocation.home:
+        score = -1 << 29;
+        break;
+    }
+    return score;
+  }
+
+  /// True si un pion adverse capturable se trouve sur la case [cell].
+  bool _wouldCaptureAt(int cell, PlayerColor mover) {
+    if (_safeCells.contains(cell)) return false;
+    for (final entry in state.pawnsByColor.entries) {
+      if (_sameTeam(entry.key, mover)) continue;
+      for (final other in entry.value) {
+        if (other.location == PawnLocation.ring && other.position == cell) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   // --- internal helpers -----------------------------------------------------
 
   int _stepsTaken(Pawn p) =>
       (p.position - _startIdx[p.color]! + ringSize) % ringSize;
+
+  /// Cases du ring qui font BARRIÈRE pour [mover] : une case portant 2 pions
+  /// ou plus d'une même couleur qui n'est pas dans l'équipe de [mover].
+  /// Vide quand [blockRule] est OFF (comportement historique : on traverse
+  /// et on s'empile librement).
+  Set<int> _barriersFor(PlayerColor mover) {
+    if (!blockRule) return const {};
+    final byCellAndColor = <int, Map<PlayerColor, int>>{};
+    for (final entry in state.pawnsByColor.entries) {
+      if (_sameTeam(entry.key, mover)) continue;
+      for (final p in entry.value) {
+        if (p.location != PawnLocation.ring) continue;
+        final byColor = byCellAndColor.putIfAbsent(p.position, () => {});
+        byColor[entry.key] = (byColor[entry.key] ?? 0) + 1;
+      }
+    }
+    final result = <int>{};
+    byCellAndColor.forEach((cell, byColor) {
+      if (byColor.values.any((n) => n >= 2)) result.add(cell);
+    });
+    return result;
+  }
+
+  /// True si aucune barrière adverse ne se trouve sur les [v] cases que [p]
+  /// s'apprête à parcourir (cases intermédiaires ET case d'arrivée). Le
+  /// couloir final est privé : on ne teste que la portion sur le ring.
+  bool _pathIsClear(Pawn p, int taken, int v, PlayerColor playingFor) {
+    final barriers = _barriersFor(playingFor);
+    if (barriers.isEmpty) return true;
+    final start = _startIdx[p.color]!;
+    for (int s = taken + 1; s <= taken + v && s <= 51; s++) {
+      if (barriers.contains((start + s) % ringSize)) return false;
+    }
+    return true;
+  }
+
+  // --- Historique / bouton Retour -------------------------------------------
+
+  /// Pile d'annulation : un instantané de l'état AVANT chaque action, le
+  /// plus récent en dernier. Bornée à [_maxHistory].
+  final List<GameSnapshot> _history = [];
+
+  /// Pile de rétablissement : les états APRÈS les actions annulées. Vidée dès
+  /// qu'une nouvelle action est jouée — on ne peut pas rétablir une branche
+  /// qu'on vient d'abandonner.
+  final List<GameSnapshot> _redo = [];
+
+  static const int _maxHistory = 100;
+
+  /// Nombre de coups annulables / rétablissables.
+  int get undoDepth => _history.length;
+  int get redoDepth => _redo.length;
+
+  /// Libellé du prochain coup annulable / rétablissable, ou `null`.
+  String? get lastUndoLabel =>
+      _history.isEmpty ? null : _history.last.label;
+  String? get nextRedoLabel => _redo.isEmpty ? null : _redo.last.label;
+
+  /// Photographie l'état courant sous [label].
+  GameSnapshot _capture(String label) => GameSnapshot(
+        pawns: {
+          for (final entry in state.pawnsByColor.entries)
+            entry.key: [
+              for (final p in entry.value)
+                PawnSnapshot(p.location, p.position),
+            ],
+        },
+        currentPlayerIdx: currentPlayerIdx,
+        diceValue: diceValue,
+        lastRoll: lastRoll,
+        consecutiveSixes: consecutiveSixes,
+        phase: phase,
+        winner: winner,
+        ranking: List<PlayerColor>.from(ranking),
+        label: label,
+      );
+
+  /// Réapplique [snap] tel quel.
+  void _restore(GameSnapshot snap) {
+    for (final entry in state.pawnsByColor.entries) {
+      final saved = snap.pawns[entry.key];
+      if (saved == null) continue;
+      for (int i = 0; i < entry.value.length && i < saved.length; i++) {
+        entry.value[i].location = saved[i].location;
+        entry.value[i].position = saved[i].position;
+      }
+    }
+    currentPlayerIdx = snap.currentPlayerIdx;
+    diceValue = snap.diceValue;
+    lastRoll = snap.lastRoll;
+    consecutiveSixes = snap.consecutiveSixes;
+    phase = snap.phase;
+    winner = snap.winner;
+    ranking
+      ..clear()
+      ..addAll(snap.ranking);
+    lastMovedThisTurn = null;
+  }
+
+  /// Fige l'état courant AVANT une action. À appeler juste avant tout ce qui
+  /// modifie la partie (lancer de dé, édition manuelle).
+  void pushHistory(String label) {
+    _history.add(_capture(label));
+    if (_history.length > _maxHistory) _history.removeAt(0);
+    _redo.clear();
+  }
+
+  /// Annule la dernière action : replace les 16 pions et rembobine l'état de
+  /// tour tel qu'il était AVANT elle. Retourne `false` si rien à annuler.
+  bool stepBack() {
+    if (_history.isEmpty) return false;
+    final snap = _history.removeLast();
+    // L'état actuel (= APRÈS l'action annulée) devient rétablissable, sous le
+    // même libellé que l'action.
+    _redo.add(_capture(snap.label));
+    _restore(snap);
+    return true;
+  }
+
+  /// Rétablit l'action précédemment annulée. Retourne `false` si rien à
+  /// rétablir.
+  bool stepForward() {
+    if (_redo.isEmpty) return false;
+    final snap = _redo.removeLast();
+    _history.add(_capture(snap.label));
+    _restore(snap);
+    return true;
+  }
+
+  /// Vide les deux piles (nouvelle partie).
+  void clearHistory() {
+    _history.clear();
+    _redo.clear();
+  }
+
+  /// True quand [c] a déjà terminé (ses 4 pions au centre, rang attribué).
+  bool hasFinished(PlayerColor c) => ranking.contains(c);
+
+  /// Rang 1-based de [c] dans l'ordre d'arrivée, ou `null` s'il n'a pas
+  /// encore fini.
+  int? rankOf(PlayerColor c) {
+    final i = ranking.indexOf(c);
+    return i < 0 ? null : i + 1;
+  }
+
+  /// Recalcule [ranking]/[winner]/[phase] à partir de l'état réel des pions.
+  /// Utilisé par l'éditeur manuel, qui pousse des pions vers/hors du centre
+  /// sans passer par [movePawn].
+  void recomputeStandings() {
+    // On repart des seules couleurs réellement rentrées, dans l'ordre
+    // d'arrivée déjà connu ; les nouvelles s'ajoutent à la suite.
+    ranking.removeWhere((c) => !_allPawnsHome(c));
+    for (final c in turnOrder) {
+      if (_allPawnsHome(c) && !ranking.contains(c)) ranking.add(c);
+    }
+    winner = ranking.isEmpty ? null : ranking.first;
+    final over = teamMode
+        ? (winner != null &&
+            _partners[winner!] != null &&
+            _allPawnsHome(_partners[winner!]!))
+        : ranking.isNotEmpty && ranking.length >= turnOrder.length - 1;
+    if (over) {
+      // Le ou les joueurs restants prennent d'office les dernières places.
+      for (final c in turnOrder) {
+        if (!ranking.contains(c)) ranking.add(c);
+      }
+      phase = TurnPhase.gameOver;
+    } else if (phase == TurnPhase.gameOver) {
+      phase = TurnPhase.rolling;
+    }
+  }
 
   void _returnPawnToBase(Pawn p) {
     p.location = PawnLocation.base;
@@ -299,11 +696,21 @@ class GameController {
         .every((p) => p.location == PawnLocation.home);
   }
 
+  /// Passe au joueur suivant en SAUTANT ceux qui ont déjà terminé (leurs 4
+  /// pions sont au centre et leur rang est acquis). En mode équipe, un
+  /// joueur classé garde la main tant que son partenaire n'a pas fini —
+  /// c'est la règle "aide ton partenaire".
   void _nextPlayer() {
     diceValue = 0;
     consecutiveSixes = 0;
     lastMovedThisTurn = null;
     phase = TurnPhase.rolling;
-    currentPlayerIdx = (currentPlayerIdx + 1) % turnOrder.length;
+    for (int i = 0; i < turnOrder.length; i++) {
+      currentPlayerIdx = (currentPlayerIdx + 1) % turnOrder.length;
+      final c = currentColor;
+      if (!hasFinished(c)) return;
+      final partner = _partners[c];
+      if (teamMode && partner != null && !_allPawnsHome(partner)) return;
+    }
   }
 }
