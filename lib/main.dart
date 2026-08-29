@@ -568,13 +568,9 @@ class _BoardScreenState extends State<BoardScreen>
           } else {
             _travelStep[p] = path[idx];
           }
-          // Vérifier si Y arrive sur la case d'un pion capturé.
-          // Dès que Y est exactement sur cette case, le pion capturé disparaît.
-          if (currentStep != null) {
-            _captureOverride.removeWhere((cap, capturedLoc) =>
-                currentStep.location == capturedLoc.location &&
-                currentStep.position == capturedLoc.position);
-          }
+          // NOTE: Ne pas enlever progressivement les captures.
+          // Les garder visibles jusqu'à la fin du trajet garantit qu'elles
+          // ne "sautent" jamais en base avant de disparaître.
         });
       });
     }
