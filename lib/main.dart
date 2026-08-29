@@ -141,6 +141,12 @@ class _BoardScreenState extends State<BoardScreen>
   /// jouable) ne parte. Sans cette pause on ne voit jamais le chiffre.
   static const Duration _dicePause = Duration(milliseconds: 550);
 
+  /// Pause pendant laquelle l'attaquant ET le pion qu'il vient de capturer
+  /// restent affichés ENSEMBLE sur la même case. Elle ne commence qu'une
+  /// fois l'attaquant VISUELLEMENT arrivé ; le pion capturé n'a pas bougé
+  /// d'un pixel avant cet instant, et ne disparaît qu'à la fin de la pause.
+  static const Duration _captureHold = Duration(milliseconds: 520);
+
   /// Position VISUELLE d'un pion pendant son trajet. Tant qu'une entrée est
   /// présente, le plateau dessine le pion sur cette case-là et non sur sa
   /// position réelle (le moteur, lui, a déjà appliqué tout le coup).
@@ -521,7 +527,13 @@ class _BoardScreenState extends State<BoardScreen>
     final stepDur = (oldLoc == PawnLocation.base)
         ? _baseExitDuration
         : _stepDuration;
-    final totalDur = stepDur * math.max(path.length, 1);
+    // Instant où l'attaquant est VISUELLEMENT sur sa case d'arrivée. Le
+    // `Timer.periodic` ci-dessous retire `_travelStep` à son tick
+    // `path.length - 1` ; un trajet d'une seule étape (sortie de base)
+    // s'affiche tout de suite mais glisse encore pendant `stepDur`.
+    final arrivalDur = stepDur * math.max(path.length - 1, 1);
+    // Pions capturés par ce coup, détectés en comparant l'avant / l'après.
+    final capturedNow = <Pawn>[];
 
     _travelTimer?.cancel();
     setState(() {
@@ -531,14 +543,17 @@ class _BoardScreenState extends State<BoardScreen>
       // commence à glisser.
       _controller.movePawn(p);
       // Pions capturés : on garde leur ancienne position visible pendant le trajet.
-      final captures = _game.allPawns
-          .where((pp) =>
-              pp != p &&
-              beforeLoc[pp]!.location != PawnLocation.base &&
-              pp.location == PawnLocation.base)
-          .toList();
-      for (final cap in captures) {
+      capturedNow.addAll(_game.allPawns.where((pp) =>
+          pp != p &&
+          beforeLoc[pp]!.location != PawnLocation.base &&
+          pp.location == PawnLocation.base));
+      for (final cap in capturedNow) {
         _captureOverride[cap] = beforeLoc[cap]!;
+        // Le pion capturé doit DISPARAÎTRE net à la fin de la pause, pas
+        // glisser jusqu'à sa base : sans ça, l'AnimatedPositioned garde une
+        // durée périmée d'un coup précédent et le pion traverse le plateau
+        // en glissant — c'était le « il bouge » constaté à l'écran.
+        _moveDuration[cap] = Duration.zero;
       }
       // Le déplacement peut passer la main : le sélecteur manuel suit.
       _syncManualPlayer();
@@ -560,7 +575,6 @@ class _BoardScreenState extends State<BoardScreen>
         }
         idx++;
         setState(() {
-          final currentStep = idx < path.length ? path[idx] : null;
           if (idx >= path.length - 1) {
             // Dernière case = position réelle du pion : on retire l'override.
             _travelStep.remove(p);
@@ -568,29 +582,32 @@ class _BoardScreenState extends State<BoardScreen>
           } else {
             _travelStep[p] = path[idx];
           }
-          // NOTE: Ne pas enlever progressivement les captures.
-          // Les garder visibles jusqu'à la fin du trajet garantit qu'elles
-          // ne "sautent" jamais en base avant de disparaître.
+          // NOTE : on ne retire JAMAIS une capture ici. Le pion capturé
+          // reste rigoureusement sur sa case pendant tout le trajet ; il ne
+          // disparaît qu'après la pause de co-localisation, plus bas.
         });
       });
     }
 
-    // Libère le verrou quand tout le trajet est parcouru, puis rend la main
-    // à l'IA si c'est à son tour.
+    // Pause de co-localisation : elle ne démarre qu'une fois l'attaquant
+    // VISUELLEMENT sur la case. Pendant `_captureHold`, les deux pions sont
+    // affichés ensemble sur cette case — le capturé n'a toujours pas bougé.
+    // Sans capture, il n'y a rien à montrer : la pause est nulle.
+    final holdDur = capturedNow.isEmpty ? Duration.zero : _captureHold;
+    final totalDur = arrivalDur + holdDur;
+
+    // Libère le verrou une fois le trajet parcouru ET la pause écoulée,
+    // puis rend la main à l'IA si c'est à son tour.
     Timer(totalDur, () {
       if (!mounted) return;
       setState(() {
         _animating = false;
         _travelStep.remove(p);
-        // Les pions capturés peuvent disparaître : le trajet est terminé.
-        // Mais garder les captures visibles jusqu'au prochain coup si pas encore enlever.
-        // (Ils seront enlever quand l'attaquant arrive exactement sur leur case,
-        // ou ici si le trajet est trop court)
-        final finalStep = path.isNotEmpty ? path.last : null;
-        if (finalStep != null) {
-          _captureOverride.removeWhere((cap, capturedLoc) =>
-              finalStep.location == capturedLoc.location &&
-              finalStep.position == capturedLoc.position);
+        // L'attaquant est arrivé et la pause est écoulée : les pions
+        // capturés repartent MAINTENANT dans leur base, d'un coup net
+        // (leur `_moveDuration` a été mis à zéro plus haut).
+        for (final cap in capturedNow) {
+          _captureOverride.remove(cap);
         }
         // Le pion est arrivé : c'est MAINTENANT que le dé prend la couleur
         // du joueur suivant.
@@ -598,16 +615,10 @@ class _BoardScreenState extends State<BoardScreen>
       });
       _scheduleAiTurn();
     });
-    final dur = totalDur;
-    // Capture-explosion at end of slide.
-    final captures = _game.allPawns
-        .where((pp) =>
-            pp != p &&
-            beforeLoc[pp]!.location != PawnLocation.base &&
-            pp.location == PawnLocation.base)
-        .toList();
+    // Explosion de capture : au moment EXACT où le pion capturé s'efface.
+    final captures = capturedNow;
     if (captures.isNotEmpty) {
-      Future.delayed(dur, () {
+      Future.delayed(totalDur, () {
         if (!mounted) return;
         setState(() {
           for (final cap in captures) {
