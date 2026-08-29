@@ -1,6 +1,7 @@
 // LudoPoly — Step 1: static board with 4 players at starting positions
 // rendered from the GameState model, with a debug overlay for the 52-cell ring.
 
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -97,6 +98,26 @@ class _BoardScreenState extends State<BoardScreen>
   bool _ruleStartWith1TokenOut = false;
   bool _ruleTeamMode = false;
 
+  /// Règle des blocs : 2 pions de même couleur sur une case forment une
+  /// barrière infranchissable pour les adversaires. Voir
+  /// [GameController.blockRule].
+  bool _ruleBlocks = false;
+
+  /// Mode "contre ordinateur" : toutes les couleurs sauf la première de
+  /// l'ordre des tours sont pilotées par l'IA locale.
+  bool _ruleAiOpponents = false;
+
+  /// Verrou anti-bug. Vrai pendant qu'un pion glisse : tant qu'il est levé,
+  /// AUCUNE commande n'est acceptée (double clic sur un pion, relance du dé,
+  /// fin de tour, changement de joueur). Le moteur a déjà appliqué le coup
+  /// quand l'animation démarre — le verrou empêche juste d'en empiler un
+  /// deuxième par-dessus.
+  bool _animating = false;
+
+  /// Timer du coup joué par l'IA, annulé à chaque reset/redémarrage pour
+  /// éviter qu'un coup programmé n'arrive sur une partie déjà réinitialisée.
+  Timer? _aiTimer;
+
   /// Per-pawn slide duration tracked for the LAST move. Read by the
   /// AnimatedPositioned wrapping each pawn in BoardView — that widget
   /// interpolates left/top smoothly when the pawn's cell changes between
@@ -107,23 +128,61 @@ class _BoardScreenState extends State<BoardScreen>
   /// own AnimationController; popped from the list when done.
   final List<ExplosionFx> _explosions = [];
 
-  /// Slide duration table per dice value (cells crossed). 1 cell jumps
-  /// quickly; 6 cells take longer to read the trajectory.
-  static const Map<int, int> _slideMs = {
-    1: 150, 2: 250, 3: 330, 4: 400, 5: 450, 6: 500,
-  };
-  Duration _durationForDistance(int n) =>
-      Duration(milliseconds: _slideMs[n] ?? 0);
+  /// Durée du glissement d'UNE case à la suivante. Le pion s'arrête
+  /// visiblement sur chaque case du trajet : un 6 prend donc 6 × cette
+  /// durée. Assez lent pour qu'on suive le pion case par case.
+  static const Duration _stepDuration = Duration(milliseconds: 190);
+
+  /// Sortie de base : le pion est téléporté du bac à sa case départ, ce
+  /// n'est pas un parcours — un saut court suffit.
+  static const Duration _baseExitDuration = Duration(milliseconds: 220);
+
+  /// Temps d'affichage du dé AVANT qu'un coup automatique (un seul pion
+  /// jouable) ne parte. Sans cette pause on ne voit jamais le chiffre.
+  static const Duration _dicePause = Duration(milliseconds: 550);
+
+  /// Position VISUELLE d'un pion pendant son trajet. Tant qu'une entrée est
+  /// présente, le plateau dessine le pion sur cette case-là et non sur sa
+  /// position réelle (le moteur, lui, a déjà appliqué tout le coup).
+  final Map<Pawn, PawnStep> _travelStep = {};
+
+  /// Pions capturés mais visiblement encore à leur ancienne position. Le moteur
+  /// a déjà rendu le pion capturé, mais on le MONTRE en train de se faire
+  /// capturer — à sa place d'avant la capture — pendant que le pion attaquant
+  /// fait son trajet. Une fois que l'attaquant arrive sur cette case, le pion
+  /// disparaît (on l'enlève de cette map).
+  final Map<Pawn, PawnStep> _captureOverride = {};
+
+  /// Timer du trajet en cours et du coup automatique en attente.
+  Timer? _travelTimer;
+  Timer? _autoMoveTimer;
 
   /// Last hover info text (token or dice), shown next to the Détails toggle.
   String? _hoverInfo;
 
-  /// Dice value displayed in each player's corner slot. Initialised to a
-  /// random 1..6 so each corner shows a different face at game start. Sticks
-  /// to the last rolled value so non-active players still see a face.
-  late final Map<PlayerColor, int> _diceValues = {
-    for (final c in PlayerColor.values) c: math.Random().nextInt(6) + 1,
-  };
+  /// Face affichée AVANT le premier lancer de la partie. Purement
+  /// décoratif : dès qu'un dé est lancé, c'est `_controller.lastRoll` qui
+  /// commande.
+  int _initialDiceFace = math.Random().nextInt(6) + 1;
+
+  /// Valeur montrée par le dé central. Il n'y a QU'UN dé sur le plateau :
+  /// il garde la dernière valeur sortie et change simplement de couleur
+  /// quand la main passe. Bleu fait 5 → le dé reste sur 5 et devient rouge
+  /// en attendant que rouge joue.
+  int get _shownDice =>
+      _controller.lastRoll > 0 ? _controller.lastRoll : _initialDiceFace;
+
+  /// Couleur RETENUE par le dé pendant qu'un pion parcourt ses cases.
+  /// Le moteur passe la main dès que le coup est appliqué, c'est-à-dire au
+  /// DÉBUT de l'animation ; sans cette retenue le dé changerait de couleur
+  /// alors que le pion est encore en train de compter. `null` = pas de
+  /// trajet en cours, le dé suit le joueur courant.
+  PlayerColor? _diceColorHold;
+
+  /// Couleur affichée par le dé : celle du pion qui compte tant qu'il
+  /// n'est pas arrivé, sinon celle du joueur dont c'est le tour.
+  PlayerColor get _shownDiceColor =>
+      _diceColorHold ?? _controller.currentColor;
 
   /// One idle-animation index (1..5) per pawn, drawn once at startup.
   late final Map<Pawn, int> _pawnAnimIdx;
@@ -187,6 +246,27 @@ class _BoardScreenState extends State<BoardScreen>
   void initState() {
     super.initState();
     _bootstrap();
+    // Le dé change de couleur à chaque passage de main. Sans préchargement,
+    // la 1re fois qu'une face (valeur × couleur) apparaît, Flutter doit
+    // d'abord la charger : le dé garde visiblement l'ancienne couleur
+    // pendant ce temps. 24 images à précharger, une fois pour toutes.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _precacheDice());
+  }
+
+  Future<void> _precacheDice() async {
+    if (!mounted) return;
+    for (final color in PlayerColor.values) {
+      for (int v = 1; v <= 6; v++) {
+        if (!mounted) return;
+        await precacheImage(
+          AssetImage('AnimStock/Dices/PNG/Dice_${v}_${color.name}.png'),
+          context,
+          onError: (e, _) =>
+              debugPrint('[dice] préchargement raté : Dice_${v}_$color'),
+        );
+      }
+    }
+    debugPrint('[dice] 24 faces préchargées');
   }
 
   /// Move pawn #0 of every active color from its base slot onto its ring
@@ -297,24 +377,66 @@ class _BoardScreenState extends State<BoardScreen>
   /// is currently up).
   void _roll(int value, {PlayerColor? forPlayer}) {
     if (_controller.phase == TurnPhase.gameOver) return;
+    // Point de retour : l'instantané est pris AVANT le lancer, donc le
+    // bouton Retour annule le lancer ET le déplacement joué avec.
+    _controller.pushHistory(
+        '${(forPlayer ?? _controller.currentColor).name} · dé $value');
+    Pawn? autoMove;
     setState(() {
       if (forPlayer != null) {
+        // Mode manuel : on force la main à [forPlayer] et on repart d'un
+        // tour propre. Ce forçage est RÉSERVÉ au mode manuel — l'appliquer
+        // à un lancer normal remettrait `consecutiveSixes` à zéro à chaque
+        // lancer, et la règle des trois 6 (§9) ne pourrait jamais se
+        // déclencher.
         final idx = _controller.turnOrder.indexOf(forPlayer);
         if (idx >= 0) _controller.currentPlayerIdx = idx;
         _manualValue = value;
+        _controller.phase = TurnPhase.rolling;
+        _controller.diceValue = 0;
+        _controller.consecutiveSixes = 0;
       }
-      _controller.phase = TurnPhase.rolling;
-      _controller.diceValue = 0;
-      _controller.consecutiveSixes = 0;
+      // La couleur est lue AVANT roll() : roll() peut passer la main (aucun
+      // coup jouable, ou 3 six), et le dé affiché doit rester celui du
+      // joueur qui vient de lancer.
       _controller.roll(value);
-      _diceValues[_controller.currentColor] = value;
       // The ONLY rule, applied to every roll:
       // 1 pion movable → play it.
       if (_controller.phase == TurnPhase.moving) {
         final m = _controller.movablePawns();
-        if (m.length == 1) _controller.movePawn(m.single);
+        // Un seul pion jouable → il part tout seul, mais SEULEMENT après
+        // que le dé a été affiché un instant (voir _scheduleAutoMove).
+        if (m.length == 1) autoMove = m.single;
       }
+      // BUG CORRIGÉ — le sélecteur de couleur du Jeu manuel restait figé sur
+      // la couleur choisie alors que le lancer venait de passer la main.
+      // On voyait « rouge » sélectionné pendant que c'était au vert de jouer,
+      // et le clic suivant sortait un pion vert. Le sélecteur suit désormais
+      // toujours le tour réel.
+      _syncManualPlayer();
     });
+    final pending = autoMove;
+    if (pending != null) _scheduleAutoMove(pending);
+  }
+
+  /// Laisse le dé affiché [_dicePause] avant de jouer le coup forcé. Le
+  /// verrou est levé pendant l'attente : on voit le chiffre et le pion
+  /// surligné, et aucune autre commande ne peut s'intercaler.
+  void _scheduleAutoMove(Pawn p) {
+    _autoMoveTimer?.cancel();
+    setState(() => _animating = true);
+    _autoMoveTimer = Timer(_dicePause, () {
+      if (!mounted) return;
+      _animating = false; // pour que _movePawn accepte le coup
+      _movePawn(p);
+    });
+  }
+
+  /// Recale le sélecteur de couleur du Jeu manuel sur le joueur dont c'est
+  /// réellement le tour. À appeler après TOUT changement de tour.
+  void _syncManualPlayer() {
+    final c = _controller.currentColor;
+    if (_activeColors.contains(c)) _manualPlayer = c;
   }
 
   /// Cryptographically-strong RNG — backed by the OS entropy pool
@@ -325,36 +447,151 @@ class _BoardScreenState extends State<BoardScreen>
   final math.Random _secureRng = math.Random.secure();
 
   void _rollDiceRandom() {
+    if (_animating) return; // verrou : une commande à la fois
     if (_controller.phase != TurnPhase.rolling) return;
     _roll(_secureRng.nextInt(6) + 1);
+    _scheduleAiTurn();
+  }
+
+  // --- Mode contre ordinateur ------------------------------------------------
+
+  /// Couleurs pilotées par l'IA : tout le monde sauf le premier joueur de
+  /// l'ordre des tours (l'humain), et seulement quand la règle est ON.
+  bool _isAiColor(PlayerColor c) =>
+      _ruleAiOpponents &&
+      _controller.turnOrder.isNotEmpty &&
+      c != _controller.turnOrder.first;
+
+  /// Si le joueur courant est une IA, programme son lancer. Rappelée après
+  /// chaque changement d'état susceptible de donner la main à une IA.
+  /// Le délai laisse voir le dé et l'animation du coup précédent.
+  void _scheduleAiTurn() {
+    _aiTimer?.cancel();
+    if (!_ruleAiOpponents) return;
+    if (_controller.phase == TurnPhase.gameOver) return;
+    if (!_isAiColor(_controller.currentColor)) return;
+    _aiTimer = Timer(const Duration(milliseconds: 650), _playAiTurn);
+  }
+
+  /// Un tour d'IA : lancer le dé, puis jouer le meilleur pion. Le coup
+  /// passe par [_movePawn] — donc par le moteur, jamais par l'animation.
+  void _playAiTurn() {
+    if (!mounted || _animating) {
+      // Le plateau bouge encore : on repasse plus tard.
+      if (mounted) _scheduleAiTurn();
+      return;
+    }
+    if (!_ruleAiOpponents ||
+        _controller.phase == TurnPhase.gameOver ||
+        !_isAiColor(_controller.currentColor)) {
+      return;
+    }
+    if (_controller.phase == TurnPhase.rolling) {
+      _roll(_secureRng.nextInt(6) + 1);
+    }
+    if (_controller.phase == TurnPhase.moving) {
+      final choice = _controller.pickAiPawn();
+      if (choice != null) {
+        _movePawn(choice);
+        return; // _movePawn replanifie le tour suivant
+      }
+    }
+    _scheduleAiTurn();
   }
 
   void _rollDiceManual(PlayerColor player, int value) =>
       _roll(value, forPlayer: player);
 
   void _movePawn(Pawn p) {
+    // Verrou anti-bug : double clic sur un pion, clic pendant l'animation,
+    // deux commandes simultanées → une seule est acceptée.
+    if (_animating) return;
     if (_controller.phase != TurnPhase.moving) return;
     final distance = _controller.diceValue;
     final oldLoc = p.location;
     // Snapshot capture state to spawn explosions for any pawn that got
-    // sent back to base by this move.
+    // sent back to base by this move. Sauvegarde aussi la position exacte.
     final beforeLoc = {
-      for (final pp in _game.allPawns) pp: pp.location,
+      for (final pp in _game.allPawns)
+        pp: PawnStep(pp.location, pp.position),
     };
-    // Base exit teleports from yard to start cell (not 6 cells of
-    // travel), so animate as if 1 cell (snappy 150 ms).
-    final dur = (oldLoc == PawnLocation.base)
-        ? _durationForDistance(1)
-        : _durationForDistance(distance);
+    // Trajet case par case, calculé AVANT que le moteur n'applique le coup.
+    // Une sortie de base est un saut unique, pas un parcours.
+    final path = _controller.pathFor(p, distance);
+    final stepDur = (oldLoc == PawnLocation.base)
+        ? _baseExitDuration
+        : _stepDuration;
+    final totalDur = stepDur * math.max(path.length, 1);
+
+    _travelTimer?.cancel();
     setState(() {
-      _moveDuration[p] = dur; // read by AnimatedPositioned wrapping `p`
+      _moveDuration[p] = stepDur; // lu par l'AnimatedPositioned du pion
+      // L'état LOGIQUE est mis à jour AVANT l'animation : le moteur a déjà
+      // décidé capture / tour supplémentaire / classement quand le pion
+      // commence à glisser.
       _controller.movePawn(p);
+      // Pions capturés : on garde leur ancienne position visible pendant le trajet.
+      final captures = _game.allPawns
+          .where((pp) =>
+              pp != p &&
+              beforeLoc[pp]!.location != PawnLocation.base &&
+              pp.location == PawnLocation.base)
+          .toList();
+      for (final cap in captures) {
+        _captureOverride[cap] = beforeLoc[cap]!;
+      }
+      // Le déplacement peut passer la main : le sélecteur manuel suit.
+      _syncManualPlayer();
+      _animating = true;
+      // Le dé garde la couleur du pion tant qu'il n'a pas fini de compter.
+      _diceColorHold = p.color;
+      // On force l'affichage sur la 1re case du trajet ; le pion glissera
+      // ensuite de case en case jusqu'à sa position réelle.
+      if (path.length > 1) _travelStep[p] = path.first;
     });
+
+    // Une étape par tick : le pion s'arrête visiblement sur chaque case.
+    if (path.length > 1) {
+      int idx = 0;
+      _travelTimer = Timer.periodic(stepDur, (t) {
+        if (!mounted) {
+          t.cancel();
+          return;
+        }
+        idx++;
+        setState(() {
+          if (idx >= path.length - 1) {
+            // Dernière case = position réelle du pion : on retire l'override.
+            _travelStep.remove(p);
+            t.cancel();
+          } else {
+            _travelStep[p] = path[idx];
+          }
+        });
+      });
+    }
+
+    // Libère le verrou quand tout le trajet est parcouru, puis rend la main
+    // à l'IA si c'est à son tour.
+    Timer(totalDur, () {
+      if (!mounted) return;
+      setState(() {
+        _animating = false;
+        _travelStep.remove(p);
+        // Les pions capturés peuvent disparaître : le trajet est terminé.
+        _captureOverride.clear();
+        // Le pion est arrivé : c'est MAINTENANT que le dé prend la couleur
+        // du joueur suivant.
+        _diceColorHold = null;
+      });
+      _scheduleAiTurn();
+    });
+    final dur = totalDur;
     // Capture-explosion at end of slide.
     final captures = _game.allPawns
         .where((pp) =>
             pp != p &&
-            beforeLoc[pp] != PawnLocation.base &&
+            beforeLoc[pp]!.location != PawnLocation.base &&
             pp.location == PawnLocation.base)
         .toList();
     if (captures.isNotEmpty) {
@@ -399,6 +636,8 @@ class _BoardScreenState extends State<BoardScreen>
   ///   - If current_in_home > target: push pawns OUT back to their base
   ///     slot (lowest pawn-id first).
   void _fillManualHome(int targetCount) {
+    _controller.pushHistory(
+        '${_manualPlayer.name} · $targetCount pion(s) maison');
     setState(() {
       final pawns = _game.pawnsByColor[_manualPlayer]!;
       final inHome = pawns
@@ -425,16 +664,9 @@ class _BoardScreenState extends State<BoardScreen>
           inHome[i].position = inHome[i].id;
         }
       }
-      // If the manual player (or their team-mate when team-mode is on)
-      // had won, re-evaluate: a player without all 4 pawns home is no
-      // longer a winner.
-      final w = _controller.winner;
-      if (w != null &&
-          (w == _manualPlayer ||
-              _controller.partnerOf(w) == _manualPlayer)) {
-        _controller.winner = null;
-        _controller.phase = TurnPhase.rolling;
-      }
+      // L'éditeur manuel a déplacé des pions sans passer par movePawn :
+      // on recalcule le classement complet (rangs, gagnant, fin de partie).
+      _controller.recomputeStandings();
     });
   }
 
@@ -468,10 +700,64 @@ class _BoardScreenState extends State<BoardScreen>
     return 'Pion ${p.color.name} #${p.id} · idle anim #$animIdx · $pos';
   }
 
+  /// Bouton « Retour » : annule la dernière action (lancer + déplacement
+  /// joué avec, ou édition manuelle) et remet le plateau tel qu'il était
+  /// avant. Chaque pression remonte d'un coup de plus.
+  ///
+  /// Le timer de l'IA est annulé et NON replanifié : sans ça, revenir sur le
+  /// tour d'une couleur IA la ferait immédiatement rejouer le coup qu'on
+  /// vient d'annuler. L'IA repart au prochain lancer.
+  void _stepBack() {
+    if (_animating) return;
+    if (_controller.undoDepth == 0) return;
+    _cancelAnimations();
+    setState(() {
+      _controller.stepBack();
+      // Les pions doivent réapparaître à leur ancienne place SANS glisser :
+      // un retour arrière n'est pas un coup.
+      _moveDuration.clear();
+      _syncManualPlayer();
+      _manualValue =
+          _controller.diceValue > 0 ? _controller.diceValue : _manualValue;
+    });
+  }
+
+  /// Coupe tout ce qui est en vol : trajet d'un pion, coup automatique en
+  /// attente, tour d'IA programmé. Indispensable avant de rembobiner la
+  /// partie — sinon un timer d'une position abandonnée retomberait dessus.
+  void _cancelAnimations() {
+    _aiTimer?.cancel();
+    _travelTimer?.cancel();
+    _autoMoveTimer?.cancel();
+    _travelStep.clear();
+    _diceColorHold = null;
+    _captureOverride.clear();
+    _animating = false;
+  }
+
+  /// Bouton « Rejouer » : rétablit l'action qu'on vient d'annuler. Chaque
+  /// pression redescend d'un coup. Jouer un nouveau coup vide la pile de
+  /// rétablissement — on ne rejoue pas une branche abandonnée.
+  void _stepForward() {
+    if (_animating) return;
+    if (_controller.redoDepth == 0) return;
+    _cancelAnimations();
+    setState(() {
+      _controller.stepForward();
+      _moveDuration.clear();
+      _syncManualPlayer();
+      _manualValue =
+          _controller.diceValue > 0 ? _controller.diceValue : _manualValue;
+    });
+  }
+
   void _endTurn() {
+    // Changement de joueur pendant une animation : interdit.
+    if (_animating) return;
     setState(() {
       _controller.skipTurn();
     });
+    _scheduleAiTurn();
   }
 
   void _confirmRestart(BuildContext context) {
@@ -496,11 +782,14 @@ class _BoardScreenState extends State<BoardScreen>
       ),
     ).then((confirmed) {
       if (confirmed == true) {
+        _cancelAnimations();
         setState(() {
+          _animating = false;
           _controller.reset();
-          _diceValues.updateAll((_, __) => math.Random().nextInt(6) + 1);
+          _initialDiceFace = math.Random().nextInt(6) + 1;
           if (_ruleStartWith1TokenOut) _applyRuleStartWith1TokenOut();
         });
+        _scheduleAiTurn();
       }
     });
   }
@@ -532,10 +821,9 @@ class _BoardScreenState extends State<BoardScreen>
       setState(() => _hoverInfo = null);
       return;
     }
-    final color = _controller.currentColor;
-    final v = _diceValues[color] ?? 1;
+    final color = _shownDiceColor;
     setState(() {
-      _hoverInfo = 'Dé ${color.name} · valeur $v';
+      _hoverInfo = 'Dé ${color.name} · valeur $_shownDice';
     });
   }
 
@@ -613,10 +901,11 @@ class _BoardScreenState extends State<BoardScreen>
                       showGrid: _showGrid,
                       showCanvas: _showCanvas,
                       playerCount: _playerCount,
-                      diceValues: _diceValues,
+                      diceValue: _shownDice,
+                      diceColor: _shownDiceColor,
                       currentPlayerColor: _controller.currentColor,
-                      canRollDice:
-                          _controller.phase == TurnPhase.rolling,
+                      canRollDice: _controller.phase == TurnPhase.rolling &&
+                          !_animating,
                       movablePawns:
                           _controller.movablePawns().toSet(),
                       onRollDice: _rollDiceRandom,
@@ -627,6 +916,8 @@ class _BoardScreenState extends State<BoardScreen>
                       onDiceHover: _onDiceHover,
                       showDetails: _showDetails,
                       moveDuration: _moveDuration,
+                      travelStep: _travelStep,
+                      captureOverride: _captureOverride,
                       explosions: _explosions,
                     ),
                   ),
@@ -674,6 +965,14 @@ class _BoardScreenState extends State<BoardScreen>
                     onChangeManualValue: (v) =>
                         _rollDiceManual(_manualPlayer, v),
                     onFillManualHome: _fillManualHome,
+                    onStepBack: _stepBack,
+                    canStepBack:
+                        _controller.undoDepth > 0 && !_animating,
+                    stepBackLabel: _controller.lastUndoLabel,
+                    onStepForward: _stepForward,
+                    canStepForward:
+                        _controller.redoDepth > 0 && !_animating,
+                    stepForwardLabel: _controller.nextRedoLabel,
                     panelTab: _panelTab,
                     onChangePanelTab: (t) =>
                         setState(() => _panelTab = t),
@@ -699,6 +998,21 @@ class _BoardScreenState extends State<BoardScreen>
                         _controller.teamMode = v;
                       });
                     },
+                    ruleBlocks: _ruleBlocks,
+                    onToggleRuleBlocks: (v) {
+                      setState(() {
+                        _ruleBlocks = v;
+                        _controller.blockRule = v;
+                      });
+                    },
+                    ruleAiOpponents: _ruleAiOpponents,
+                    onToggleRuleAiOpponents: (v) {
+                      _aiTimer?.cancel();
+                      setState(() => _ruleAiOpponents = v);
+                      _scheduleAiTurn();
+                    },
+                    ranking: _controller.ranking,
+                    busy: _animating,
                     playerCount: _playerCount,
                     onChangePlayerCount: _onChangePlayerCount,
                     activePlayers: _activePlayers,
@@ -785,6 +1099,16 @@ class _ControlPanel extends StatelessWidget {
   /// home pawns first, then the least-advanced.
   final ValueChanged<int> onFillManualHome;
 
+  /// Boutons « Retour » / « Rejouer » du bas de la carte Jeu manuel :
+  /// annulent et rétablissent le dernier coup. Les libellés décrivent
+  /// l'action concernée.
+  final VoidCallback onStepBack;
+  final bool canStepBack;
+  final String? stepBackLabel;
+  final VoidCallback onStepForward;
+  final bool canStepForward;
+  final String? stepForwardLabel;
+
   // Tab + persistent rules
   final String panelTab;
   final ValueChanged<String> onChangePanelTab;
@@ -792,6 +1116,16 @@ class _ControlPanel extends StatelessWidget {
   final ValueChanged<bool> onToggleRuleStartWith1TokenOut;
   final bool ruleTeamMode;
   final ValueChanged<bool> onToggleRuleTeamMode;
+  final bool ruleBlocks;
+  final ValueChanged<bool> onToggleRuleBlocks;
+  final bool ruleAiOpponents;
+  final ValueChanged<bool> onToggleRuleAiOpponents;
+
+  /// Ordre d'arrivée courant : 1er, 2e, 3e, 4e.
+  final List<PlayerColor> ranking;
+
+  /// Vrai pendant qu'un pion glisse : toutes les commandes sont gelées.
+  final bool busy;
 
   const _ControlPanel({
     required this.showRing,
@@ -821,12 +1155,24 @@ class _ControlPanel extends StatelessWidget {
     required this.manualValue,
     required this.onChangeManualValue,
     required this.onFillManualHome,
+    required this.onStepBack,
+    required this.canStepBack,
+    required this.stepBackLabel,
+    required this.onStepForward,
+    required this.canStepForward,
+    required this.stepForwardLabel,
     required this.panelTab,
     required this.onChangePanelTab,
     required this.ruleStartWith1TokenOut,
     required this.onToggleRuleStartWith1TokenOut,
     required this.ruleTeamMode,
     required this.onToggleRuleTeamMode,
+    required this.ruleBlocks,
+    required this.onToggleRuleBlocks,
+    required this.ruleAiOpponents,
+    required this.onToggleRuleAiOpponents,
+    required this.ranking,
+    required this.busy,
   });
 
   Color _playerColor(PlayerColor c) {
@@ -923,6 +1269,24 @@ class _ControlPanel extends StatelessWidget {
                               "= 8 pions au centre."),
                           value: ruleTeamMode,
                           onChanged: onToggleRuleTeamMode,
+                        ),
+                        SwitchListTile(
+                          title: const Text('Blocs (barrière)'),
+                          subtitle: const Text(
+                              '2 pions de même couleur sur une case forment '
+                              'un bloc : un pion adverse ne peut ni s\'y '
+                              'poser, ni le traverser.'),
+                          value: ruleBlocks,
+                          onChanged: onToggleRuleBlocks,
+                        ),
+                        SwitchListTile(
+                          title: const Text('Adversaires ordinateur'),
+                          subtitle: const Text(
+                              'Le 1er joueur est humain, les autres couleurs '
+                              'sont jouées par l\'IA locale (capture > '
+                              'maison > couloir > sortie > case sûre).'),
+                          value: ruleAiOpponents,
+                          onChanged: onToggleRuleAiOpponents,
                         ),
                       ],
                     ),
@@ -1157,17 +1521,49 @@ class _ControlPanel extends StatelessWidget {
               child: Text('Série de 6 : $consecutiveSixes',
                   style: TextStyle(color: cs.tertiary, fontSize: 12)),
             ),
-          if (winner != null)
+          if (ranking.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Row(
+              padding: const EdgeInsets.only(top: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.emoji_events, size: 18, color: cs.tertiary),
-                  const SizedBox(width: 4),
-                  Text('${winner!.name} gagne',
+                  for (int i = 0; i < ranking.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Row(
+                        children: [
+                          Icon(
+                            i == 0
+                                ? Icons.emoji_events
+                                : Icons.workspace_premium,
+                            size: 16,
+                            color: i == 0 ? cs.tertiary : cs.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${i + 1}${i == 0 ? 'er' : 'e'} · '
+                            '${ranking[i].name}'
+                            '${i == 0 ? ' gagne' : ''}',
+                            style: TextStyle(
+                              color:
+                                  i == 0 ? cs.tertiary : cs.onSurfaceVariant,
+                              fontWeight: i == 0
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (phase != TurnPhase.gameOver)
+                    Text(
+                      'La partie continue pour les places suivantes.',
                       style: TextStyle(
-                          color: cs.tertiary,
-                          fontWeight: FontWeight.bold)),
+                          color: cs.onSurfaceVariant,
+                          fontStyle: FontStyle.italic,
+                          fontSize: 11),
+                    ),
                 ],
               ),
             ),
@@ -1175,7 +1571,9 @@ class _ControlPanel extends StatelessWidget {
           FilledButton.icon(
             icon: const Icon(Icons.casino),
             label: const Text('Lancer le dé'),
-            onPressed: phase == TurnPhase.rolling ? onRollDice : null,
+            onPressed: (phase == TurnPhase.rolling && !busy)
+                ? onRollDice
+                : null,
           ),
         ],
       ),
@@ -1254,6 +1652,37 @@ class _ControlPanel extends StatelessWidget {
                       ],
                     ),
                   ],
+                ),
+              ),
+            ],
+          ),
+          // ─── Retour / Rejouer (undo / redo) — bas de carte ───
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Tooltip(
+                  message: canStepBack
+                      ? 'Annule : ${stepBackLabel ?? "le dernier coup"}'
+                      : 'Rien à annuler',
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.undo, size: 18),
+                    label: const Text('Retour'),
+                    onPressed: canStepBack ? onStepBack : null,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Tooltip(
+                  message: canStepForward
+                      ? 'Rejoue : ${stepForwardLabel ?? "le coup annulé"}'
+                      : 'Rien à rejouer',
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.redo, size: 18),
+                    label: const Text('Rejouer'),
+                    onPressed: canStepForward ? onStepForward : null,
+                  ),
                 ),
               ),
             ],
@@ -1355,7 +1784,14 @@ class BoardView extends StatelessWidget {
   /// Debug overlay: draw a red rectangle around each pawn's bbox.
   final bool showCanvas;
   final int playerCount;
-  final Map<PlayerColor, int> diceValues;
+  /// Valeur du dé central. Un seul dé sur le plateau : il conserve la
+  /// dernière valeur sortie jusqu'au lancer suivant.
+  final int diceValue;
+
+  /// Couleur du dé central. Ce n'est PAS toujours [currentPlayerColor] :
+  /// pendant qu'un pion compte ses cases, le dé garde la couleur de ce
+  /// pion et ne passe au joueur suivant qu'à son ARRIVÉE.
+  final PlayerColor diceColor;
   final PlayerColor currentPlayerColor;
   final bool canRollDice;
   final Set<Pawn> movablePawns;
@@ -1377,13 +1813,23 @@ class BoardView extends StatelessWidget {
   /// duration; pawns that didn't move see no change in position so the
   /// animation is a no-op.
   final Map<Pawn, Duration> moveDuration;
+
+  /// Position VISUELLE d'un pion en cours de trajet. Quand une entrée est
+  /// présente, le pion est dessiné sur cette case et non sur sa position
+  /// réelle — c'est ce qui permet de le voir passer case par case.
+  final Map<Pawn, PawnStep> travelStep;
+
+  /// Pions en train de se faire capturer : affichés à leur ancienne position
+  /// le temps du trajet du pion attaquant.
+  final Map<Pawn, PawnStep> captureOverride;
   /// Active explosion FX painted on top of the board (capture markers).
   final List<ExplosionFx> explosions;
   const BoardView({
     super.key,
     required this.players,
     required this.game,
-    required this.diceValues,
+    required this.diceValue,
+    required this.diceColor,
     required this.currentPlayerColor,
     required this.canRollDice,
     required this.movablePawns,
@@ -1396,6 +1842,8 @@ class BoardView extends StatelessWidget {
     this.showDetails = false,
     this.showRing = false,
     this.moveDuration = const {},
+    this.travelStep = const {},
+    this.captureOverride = const {},
     this.explosions = const [],
     this.showGrid = false,
     this.showCanvas = false,
@@ -1468,10 +1916,18 @@ class BoardView extends StatelessWidget {
   /// visible_bottom = anchor + 0.5 pawnHeight, so
   ///   anchor = cell_center + (0, 0.1 cell − 0.5 pawnHeight).
   Offset _pawnCenter(Pawn p, double cell, double pawnHeight) {
-    final cellCenter = switch (p.location) {
-      PawnLocation.base       => _baseSlotCenter(p.color, p.position, cell),
-      PawnLocation.ring       => _ringCellCenter(p.position, cell),
-      PawnLocation.homeColumn => _homeColumnCenter(p.color, p.position, cell),
+    // Pendant un trajet, la case affichée vient de `travelStep` : le modèle
+    // est déjà à l'arrivée, mais on montre le pion là où il en est.
+    // Si le pion est capturé, on le montre à son ancienne position jusqu'au
+    // moment où l'attaquant arrive exactement sur sa case.
+    final step = travelStep[p];
+    final overrideLoc = captureOverride[p];
+    final loc = step?.location ?? overrideLoc?.location ?? p.location;
+    final pos = step?.position ?? overrideLoc?.position ?? p.position;
+    final cellCenter = switch (loc) {
+      PawnLocation.base       => _baseSlotCenter(p.color, pos, cell),
+      PawnLocation.ring       => _ringCellCenter(pos, cell),
+      PawnLocation.homeColumn => _homeColumnCenter(p.color, pos, cell),
       PawnLocation.home       => _homeCenter(p.color, cell),
     };
     return Offset(
@@ -1630,8 +2086,8 @@ class BoardView extends StatelessWidget {
                   child: GestureDetector(
                     onTap: clickable ? onRollDice : null,
                     child: _DiceFace(
-                      value: diceValues[currentPlayerColor] ?? 1,
-                      playerColor: currentPlayerColor,
+                      value: diceValue,
+                      playerColor: diceColor,
                     ),
                   ),
                 ),
@@ -1660,13 +2116,20 @@ class BoardView extends StatelessWidget {
               //    the pile). Same-color stacks (ring blocks, home
               //    column doubles) keep a deterministic id order.
               String stackKey(Pawn p) {
-                switch (p.location) {
+                // Même règle que _pawnCenter : un pion en trajet se groupe
+                // avec la case qu'il TRAVERSE, pas avec sa case d'arrivée.
+                // Un pion capturé se groupe aussi avec son ancienne position.
+                final step = travelStep[p];
+                final overrideLoc = captureOverride[p];
+                final loc = step?.location ?? overrideLoc?.location ?? p.location;
+                final pos = step?.position ?? overrideLoc?.position ?? p.position;
+                switch (loc) {
                   case PawnLocation.base:
-                    return 'base_${p.color.name}_${p.position}';
+                    return 'base_${p.color.name}_$pos';
                   case PawnLocation.ring:
-                    return 'ring_${p.position}';
+                    return 'ring_$pos';
                   case PawnLocation.homeColumn:
-                    return 'hc_${p.color.name}_${p.position}';
+                    return 'hc_${p.color.name}_$pos';
                   case PawnLocation.home:
                     return 'home_${p.color.name}';
                 }
@@ -1675,21 +2138,19 @@ class BoardView extends StatelessWidget {
               for (final p in rawList) {
                 groups.putIfAbsent(stackKey(p), () => []).add(p);
               }
-              for (final g in groups.values) {
-                g.sort((a, b) {
-                  final aCur = a.color == currentPlayerColor ? 1 : 0;
-                  final bCur = b.color == currentPlayerColor ? 1 : 0;
-                  if (aCur != bCur) return aCur - bCur; // current last
-                  return a.id.compareTo(b.id);
-                });
+              // ── Décalage latéral : ordre STABLE (couleur, id).
+              //    Il ne dépend PAS du joueur courant : sinon, à chaque
+              //    changement de tour, les pions d'une même case
+              //    échangeaient leur place latérale et on avait
+              //    l'impression qu'ils permutaient.
+              int stableCompare(Pawn a, Pawn b) {
+                final c = a.color.index.compareTo(b.color.index);
+                return c != 0 ? c : a.id.compareTo(b.id);
               }
-              // Render order: flatten groups; within each group the
-              // current player's pawn is last → z-on-top.
-              final list = groups.values.expand((g) => g).toList();
-              // Lateral spread inside each group.
               final stackOffsets = <Pawn, Offset>{};
-              const stackDxFrac = 0.18; // 18 % of a cell between siblings
+              const stackDxFrac = 0.18; // 18 % de case entre voisins
               for (final g in groups.values) {
+                g.sort(stableCompare);
                 final n = g.length;
                 for (int i = 0; i < n; i++) {
                   final dx = (n == 1)
@@ -1699,13 +2160,21 @@ class BoardView extends StatelessWidget {
                 }
               }
 
-              // Per-pawn delays = the multiples of 100 ms in random order.
-              // ValueKey'd state preservation means only the first build's
-              // shuffle counts — subsequent rebuilds re-compute it but never
-              // re-trigger _init() inside the pawn widget.
-              final delays =
-                  List.generate(list.length, (i) => i * 100)
-                    ..shuffle(math.Random());
+              // ── Ordre de PEINTURE (z) uniquement : le pion du joueur
+              //    courant passe devant. C'est le seul critère qui dépend
+              //    du tour, et il ne touche plus aux positions.
+              final list = groups.values.expand((g) => g).toList()
+                ..sort((a, b) {
+                  final aCur = a.color == currentPlayerColor ? 1 : 0;
+                  final bCur = b.color == currentPlayerColor ? 1 : 0;
+                  if (aCur != bCur) return aCur - bCur; // courant en dernier
+                  return stableCompare(a, b);
+                });
+
+              // Décalage de démarrage de l'anim idle, DÉTERMINISTE et propre
+              // à chaque pion : indexé sur son identité, jamais sur sa place
+              // dans la liste de rendu (qui change à chaque déplacement).
+              int delayOf(Pawn p) => ((p.color.index * 4 + p.id) * 137) % 800;
 
               // Studio spec for Selector_D_Arrow.gif (400×400, transparent,
               // pawn logical center at (200,200), ring at (200,299) — under
@@ -1723,6 +2192,7 @@ class BoardView extends StatelessWidget {
                 final visCx = center.dx;
                 final visCy = center.dy;
                 yield Positioned(
+                  key: ValueKey('sel_${pawn.color.name}_${pawn.id}'),
                   left: visCx - selSize / 2,
                   top:  visCy - (selSize + 4) / 2 - 7,
                   width: selSize,
@@ -1740,13 +2210,17 @@ class BoardView extends StatelessWidget {
               //  AnimatedPositioned interpolates left/top when the cell
               //  changes — Flutter handles the slide internally, no extra
               //  rebuild of the rest of the board. ----
-              for (int i = 0; i < list.length; i++) {
-                final pawn = list[i];
+              for (final pawn in list) {
                 final center =
                     _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
                 final bboxLeft = center.dx - pawnWidth / 2;
                 final bboxTop  = center.dy - pawnHeight * _pawnVisibleCenterFrac;
                 yield AnimatedPositioned(
+                  // SANS cette clé, le Stack apparie ses enfants par index :
+                  // dès qu'un pion change de case l'ordre de la liste bouge,
+                  // et le tween de position d'un pion se retrouve appliqué à
+                  // un autre — les pions semblaient s'échanger.
+                  key: ValueKey('pawn_${pawn.color.name}_${pawn.id}'),
                   duration: moveDuration[pawn] ?? Duration.zero,
                   curve: Curves.easeInOut,
                   left: bboxLeft,
@@ -1757,7 +2231,7 @@ class BoardView extends StatelessWidget {
                     child: _PawnAnimatedGif(
                       key: ValueKey('${pawn.color.name}_${pawn.id}'),
                       asset: pawnAsset(pawn),
-                      sequentialStartDelayMs: delays[i],
+                      sequentialStartDelayMs: delayOf(pawn),
                       showCanvas: showCanvas,
                       // Only the current player's pawns animate. The
                       // others stay on their rest frame so the board
@@ -1784,6 +2258,7 @@ class BoardView extends StatelessWidget {
                     _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
                 final isMovable = movablePawns.contains(pawn);
                 yield Positioned(
+                  key: ValueKey('hit_${pawn.color.name}_${pawn.id}'),
                   left: center.dx - hitSize / 2,
                   top:  center.dy - hitSize / 2,
                   width: hitSize,
@@ -2676,6 +3151,10 @@ class _DiceFace extends StatelessWidget {
         _assetPath,
         fit: BoxFit.contain,
         filterQuality: FilterQuality.high,
+        // Le chemin change à chaque changement de couleur ou de valeur.
+        // Sans ça, Flutter vide la case le temps de décoder la nouvelle
+        // image : le dé disparaît pendant une frame.
+        gaplessPlayback: true,
       ),
     );
   }
