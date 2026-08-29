@@ -2164,8 +2164,16 @@ class BoardView extends StatelessWidget {
               for (final g in groups.values) {
                 g.sort(stableCompare);
                 final n = g.length;
+                // Un pion capturé (encore affiché à son ancienne position
+                // via `captureOverride`) NE DOIT PAS BOUGER quand
+                // l'attaquant le rejoint sur sa case : geler tout le
+                // groupe à décalage zéro tant que la capture est en cours,
+                // sinon le pion capturé glisse latéralement (perçu comme
+                // "un pas en arrière") au moment où le groupe passe de 1 à
+                // 2 pions.
+                final hasCapture = g.any((pw) => captureOverride.containsKey(pw));
                 for (int i = 0; i < n; i++) {
-                  final dx = (n == 1)
+                  final dx = (n == 1 || hasCapture)
                       ? 0.0
                       : (i - (n - 1) / 2) * stackDxFrac * cell;
                   stackOffsets[g[i]] = Offset(dx, 0);
