@@ -560,12 +560,20 @@ class _BoardScreenState extends State<BoardScreen>
         }
         idx++;
         setState(() {
+          final currentStep = idx < path.length ? path[idx] : null;
           if (idx >= path.length - 1) {
             // Dernière case = position réelle du pion : on retire l'override.
             _travelStep.remove(p);
             t.cancel();
           } else {
             _travelStep[p] = path[idx];
+          }
+          // Vérifier si Y arrive sur la case d'un pion capturé.
+          // Dès que Y est exactement sur cette case, le pion capturé disparaît.
+          if (currentStep != null) {
+            _captureOverride.removeWhere((cap, capturedLoc) =>
+                currentStep.location == capturedLoc.location &&
+                currentStep.position == capturedLoc.position);
           }
         });
       });
