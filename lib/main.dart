@@ -113,6 +113,10 @@ class _BoardScreenState extends State<BoardScreen>
   /// éviter qu'un coup programmé n'arrive sur une partie déjà réinitialisée.
   Timer? _aiTimer;
 
+  /// Contrôle périodique qui relance l'IA si un chemin a oublié de le
+  /// faire — voir [_startAiWatchdog].
+  Timer? _aiWatchdog;
+
   /// Per-pawn slide duration tracked for the LAST move. Read by the
   /// AnimatedPositioned wrapping each pawn in BoardView — that widget
   /// interpolates left/top smoothly when the pawn's cell changes between
@@ -146,6 +150,11 @@ class _BoardScreenState extends State<BoardScreen>
   /// que l'on voit entre deux ordinateurs qui s'enchaînent : sans lui, les
   /// couleurs défilent d'un bloc et on ne suit plus qui joue.
   static const Duration _aiRollDelay = Duration(milliseconds: 900);
+
+  /// Reprise de l'IA après un Retour / Rejouer. Plus long que
+  /// [_aiRollDelay] : il faut avoir le temps d'appuyer plusieurs fois de
+  /// suite sur Retour sans que l'ordinateur ne reparte entre deux clics.
+  static const Duration _aiResumeDelay = Duration(milliseconds: 1600);
 
   /// Temps entre le lancer d'une IA et le départ de son pion. Il rend le
   /// chiffre lisible avant que quoi que ce soit ne bouge — l'équivalent
@@ -275,6 +284,14 @@ class _BoardScreenState extends State<BoardScreen>
     // d'abord la charger : le dé garde visiblement l'ancienne couleur
     // pendant ce temps. 24 images à précharger, une fois pour toutes.
     WidgetsBinding.instance.addPostFrameCallback((_) => _precacheDice());
+    _startAiWatchdog();
+  }
+
+  @override
+  void dispose() {
+    _aiWatchdog?.cancel();
+    _cancelAnimations();
+    super.dispose();
   }
 
   Future<void> _precacheDice() async {
@@ -500,12 +517,37 @@ class _BoardScreenState extends State<BoardScreen>
   /// Si le joueur courant est une IA, programme son lancer. Rappelée après
   /// chaque changement d'état susceptible de donner la main à une IA.
   /// Le délai laisse voir le dé et l'animation du coup précédent.
-  void _scheduleAiTurn() {
+  void _scheduleAiTurn({Duration? delay}) {
     _aiTimer?.cancel();
     if (!_ruleAiOpponents) return;
     if (_controller.phase == TurnPhase.gameOver) return;
     if (!_isAiColor(_controller.currentColor)) return;
-    _aiTimer = Timer(_aiRollDelay, _playAiTurn);
+    _aiTimer = Timer(delay ?? _aiRollDelay, _playAiTurn);
+  }
+
+  /// Filet de sécurité, et il faut dire pourquoi il existe.
+  ///
+  /// Depuis que le plateau est en LECTURE SEULE pendant un tour
+  /// d'ordinateur, un chemin qui oublierait de rappeler [_scheduleAiTurn]
+  /// ne ralentit pas la partie : il la TUE. L'IA n'est pas relancée, et
+  /// l'humain n'a plus ni dé ni pion cliquable pour la débloquer. C'est
+  /// exactement ce qui arrivait après un Retour.
+  ///
+  /// Ce contrôle périodique rattrape ce cas au lieu de le laisser figer la
+  /// partie. Il ne remplace PAS les appels explicites : s'il se déclenche,
+  /// c'est qu'il en manque un quelque part — d'où la trace.
+  void _startAiWatchdog() {
+    _aiWatchdog?.cancel();
+    _aiWatchdog = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (!mounted || _animating || !_aiMayAct) return;
+      if ((_aiTimer?.isActive ?? false) ||
+          (_autoMoveTimer?.isActive ?? false)) {
+        return;
+      }
+      debugPrint('[ai] relance de secours : il manque un appel à '
+          '_scheduleAiTurn sur le chemin qui vient de passer la main');
+      _scheduleAiTurn();
+    });
   }
 
   /// Vrai tant que l'IA courante peut continuer à agir. Les trois causes
@@ -564,8 +606,13 @@ class _BoardScreenState extends State<BoardScreen>
     _scheduleAiTurn();
   }
 
-  void _rollDiceManual(PlayerColor player, int value) =>
-      _roll(value, forPlayer: player);
+  void _rollDiceManual(PlayerColor player, int value) {
+    _roll(value, forPlayer: player);
+    // Ce lancer peut passer la main à un ordinateur : sans cet appel il ne
+    // repartirait jamais, et le plateau étant en lecture seule pendant son
+    // tour, la partie serait définitivement figée.
+    _scheduleAiTurn();
+  }
 
   void _movePawn(Pawn p) {
     // Verrou anti-bug : double clic sur un pion, clic pendant l'animation,
@@ -852,9 +899,17 @@ class _BoardScreenState extends State<BoardScreen>
   /// joué avec, ou édition manuelle) et remet le plateau tel qu'il était
   /// avant. Chaque pression remonte d'un coup de plus.
   ///
-  /// Le timer de l'IA est annulé et NON replanifié : sans ça, revenir sur le
-  /// tour d'une couleur IA la ferait immédiatement rejouer le coup qu'on
-  /// vient d'annuler. L'IA repart au prochain lancer.
+  /// Si le rembobinage retombe sur le tour d'une couleur IA, celle-ci est
+  /// replanifiée avec [_aiResumeDelay] — un délai long exprès, pour qu'on
+  /// puisse enchaîner plusieurs Retour sans qu'elle ne reparte entre deux
+  /// clics (chaque appui annule le timer avant de le reposer).
+  ///
+  /// Elle l'était AUTREFOIS pas du tout, au motif qu'elle rejouerait
+  /// aussitôt le coup annulé. Mais depuis que le plateau est en lecture
+  /// seule pendant un tour d'ordinateur, ne pas la replanifier fige la
+  /// partie pour de bon : plus d'IA, et plus de dé cliquable pour la
+  /// relancer. Et l'IA ne « rejoue » rien : elle relance le dé, donc tire
+  /// une nouvelle valeur.
   void _stepBack() {
     if (_animating) return;
     if (_controller.undoDepth == 0) return;
@@ -868,6 +923,7 @@ class _BoardScreenState extends State<BoardScreen>
       _manualValue =
           _controller.diceValue > 0 ? _controller.diceValue : _manualValue;
     });
+    _scheduleAiTurn(delay: _aiResumeDelay);
   }
 
   /// Coupe tout ce qui est en vol : trajet d'un pion, coup automatique en
@@ -901,6 +957,7 @@ class _BoardScreenState extends State<BoardScreen>
       _manualValue =
           _controller.diceValue > 0 ? _controller.diceValue : _manualValue;
     });
+    _scheduleAiTurn(delay: _aiResumeDelay);
   }
 
   void _endTurn() {

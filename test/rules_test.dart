@@ -340,6 +340,38 @@ void main() {
               '(bloquée après $turns tours)');
       expect(c.ranking.length, 4, reason: 'les 4 places doivent être prises');
     });
+
+    test('après un Retour, la partie repart et va quand même au bout', () {
+      // L'interface figeait ici : elle ne replanifiait pas l'IA après un
+      // rembobinage. Côté moteur, l'état rendu par stepBack doit être
+      // jouable comme n'importe quel autre.
+      final c = newGame();
+      final rng = math.Random(99);
+      for (int i = 0; i < 40 && c.phase != TurnPhase.gameOver; i++) {
+        // L'interface empile un instantané AVANT chaque lancer ; c'est ce
+        // qui alimente le bouton Retour. On fait pareil.
+        c.pushHistory('tour $i');
+        c.roll(c.pickDiceValue(rng));
+        if (c.phase == TurnPhase.moving) c.movePawn(c.pickAiPawn()!);
+      }
+      expect(c.undoDepth, greaterThan(1));
+      c.stepBack();
+      c.stepBack();
+      expect(c.phase, isNot(TurnPhase.gameOver));
+
+      int turns = 0;
+      while (c.phase != TurnPhase.gameOver && turns < 20000) {
+        turns++;
+        c.roll(c.pickDiceValue(rng));
+        if (c.phase == TurnPhase.moving) {
+          final choice = c.pickAiPawn();
+          expect(choice, isNotNull, reason: 'bloqué au tour $turns');
+          c.movePawn(choice!);
+        }
+      }
+      expect(c.phase, TurnPhase.gameOver,
+          reason: 'la partie doit se terminer après un rembobinage');
+    });
   });
 
   group('↩️ Retour arrière (stepBack)', () {
