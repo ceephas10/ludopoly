@@ -49,12 +49,32 @@ class BoardScreen extends StatefulWidget {
   ];
 
   @override
-  State<BoardScreen> createState() => _BoardScreenState();
+  State<BoardScreen> createState() => BoardScreenState();
 }
 
-class _BoardScreenState extends State<BoardScreen>
+/// État de l'écran de jeu. PUBLIC pour que les tests puissent piloter une
+/// partie complète à travers la vraie interface — c'est la convention
+/// Flutter (`ScaffoldState`, `FormState`).
+class BoardScreenState extends State<BoardScreen>
     with TickerProviderStateMixin {
   final GameState _game = GameState.initial();
+
+  /// Moteur de la partie. Exposé aux tests pour qu'ils puissent observer
+  /// l'avancement d'une partie jouée via l'interface réelle.
+  @visibleForTesting
+  GameController get controller => _controller;
+
+  /// Règle « adversaires ordinateur ». Exposée aux tests pour éviter de
+  /// dépendre du libellé de l'interrupteur dans le panneau.
+  @visibleForTesting
+  bool get aiOpponents => _ruleAiOpponents;
+
+  @visibleForTesting
+  set aiOpponents(bool v) {
+    _aiTimer?.cancel();
+    setState(() => _ruleAiOpponents = v);
+    _scheduleAiTurn();
+  }
   late final GameController _controller = GameController(
     turnOrder: BoardScreen.players.map((p) => p.color).toList(),
     state: _game,
@@ -1733,17 +1753,24 @@ class _ControlPanel extends StatelessWidget {
                             color: i == 0 ? cs.tertiary : cs.onSurfaceVariant,
                           ),
                           const SizedBox(width: 4),
-                          Text(
-                            '${i + 1}${i == 0 ? 'er' : 'e'} · '
-                            '${ranking[i].name}'
-                            '${i == 0 ? ' gagne' : ''}',
-                            style: TextStyle(
-                              color:
-                                  i == 0 ? cs.tertiary : cs.onSurfaceVariant,
-                              fontWeight: i == 0
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
-                              fontSize: 12,
+                          // Expanded + ellipsis : sans ça la ligne du
+                          // classement déborde du panneau dès que le nom de
+                          // la couleur est long, et Flutter peint les rayures
+                          // jaunes et noires par-dessus le panneau.
+                          Expanded(
+                            child: Text(
+                              '${i + 1}${i == 0 ? 'er' : 'e'} · '
+                              '${ranking[i].name}'
+                              '${i == 0 ? ' gagne' : ''}',
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color:
+                                    i == 0 ? cs.tertiary : cs.onSurfaceVariant,
+                                fontWeight: i == 0
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                                fontSize: 12,
+                              ),
                             ),
                           ),
                         ],

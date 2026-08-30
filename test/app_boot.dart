@@ -1,0 +1,52 @@
+// Démarrage de l'application dans un test de widget.
+//
+// `_bootstrap` sonde les 20 fichiers d'animation des pions par de VRAIES
+// entrées-sorties. `tester.pump` n'avance que l'horloge simulée : il ne
+// laisse jamais ces futures aboutir, et l'application reste indéfiniment
+// sur son écran « Loading tokens… ». Il faut rendre la main à
+// l'ordonnanceur réel entre deux pompages, ce que fait `runAsync`.
+//
+// C'est aussi la raison pour laquelle `widget_test.dart` échouait depuis
+// le début : il ne pompait qu'une fois.
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:ludopoly/main.dart';
+
+/// Surface de rendu des tests. La surface par défaut (800×600) est trop
+/// étroite pour le plateau ET le panneau de commandes : la mise en page
+/// déborde et le test échoue sur une erreur sans rapport avec ce qu'il
+/// teste.
+void useLargeSurface() {
+  final view =
+      TestWidgetsFlutterBinding.instance.platformDispatcher.views.first;
+  view.physicalSize = const Size(2400, 1500);
+  view.devicePixelRatio = 1.0;
+}
+
+void resetSurface() {
+  final view =
+      TestWidgetsFlutterBinding.instance.platformDispatcher.views.first;
+  view.resetPhysicalSize();
+  view.resetDevicePixelRatio();
+}
+
+/// Monte l'application et attend la fin du sondage des assets.
+///
+/// La limite est volontairement large : `flutter test` exécute les
+/// fichiers de test en parallèle, et le sondage peut prendre nettement
+/// plus longtemps quand plusieurs s'exécutent en même temps.
+Future<void> bootApp(WidgetTester t) async {
+  await t.pumpWidget(const LudoPolyApp());
+  for (int i = 0; i < 3000; i++) {
+    if (find.text('Loading tokens…').evaluate().isEmpty) return;
+    await t.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await t.pump(const Duration(milliseconds: 20));
+  }
+  fail(
+    'le sondage des assets n\'a pas abouti — l\'application est restée '
+    'sur son écran de chargement',
+  );
+}
