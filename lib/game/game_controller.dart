@@ -1,7 +1,7 @@
 // Game engine for 4-player Ludo King rules.
 //
 // Owns the dice value, turn order, and the win condition check. Rule details
-// (exit on 6, lap = 51 ring cells then 5-cell home column then center, exact
+// (exit on 6, lap = 50 ring cells then 5-cell home column then center, exact
 // roll to home, capture, safe cells, bonus turn on 6 / capture / home arrival,
 // 3-six streak cancels the turn) live here.
 
@@ -147,8 +147,30 @@ class GameController {
   /// Number of cells on the shared ring.
   static const int ringSize = 52;
 
-  /// 51 ring steps + 5 home-column cells + 1 final home step.
-  static const int totalStepsToHome = 57;
+  /// Dernier pas encore SUR l'anneau, compté depuis la case de départ.
+  ///
+  /// Un pion ne fait PAS le tour complet des 52 cases : il quitte l'anneau
+  /// par la bouche de son couloir, qui se trouve 50 pas après son départ.
+  /// Les cases situées entre cette bouche et sa propre case de départ ne
+  /// sont parcourues que par les AUTRES couleurs.
+  ///
+  /// Ce 50 n'est pas arbitraire, il est imposé par le dessin du plateau :
+  /// la bouche du couloir de chaque couleur est orthogonalement adjacente
+  /// à la case d'anneau qui se trouve à 50 pas de son départ.
+  ///
+  ///   bleu   couloir (7.5, 13.5) ← anneau 50 (7.5, 14.5)
+  ///   rouge  couloir (1.5,  7.5) ← anneau 11 (0.5,  7.5)
+  ///   vert   couloir (7.5,  1.5) ← anneau 24 (7.5,  0.5)
+  ///   jaune  couloir (13.5, 7.5) ← anneau 37 (14.5, 7.5)
+  ///
+  /// Avec 51 le pion allait une case TROP LOIN — sur la case d'angle, juste
+  /// avant son propre départ — puis rejoignait son couloir en diagonale : il
+  /// dépassait visiblement la ligne de son couloir avant d'y entrer.
+  /// `test/gameplay_test.dart` verrouille cette adjacence pour les 4 couleurs.
+  static const int lastRingStep = 50;
+
+  /// 50 pas d'anneau + 5 cases de couloir + 1 pas final vers la maison.
+  static const int totalStepsToHome = lastRingStep + 6;
 
   /// Index of each color's starting ring cell.
   static const Map<PlayerColor, int> _startIdx = {
@@ -271,12 +293,12 @@ class GameController {
         final start = _startIdx[p.color]!;
         return [
           for (int s = taken + 1; s <= taken + v; s++)
-            if (s <= 51)
+            if (s <= lastRingStep)
               PawnStep(PawnLocation.ring, (start + s) % ringSize)
             else if (s == totalStepsToHome)
               const PawnStep(PawnLocation.home, 0)
             else
-              PawnStep(PawnLocation.homeColumn, s - 52),
+              PawnStep(PawnLocation.homeColumn, s - lastRingStep - 1),
         ];
       case PawnLocation.homeColumn:
         return [
@@ -333,15 +355,15 @@ class GameController {
       case PawnLocation.ring:
         final taken = _stepsTaken(p);
         final newSteps = taken + diceValue;
-        if (newSteps <= 51) {
+        if (newSteps <= lastRingStep) {
           p.position = (_startIdx[p.color]! + newSteps) % ringSize;
         } else if (newSteps == totalStepsToHome) {
           p.location = PawnLocation.home;
           homeArrival = true;
         } else {
-          // newSteps in 52..56 → home column step 0..4.
+          // newSteps in 51..55 → home column step 0..4.
           p.location = PawnLocation.homeColumn;
-          p.position = newSteps - 52;
+          p.position = newSteps - lastRingStep - 1;
         }
         break;
       case PawnLocation.homeColumn:
@@ -473,7 +495,7 @@ class GameController {
         final newSteps = taken + diceValue;
         if (newSteps == totalStepsToHome) {
           score = 1000; // arrivée exacte à la maison
-        } else if (newSteps > 51) {
+        } else if (newSteps > lastRingStep) {
           score = 600; // entrée dans le couloir final
         } else {
           final target = (_startIdx[p.color]! + newSteps) % ringSize;
@@ -544,7 +566,7 @@ class GameController {
     final barriers = _barriersFor(playingFor);
     if (barriers.isEmpty) return true;
     final start = _startIdx[p.color]!;
-    for (int s = taken + 1; s <= taken + v && s <= 51; s++) {
+    for (int s = taken + 1; s <= taken + v && s <= lastRingStep; s++) {
       if (barriers.contains((start + s) % ringSize)) return false;
     }
     return true;

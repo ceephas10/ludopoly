@@ -7,6 +7,7 @@
 // dans le groupe 🐞.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ludopoly/game/board_path.dart';
 import 'package:ludopoly/game/game_controller.dart';
 import 'package:ludopoly/game/game_state.dart';
 import 'package:ludopoly/game/pawn.dart';
@@ -273,14 +274,14 @@ void main() {
 
   // ─────────────────────────────────────────────────────────────────
   group('§10–§12 Couloir final, dépassement et arrivée', () {
-    test('après 51 pas, le pion entre dans SON couloir', () {
+    test('après 50 pas, le pion entre dans SON couloir', () {
       final c = newGame();
       final p = c.state.pawnsByColor[PlayerColor.blue]![0];
       p.location = PawnLocation.ring;
-      p.position = 51; // 51 pas depuis le départ 0
+      p.position = 50; // 50 pas depuis le départ 0
       playTurn(c, 1);
       expect(p.location, PawnLocation.homeColumn);
-      expect(p.position, 0, reason: '52e pas = 1re case du couloir');
+      expect(p.position, 0, reason: '51e pas = 1re case du couloir');
     });
 
     test('un pion ne peut pas entrer dans le couloir d\'une autre couleur',
@@ -586,11 +587,11 @@ void main() {
       final c = newGame();
       final p = c.state.pawnsByColor[PlayerColor.blue]![0];
       p.location = PawnLocation.ring;
-      p.position = 50; // 50 pas faits
-      c.roll(6);       // 51, puis couloir 0..3
+      p.position = 49; // 49 pas faits
+      c.roll(6);       // 50, puis couloir 0..4
       final path = c.pathFor(p, 6);
       expect(path.map((s) => '${s.location.name}:${s.position}').toList(), [
-        'ring:51',
+        'ring:50',
         'homeColumn:0',
         'homeColumn:1',
         'homeColumn:2',
@@ -694,6 +695,75 @@ void main() {
           expect(p.position, avant[p],
               reason: 'lancer de ${color.name} : $p a bougé');
         }
+      }
+    });
+  });
+
+  // §32 — Le pion quitte l'anneau PILE en face de son couloir.
+  //
+  // Ces tests relient le moteur au DESSIN du plateau. `lastRingStep` n'est
+  // pas un réglage libre : la bouche du couloir de chaque couleur est
+  // orthogonalement adjacente à une case d'anneau précise, et c'est elle
+  // qui fixe le nombre de pas. Un pas de plus et le pion se retrouve sur la
+  // case d'angle, en diagonale de sa bouche — il dépasse visiblement la
+  // ligne de son couloir avant d'y entrer.
+  group('🏠 Le pion quitte l\'anneau en face de sa bouche de couloir', () {
+    // 1re case du couloir de chaque couleur, en unités de case, telle que
+    // `_homeColumnCenter` la dessine dans main.dart.
+    const mouth = {
+      PlayerColor.blue:   Offset(7.5, 13.5),
+      PlayerColor.red:    Offset(1.5, 7.5),
+      PlayerColor.green:  Offset(7.5, 1.5),
+      PlayerColor.yellow: Offset(13.5, 7.5),
+    };
+
+    Offset ringPos(PlayerColor color, int steps) =>
+        ring[(GameController.startIdx(color) + steps) %
+                GameController.ringSize]
+            .pos;
+
+    test('la dernière case d\'anneau touche la bouche du couloir', () {
+      for (final color in _fourPlayers) {
+        final d = ringPos(color, GameController.lastRingStep) - mouth[color]!;
+        expect(d.dx.abs() + d.dy.abs(), closeTo(1.0, 1e-9),
+            reason: '${color.name} : la case à '
+                '${GameController.lastRingStep} pas doit être collée à '
+                'sa bouche ${mouth[color]}');
+      }
+    });
+
+    test('un pas de plus dépasserait la ligne du couloir', () {
+      for (final color in _fourPlayers) {
+        final d =
+            ringPos(color, GameController.lastRingStep + 1) - mouth[color]!;
+        expect(d.dx.abs() + d.dy.abs(), greaterThan(1.0),
+            reason: '${color.name} : ${GameController.lastRingStep + 1} pas '
+                'tombe en diagonale de la bouche — c\'est le dépassement');
+      }
+    });
+
+    test('le total pour rentrer = 50 anneau + 5 couloir + 1 maison', () {
+      expect(GameController.lastRingStep, 50);
+      expect(GameController.totalStepsToHome, 56);
+    });
+
+    test('aucun pion ne repasse sur sa propre case de départ', () {
+      // Le pion quitte l'anneau AVANT d'avoir bouclé : les cases entre sa
+      // bouche et son départ ne sont parcourues que par les autres couleurs.
+      for (final color in _fourPlayers) {
+        final c = newGame();
+        final p = c.state.pawnsByColor[color]![0];
+        c.currentPlayerIdx = _fourPlayers.indexOf(color);
+        final start = GameController.startIdx(color);
+        p.location = PawnLocation.ring;
+        p.position = (start + GameController.lastRingStep - 1) %
+            GameController.ringSize;
+        final path = c.pathFor(p, 6);
+        final ringCells = path
+            .where((s) => s.location == PawnLocation.ring)
+            .map((s) => s.position);
+        expect(ringCells, isNot(contains(start)),
+            reason: '${color.name} ne doit jamais revenir sur son départ');
       }
     });
   });
