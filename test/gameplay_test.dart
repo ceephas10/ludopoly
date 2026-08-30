@@ -765,6 +765,21 @@ void main() {
       expect(path.single.position, 1);
     });
 
+    test('une sortie de base sur un 6 va EN AVANT, jamais à contre-sens', () {
+      // Invariant demandé : le rembobinage n'appartient qu'à la capture.
+      // Une sortie de base est un saut unique vers la flèche d'entrée.
+      for (final color in _fourPlayers) {
+        final c = newGame(order: [color]);
+        final pawn = c.state.pawnsByColor[color]![0];
+        c.roll(6);
+        final path = c.pathFor(pawn, 6);
+        expect(path.length, 1, reason: '${color.name} : sortie = 1 étape');
+        expect(path.single.location, PawnLocation.ring);
+        expect(path.single.position, GameController.startIdx(color),
+            reason: '${color.name} sort SUR sa flèche, pas avant');
+      }
+    });
+
     test('le trajet de retour ne déplace aucun pion', () {
       final c = newGame();
       final avant = {for (final p in c.state.allPawns) p: p.toString()};

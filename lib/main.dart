@@ -169,10 +169,12 @@ class _BoardScreenState extends State<BoardScreen>
   Timer? _travelTimer;
   Timer? _autoMoveTimer;
 
-  /// Timers des retours à contre-sens des pions capturés. Il peut y en
-  /// avoir plusieurs en vol (deux pions mangés d'un coup), et ils survivent
-  /// au tour suivant — c'est de l'habillage, il ne bloque pas la partie.
-  final List<Timer> _returnTimers = [];
+  /// Timers des retours à contre-sens des pions capturés, indexés par pion.
+  /// Il peut y en avoir plusieurs en vol (deux pions mangés d'un coup), et
+  /// ils survivent au tour suivant — c'est de l'habillage, ça ne bloque pas
+  /// la partie. Indexés par pion pour pouvoir en couper UN seul : celui qui
+  /// repart de sa base ne doit plus rembobiner.
+  final Map<Pawn, Timer> _returnTimers = {};
 
   /// Last hover info text (token or dice), shown next to the Détails toggle.
   String? _hoverInfo;
@@ -548,6 +550,11 @@ class _BoardScreenState extends State<BoardScreen>
 
     _travelTimer?.cancel();
     setState(() {
+      // Ce pion REPART : s'il rembobinait encore un retour de capture, on
+      // le coupe ici. Sinon il resterait dessiné à sa case de rembobinage
+      // et semblerait reculer au lieu de sortir — un pion qui sort sur un 6
+      // ne doit JAMAIS partir en arrière.
+      _stopReturnTravel(p);
       _moveDuration[p] = stepDur; // lu par l'AnimatedPositioned du pion
       // L'état LOGIQUE est mis à jour AVANT l'animation : le moteur a déjà
       // décidé capture / tour supplémentaire / classement quand le pion
@@ -666,7 +673,10 @@ class _BoardScreenState extends State<BoardScreen>
   /// donc ce retour n'empêche personne de jouer pendant qu'il se déroule.
   void _startReturnTravel(Pawn cap) {
     final from = _captureOverride[cap];
-    if (from == null) return;
+    // Le rembobinage n'existe QUE pour un pion capturé, donc renvoyé en
+    // base par un adversaire. Toute autre situation (et notamment un pion
+    // qui SORT de sa base sur un 6) n'en déclenche jamais.
+    if (from == null || cap.location != PawnLocation.base) return;
     final path = _controller.returnPathFor(cap.color, from, cap.position);
     if (path.length < 2) {
       setState(() => _captureOverride.remove(cap));
@@ -678,13 +688,12 @@ class _BoardScreenState extends State<BoardScreen>
       _captureOverride[cap] = path.first;
     });
     int i = 0;
-    late final Timer t;
-    t = Timer.periodic(_returnStep, (timer) {
-      // Le pion est ressorti de sa base entre-temps (un 6 l'a fait
-      // repartir) : son trajet normal reprend la main, on s'efface.
+    _returnTimers[cap] = Timer.periodic(_returnStep, (timer) {
+      // Le pion est ressorti de sa base entre-temps : son trajet normal
+      // reprend la main, on s'efface immédiatement.
       if (!mounted || cap.location != PawnLocation.base) {
         timer.cancel();
-        _returnTimers.remove(t);
+        _returnTimers.remove(cap);
         if (mounted) setState(() => _captureOverride.remove(cap));
         return;
       }
@@ -695,13 +704,21 @@ class _BoardScreenState extends State<BoardScreen>
           // l'override plutôt que de l'y poser, c'est le même point.
           _captureOverride.remove(cap);
           timer.cancel();
-          _returnTimers.remove(t);
+          _returnTimers.remove(cap);
         } else {
           _captureOverride[cap] = path[i];
         }
       });
     });
-    _returnTimers.add(t);
+  }
+
+  /// Coupe net le rembobinage de [p] s'il en avait un en vol, et efface sa
+  /// position visuelle de secours. Appelé dès que le pion REPART : sans ça
+  /// il serait encore dessiné à sa case de rembobinage et donnerait
+  /// l'impression de reculer au lieu de sortir de sa base.
+  void _stopReturnTravel(Pawn p) {
+    _returnTimers.remove(p)?.cancel();
+    _captureOverride.remove(p);
   }
 
   Color _colorOfPawn(PlayerColor c) {
@@ -814,7 +831,7 @@ class _BoardScreenState extends State<BoardScreen>
     _aiTimer?.cancel();
     _travelTimer?.cancel();
     _autoMoveTimer?.cancel();
-    for (final t in _returnTimers) {
+    for (final t in _returnTimers.values) {
       t.cancel();
     }
     _returnTimers.clear();
