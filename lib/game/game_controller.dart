@@ -100,11 +100,10 @@ class GameController {
   /// les places suivantes, jusqu'à ce qu'il ne reste qu'un joueur.
   final List<PlayerColor> ranking = [];
 
-  /// Règle des blocs (barrière). Quand elle est ON, 2 pions ou plus de la
-  /// même couleur sur une case du ring forment un BLOC : un pion adverse
-  /// ne peut ni s'y poser, ni le traverser. Configurable parce que les
-  /// variantes de Ludo ne traitent pas l'empilement de la même manière.
-  bool blockRule = false;
+  // La règle des blocs (barrière formée par 2 pions d'une même couleur sur
+  // une case du ring) a été RETIRÉE : l'empilement de deux pions d'une même
+  // couleur sur le ring est désormais interdit tout court, donc plus aucune
+  // barrière ne peut se former. Voir [wouldSelfStack].
 
   /// 2v2 team mode toggle. When ON :
   ///   - blue + green form one team, yellow + red form the other ([_partners])
@@ -192,8 +191,41 @@ class GameController {
 
   PlayerColor get currentColor => turnOrder[currentPlayerIdx];
 
-  /// Roll a random 1..6.
-  void rollRandom() => roll(_rng.nextInt(6) + 1);
+  /// Tire une valeur 1..6 en ÉVITANT, quand c'est possible, celles qui
+  /// mettraient le joueur courant en situation d'empilement.
+  ///
+  /// L'empilement est de toute façon interdit ([wouldSelfStack]) : ce tri
+  /// sert à ne pas gâcher un lancer dont le seul défaut serait de viser une
+  /// case déjà tenue par un pion de la couleur. Trois filtres, du plus
+  /// exigeant au plus permissif, le premier non vide gagne :
+  ///
+  ///   1. aucun pion ne viserait un empilement, ET au moins un coup jouable ;
+  ///   2. au moins un coup jouable ;
+  ///   3. les six valeurs (le tour passera, c'est légitime).
+  ///
+  /// Le dé n'est donc PAS uniforme : c'est un biais assumé, demandé, et
+  /// borné — il ne retire jamais une valeur sans que le repli 3 puisse la
+  /// redonner. Un lancer forcé par [roll] n'est pas concerné.
+  int pickDiceValue([math.Random? rng]) {
+    final r = rng ?? _rng;
+    final mine = state.pawnsByColor[currentColor]!;
+    final playable = <int>[];
+    final clean = <int>[];
+    for (int v = 1; v <= 6; v++) {
+      if (mine.any((p) => _canMoveAs(p, v, currentColor))) {
+        playable.add(v);
+        if (!mine.any((p) => wouldSelfStack(p, v))) clean.add(v);
+      }
+    }
+    final pool = clean.isNotEmpty
+        ? clean
+        : (playable.isNotEmpty ? playable : const [1, 2, 3, 4, 5, 6]);
+    return pool[r.nextInt(pool.length)];
+  }
+
+  /// Roll a random 1..6, en évitant les valeurs qui viseraient un
+  /// empilement — voir [pickDiceValue].
+  void rollRandom() => roll(pickDiceValue());
 
   /// Set the dice value (random or forced) and update [phase]. If no pawn can
   /// move (or the streak-of-3 sixes triggers), advances to the next player.
@@ -263,12 +295,14 @@ class GameController {
     switch (p.location) {
       case PawnLocation.base:
         if (v != 6) return false;
-        // Sortie de base : la case départ doit être libre de tout bloc adverse.
-        return !_barriersFor(playingFor).contains(_startIdx[p.color]!);
+        // La case départ ne doit pas déjà porter un pion de la couleur.
+        return !wouldSelfStack(p, v);
       case PawnLocation.ring:
         final taken = _stepsTaken(p);
         if (taken + v > totalStepsToHome) return false;
-        return _pathIsClear(p, taken, v, playingFor);
+        // Interdiction d'empilement : deux pions d'une même couleur ne
+        // partagent jamais une case du ring.
+        return !wouldSelfStack(p, v);
       case PawnLocation.homeColumn:
         // Home column has 5 cells (indices 0..4); the 6th step reaches home.
         return p.position + v <= 5;
@@ -537,39 +571,40 @@ class GameController {
   int _stepsTaken(Pawn p) =>
       (p.position - _startIdx[p.color]! + ringSize) % ringSize;
 
-  /// Cases du ring qui font BARRIÈRE pour [mover] : une case portant 2 pions
-  /// ou plus d'une même couleur qui n'est pas dans l'équipe de [mover].
-  /// Vide quand [blockRule] est OFF (comportement historique : on traverse
-  /// et on s'empile librement).
-  Set<int> _barriersFor(PlayerColor mover) {
-    if (!blockRule) return const {};
-    final byCellAndColor = <int, Map<PlayerColor, int>>{};
-    for (final entry in state.pawnsByColor.entries) {
-      if (_sameTeam(entry.key, mover)) continue;
-      for (final p in entry.value) {
-        if (p.location != PawnLocation.ring) continue;
-        final byColor = byCellAndColor.putIfAbsent(p.position, () => {});
-        byColor[entry.key] = (byColor[entry.key] ?? 0) + 1;
-      }
-    }
-    final result = <int>{};
-    byCellAndColor.forEach((cell, byColor) {
-      if (byColor.values.any((n) => n >= 2)) result.add(cell);
-    });
-    return result;
-  }
+  /// Cases du ring déjà occupées par un pion de la couleur [color], en
+  /// ignorant [except] (le pion qu'on s'apprête à bouger : il libère la
+  /// sienne en partant).
+  ///
+  /// Deux pions d'une même couleur ne peuvent JAMAIS partager une case du
+  /// ring — voir [wouldSelfStack]. Le couloir final, lui, reste privé et
+  /// admet plusieurs pions de la couleur.
+  Set<int> _selfOccupiedRing(PlayerColor color, {Pawn? except}) => {
+        for (final p in state.pawnsByColor[color]!)
+          if (p != except && p.location == PawnLocation.ring) p.position,
+      };
 
-  /// True si aucune barrière adverse ne se trouve sur les [v] cases que [p]
-  /// s'apprête à parcourir (cases intermédiaires ET case d'arrivée). Le
-  /// couloir final est privé : on ne teste que la portion sur le ring.
-  bool _pathIsClear(Pawn p, int taken, int v, PlayerColor playingFor) {
-    final barriers = _barriersFor(playingFor);
-    if (barriers.isEmpty) return true;
-    final start = _startIdx[p.color]!;
-    for (int s = taken + 1; s <= taken + v && s <= lastRingStep; s++) {
-      if (barriers.contains((start + s) % ringSize)) return false;
+  /// True si déplacer [p] de [v] le ferait atterrir sur une case du ring
+  /// déjà occupée par un pion de SA couleur.
+  ///
+  /// Seule la case d'ARRIVÉE compte : un pion traverse librement les cases
+  /// de ses camarades, il n'a juste pas le droit de s'y arrêter. Une arrivée
+  /// dans le couloir ou à la maison n'est jamais concernée.
+  bool wouldSelfStack(Pawn p, int v) {
+    if (v <= 0) return false;
+    final occupied = _selfOccupiedRing(p.color, except: p);
+    if (occupied.isEmpty) return false;
+    switch (p.location) {
+      case PawnLocation.base:
+        // Sortie de base : l'arrivée est la case de départ de la couleur.
+        return v == 6 && occupied.contains(_startIdx[p.color]!);
+      case PawnLocation.ring:
+        final steps = _stepsTaken(p) + v;
+        if (steps > lastRingStep) return false; // couloir ou maison
+        return occupied.contains((_startIdx[p.color]! + steps) % ringSize);
+      case PawnLocation.homeColumn:
+      case PawnLocation.home:
+        return false;
     }
-    return true;
   }
 
   // --- Historique / bouton Retour -------------------------------------------

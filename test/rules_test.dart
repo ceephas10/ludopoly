@@ -10,7 +10,7 @@ import 'package:ludopoly/game/pawn.dart';
 import 'package:ludopoly/game/player_color.dart';
 
 /// Contrôleur neuf avec les 4 couleurs dans l'ordre bleu → rouge → vert → jaune.
-GameController newGame({bool blocks = false, bool team = false}) {
+GameController newGame({bool team = false}) {
   final c = GameController(
     turnOrder: const [
       PlayerColor.blue,
@@ -20,7 +20,6 @@ GameController newGame({bool blocks = false, bool team = false}) {
     ],
     state: GameState.initial(),
   );
-  c.blockRule = blocks;
   c.teamMode = team;
   return c;
 }
@@ -135,72 +134,6 @@ void main() {
       c.roll(3);
       c.movePawn(blue);
       expect(green.location, PawnLocation.ring);
-    });
-  });
-
-  group('🧱 Blocs (barrière)', () {
-    test('règle OFF → on traverse et on se pose sur un empilement adverse', () {
-      final c = newGame(blocks: false);
-      final blue = c.state.pawnsByColor[PlayerColor.blue]![0];
-      final r1 = c.state.pawnsByColor[PlayerColor.red]![0];
-      final r2 = c.state.pawnsByColor[PlayerColor.red]![1];
-      r1.location = r2.location = PawnLocation.ring;
-      r1.position = r2.position = 5;
-      blue.location = PawnLocation.ring;
-      blue.position = 2;
-      c.roll(3);
-      expect(c.movablePawns(), contains(blue));
-    });
-
-    test('règle ON → impossible de se POSER sur un bloc adverse', () {
-      final c = newGame(blocks: true);
-      final blue = c.state.pawnsByColor[PlayerColor.blue]![0];
-      final r1 = c.state.pawnsByColor[PlayerColor.red]![0];
-      final r2 = c.state.pawnsByColor[PlayerColor.red]![1];
-      r1.location = r2.location = PawnLocation.ring;
-      r1.position = r2.position = 5;
-      blue.location = PawnLocation.ring;
-      blue.position = 2;
-      c.roll(3);
-      expect(c.movablePawns(), isNot(contains(blue)));
-    });
-
-    test('règle ON → impossible de TRAVERSER un bloc adverse', () {
-      final c = newGame(blocks: true);
-      final blue = c.state.pawnsByColor[PlayerColor.blue]![0];
-      final r1 = c.state.pawnsByColor[PlayerColor.red]![0];
-      final r2 = c.state.pawnsByColor[PlayerColor.red]![1];
-      r1.location = r2.location = PawnLocation.ring;
-      r1.position = r2.position = 4; // sur le chemin
-      blue.location = PawnLocation.ring;
-      blue.position = 2;
-      c.roll(4); // viserait la case 6, mais passe par la 4
-      expect(c.movablePawns(), isNot(contains(blue)));
-    });
-
-    test('un seul pion ne fait PAS bloc (c\'est une capture)', () {
-      final c = newGame(blocks: true);
-      final blue = c.state.pawnsByColor[PlayerColor.blue]![0];
-      final r1 = c.state.pawnsByColor[PlayerColor.red]![0];
-      r1.location = PawnLocation.ring;
-      r1.position = 5;
-      blue.location = PawnLocation.ring;
-      blue.position = 2;
-      c.roll(3);
-      expect(c.movablePawns(), contains(blue));
-    });
-
-    test('un bloc de MA couleur ne me bloque pas', () {
-      final c = newGame(blocks: true);
-      final b1 = c.state.pawnsByColor[PlayerColor.blue]![0];
-      final b2 = c.state.pawnsByColor[PlayerColor.blue]![1];
-      final b3 = c.state.pawnsByColor[PlayerColor.blue]![2];
-      b1.location = b2.location = PawnLocation.ring;
-      b1.position = b2.position = 5;
-      b3.location = PawnLocation.ring;
-      b3.position = 2;
-      c.roll(3);
-      expect(c.movablePawns(), contains(b3));
     });
   });
 

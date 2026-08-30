@@ -98,11 +98,6 @@ class _BoardScreenState extends State<BoardScreen>
   bool _ruleStartWith1TokenOut = false;
   bool _ruleTeamMode = false;
 
-  /// Règle des blocs : 2 pions de même couleur sur une case forment une
-  /// barrière infranchissable pour les adversaires. Voir
-  /// [GameController.blockRule].
-  bool _ruleBlocks = false;
-
   /// Mode "contre ordinateur" : toutes les couleurs sauf la première de
   /// l'ordre des tours sont pilotées par l'IA locale.
   bool _ruleAiOpponents = false;
@@ -461,14 +456,18 @@ class _BoardScreenState extends State<BoardScreen>
   /// Cryptographically-strong RNG — backed by the OS entropy pool
   /// (`/dev/urandom` on Linux, `BCryptGenRandom` on Windows, Web Crypto
   /// on the browser). Unlike `Random()` (a deterministic XorShift seeded
-  /// from the clock) this gives genuinely uniform 1..6 with NO bias and
-  /// no recoverable seed — the opposite of LudoKing's tweaked dice.
+  /// from the clock) this has no recoverable seed.
+  ///
+  /// ATTENTION : le tirage n'est PLUS uniforme sur 1..6. Il passe par
+  /// [GameController.pickDiceValue], qui écarte les valeurs viseraient une
+  /// case déjà tenue par un pion de la couleur. C'est un biais assumé et
+  /// demandé ; l'entropie, elle, reste celle de l'OS.
   final math.Random _secureRng = math.Random.secure();
 
   void _rollDiceRandom() {
     if (_animating) return; // verrou : une commande à la fois
     if (_controller.phase != TurnPhase.rolling) return;
-    _roll(_secureRng.nextInt(6) + 1);
+    _roll(_controller.pickDiceValue(_secureRng));
     _scheduleAiTurn();
   }
 
@@ -506,7 +505,7 @@ class _BoardScreenState extends State<BoardScreen>
       return;
     }
     if (_controller.phase == TurnPhase.rolling) {
-      _roll(_secureRng.nextInt(6) + 1);
+      _roll(_controller.pickDiceValue(_secureRng));
     }
     if (_controller.phase == TurnPhase.moving) {
       final choice = _controller.pickAiPawn();
@@ -1104,13 +1103,6 @@ class _BoardScreenState extends State<BoardScreen>
                         _controller.teamMode = v;
                       });
                     },
-                    ruleBlocks: _ruleBlocks,
-                    onToggleRuleBlocks: (v) {
-                      setState(() {
-                        _ruleBlocks = v;
-                        _controller.blockRule = v;
-                      });
-                    },
                     ruleAiOpponents: _ruleAiOpponents,
                     onToggleRuleAiOpponents: (v) {
                       _aiTimer?.cancel();
@@ -1222,8 +1214,6 @@ class _ControlPanel extends StatelessWidget {
   final ValueChanged<bool> onToggleRuleStartWith1TokenOut;
   final bool ruleTeamMode;
   final ValueChanged<bool> onToggleRuleTeamMode;
-  final bool ruleBlocks;
-  final ValueChanged<bool> onToggleRuleBlocks;
   final bool ruleAiOpponents;
   final ValueChanged<bool> onToggleRuleAiOpponents;
 
@@ -1273,8 +1263,6 @@ class _ControlPanel extends StatelessWidget {
     required this.onToggleRuleStartWith1TokenOut,
     required this.ruleTeamMode,
     required this.onToggleRuleTeamMode,
-    required this.ruleBlocks,
-    required this.onToggleRuleBlocks,
     required this.ruleAiOpponents,
     required this.onToggleRuleAiOpponents,
     required this.ranking,
@@ -1375,15 +1363,6 @@ class _ControlPanel extends StatelessWidget {
                               "= 8 pions au centre."),
                           value: ruleTeamMode,
                           onChanged: onToggleRuleTeamMode,
-                        ),
-                        SwitchListTile(
-                          title: const Text('Blocs (barrière)'),
-                          subtitle: const Text(
-                              '2 pions de même couleur sur une case forment '
-                              'un bloc : un pion adverse ne peut ni s\'y '
-                              'poser, ni le traverser.'),
-                          value: ruleBlocks,
-                          onChanged: onToggleRuleBlocks,
                         ),
                         SwitchListTile(
                           title: const Text('Adversaires ordinateur'),

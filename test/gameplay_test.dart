@@ -6,6 +6,8 @@
 // (« rouge 6 → pion sorti, puis rouge 3 → pion vert sorti ») est en bas,
 // dans le groupe 🐞.
 
+import 'dart:math' as math;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludopoly/game/board_path.dart';
 import 'package:ludopoly/game/game_controller.dart';
@@ -22,14 +24,12 @@ const _fourPlayers = [
 
 GameController newGame({
   List<PlayerColor> order = _fourPlayers,
-  bool blocks = false,
   bool team = false,
 }) {
   final c = GameController(
     turnOrder: List<PlayerColor>.from(order),
     state: GameState.initial(),
   );
-  c.blockRule = blocks;
   c.teamMode = team;
   return c;
 }
@@ -696,6 +696,155 @@ void main() {
               reason: 'lancer de ${color.name} : $p a bougé');
         }
       }
+    });
+  });
+
+  // §33 — Deux pions d'une même couleur ne partagent jamais une case du ring.
+  //
+  // Double garde : le coup est ILLÉGAL, et le dé ÉVITE de proposer une
+  // valeur qui viserait un empilement. La règle des blocs (§17), qui
+  // reposait sur cet empilement, a été retirée.
+  group('🚫 Pas deux pions de même couleur sur une case du ring', () {
+    /// Place [n] pions de [color] aux pas donnés depuis leur départ.
+    List<Pawn> placeOnRing(GameController c, PlayerColor color,
+        List<int> steps) {
+      final pawns = c.state.pawnsByColor[color]!;
+      for (int i = 0; i < steps.length; i++) {
+        pawns[i].location = PawnLocation.ring;
+        pawns[i].position = (GameController.startIdx(color) + steps[i]) %
+            GameController.ringSize;
+      }
+      return pawns;
+    }
+
+    test('se poser sur son propre pion est un coup illégal', () {
+      final c = newGame();
+      final blue = placeOnRing(c, PlayerColor.blue, [2, 5]);
+      c.roll(3); // blue[0] viserait le pas 5, déjà tenu par blue[1]
+      expect(c.movablePawns(), isNot(contains(blue[0])));
+    });
+
+    test('la même valeur reste jouable par un AUTRE pion', () {
+      final c = newGame();
+      final blue = placeOnRing(c, PlayerColor.blue, [2, 5, 20]);
+      c.roll(3);
+      expect(c.movablePawns(), isNot(contains(blue[0])));
+      expect(c.movablePawns(), contains(blue[2]),
+          reason: 'blue#2 vise le pas 23, libre');
+    });
+
+    test('on TRAVERSE librement son camarade, on ne s\'y arrête pas', () {
+      final c = newGame();
+      final blue = placeOnRing(c, PlayerColor.blue, [2, 4]);
+      c.roll(4); // blue[0] passe PAR le pas 4 et finit au 6
+      expect(c.movablePawns(), contains(blue[0]));
+      c.movePawn(blue[0]);
+      expect(c.state.pawnsByColor[PlayerColor.blue]![0].position,
+          (GameController.startIdx(PlayerColor.blue) + 6) % 52);
+    });
+
+    test('sortir de base sur sa case départ occupée est illégal', () {
+      final c = newGame();
+      placeOnRing(c, PlayerColor.blue, [0]); // blue#0 sur la case départ
+      c.roll(6);
+      final stillInBase = c.state.pawnsByColor[PlayerColor.blue]!
+          .where((p) => p.location == PawnLocation.base);
+      for (final p in stillInBase) {
+        expect(c.movablePawns(), isNot(contains(p)),
+            reason: '$p ne peut pas sortir, la case départ est prise');
+      }
+    });
+
+    test('un pion adverse sur la case ne gêne pas — c\'est une capture', () {
+      final c = newGame();
+      final blue = placeOnRing(c, PlayerColor.blue, [2]);
+      placeOnRing(c, PlayerColor.red, [0]); // rouge sur SA case départ 13
+      final red = c.state.pawnsByColor[PlayerColor.red]![0];
+      red.position = (GameController.startIdx(PlayerColor.blue) + 5) % 52;
+      c.roll(3);
+      expect(c.movablePawns(), contains(blue[0]));
+    });
+
+    test('le couloir final, lui, accepte plusieurs pions de la couleur', () {
+      final c = newGame();
+      final blue = c.state.pawnsByColor[PlayerColor.blue]!;
+      blue[0].location = PawnLocation.homeColumn;
+      blue[0].position = 3;
+      blue[1].location = PawnLocation.homeColumn;
+      blue[1].position = 1;
+      c.roll(2); // blue[1] : 1 → 3, même case que blue[0]
+      expect(c.movablePawns(), contains(blue[1]),
+          reason: 'la règle ne vise que le ring');
+    });
+
+    test('aucune partie ne peut produire un empilement sur le ring', () {
+      // 300 coups joués au hasard : l'invariant doit tenir en permanence.
+      final c = newGame();
+      final rng = math.Random(20260830);
+      for (int turn = 0; turn < 300; turn++) {
+        c.roll(c.pickDiceValue(rng));
+        if (c.phase == TurnPhase.moving) {
+          final options = c.movablePawns();
+          if (options.isNotEmpty) {
+            c.movePawn(options[rng.nextInt(options.length)]);
+          }
+        }
+        for (final color in _fourPlayers) {
+          final cells = c.state.pawnsByColor[color]!
+              .where((p) => p.location == PawnLocation.ring)
+              .map((p) => p.position)
+              .toList();
+          expect(cells.toSet().length, cells.length,
+              reason: 'tour $turn : ${color.name} empilé sur $cells');
+        }
+      }
+    });
+  });
+
+  // §34 — Le dé écarte les valeurs qui viseraient un empilement.
+  group('🎲 Le dé évite les valeurs qui viseraient un empilement', () {
+    test('une valeur qui empilerait n\'est jamais tirée si une autre existe',
+        () {
+      final c = newGame();
+      final blue = c.state.pawnsByColor[PlayerColor.blue]!;
+      // Un SEUL pion sur le ring, un camarade 3 cases plus loin : le 3
+      // viserait l'empilement, les autres valeurs non.
+      blue[0].location = PawnLocation.ring;
+      blue[0].position = 2;
+      blue[1].location = PawnLocation.ring;
+      blue[1].position = 5;
+      final rng = math.Random(7);
+      for (int i = 0; i < 200; i++) {
+        expect(c.pickDiceValue(rng), isNot(3),
+            reason: 'le 3 ferait tomber blue#0 sur blue#1');
+      }
+    });
+
+    test('en dernier recours le dé rend quand même une valeur', () {
+      // Tous les pions au centre : aucun coup jouable, aucune valeur
+      // « propre ». Le tirage doit rester valide plutôt que de boucler.
+      final c = newGame();
+      for (final p in c.state.pawnsByColor[PlayerColor.blue]!) {
+        p.location = PawnLocation.home;
+      }
+      final rng = math.Random(1);
+      for (int i = 0; i < 50; i++) {
+        expect(c.pickDiceValue(rng), inInclusiveRange(1, 6));
+      }
+    });
+
+    test('sans risque d\'empilement, les 6 valeurs restent atteignables', () {
+      final c = newGame(); // tout en base : seul le 6 sort un pion…
+      final blue = c.state.pawnsByColor[PlayerColor.blue]!;
+      blue[0].location = PawnLocation.ring;
+      blue[0].position = 20; // …un pion isolé, loin de tout
+      final rng = math.Random(3);
+      final seen = <int>{};
+      for (int i = 0; i < 500; i++) {
+        seen.add(c.pickDiceValue(rng));
+      }
+      expect(seen, {1, 2, 3, 4, 5, 6},
+          reason: 'le biais ne doit pas amputer le dé sans raison');
     });
   });
 
