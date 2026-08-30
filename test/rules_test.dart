@@ -3,6 +3,8 @@
 // interface : c'est exactement ce que la spec demande (les animations ne
 // décident jamais des règles).
 
+import 'dart:math' as math;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludopoly/game/game_controller.dart';
 import 'package:ludopoly/game/game_state.dart';
@@ -302,6 +304,41 @@ void main() {
       final c = newGame();
       c.roll(2); // tous en base → tour déjà passé
       expect(c.pickAiPawn(), isNull);
+    });
+
+    test('jamais de blocage : phase moving implique toujours un coup', () {
+      // C'est l'invariant qui permet à l'interface de faire jouer une IA
+      // sans jamais rendre la main. S'il tombait, la partie resterait
+      // figée en attendant un clic qui ne viendrait pas.
+      final c = newGame();
+      final rng = math.Random(4242);
+      for (int turn = 0; turn < 3000; turn++) {
+        if (c.phase == TurnPhase.gameOver) break;
+        c.roll(c.pickDiceValue(rng));
+        if (c.phase == TurnPhase.moving) {
+          final choice = c.pickAiPawn();
+          expect(choice, isNotNull,
+              reason: 'tour $turn : phase moving mais aucun pion à jouer');
+          c.movePawn(choice!);
+        }
+      }
+    });
+
+    test('une partie 100 % ordinateur va jusqu\'au bout toute seule', () {
+      final c = newGame();
+      final rng = math.Random(20260830);
+      int turns = 0;
+      while (c.phase != TurnPhase.gameOver && turns < 20000) {
+        turns++;
+        c.roll(c.pickDiceValue(rng));
+        if (c.phase == TurnPhase.moving) {
+          c.movePawn(c.pickAiPawn()!);
+        }
+      }
+      expect(c.phase, TurnPhase.gameOver,
+          reason: 'la partie doit se terminer sans aucune intervention '
+              '(bloquée après $turns tours)');
+      expect(c.ranking.length, 4, reason: 'les 4 places doivent être prises');
     });
   });
 

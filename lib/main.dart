@@ -476,6 +476,7 @@ class _BoardScreenState extends State<BoardScreen>
 
   void _rollDiceRandom() {
     if (_animating) return; // verrou : une commande à la fois
+    if (_isAiTurn) return;  // c'est à l'ordinateur de lancer, pas à nous
     if (_controller.phase != TurnPhase.rolling) return;
     _roll(_controller.pickDiceValue(_secureRng));
     _scheduleAiTurn();
@@ -489,6 +490,12 @@ class _BoardScreenState extends State<BoardScreen>
       _ruleAiOpponents &&
       _controller.turnOrder.isNotEmpty &&
       c != _controller.turnOrder.first;
+
+  /// Vrai quand la main est à un ordinateur. Le plateau passe alors en
+  /// LECTURE SEULE : ni sélecteur sur ses pions, ni dé cliquable. Sans ça
+  /// le tour d'une IA est visuellement identique à un tour humain, et on
+  /// croit que la partie attend un clic alors qu'elle joue toute seule.
+  bool get _isAiTurn => _isAiColor(_controller.currentColor);
 
   /// Si le joueur courant est une IA, programme son lancer. Rappelée après
   /// chaque changement d'état susceptible de donner la main à une IA.
@@ -1050,9 +1057,13 @@ class _BoardScreenState extends State<BoardScreen>
                       diceColor: _shownDiceColor,
                       currentPlayerColor: _controller.currentColor,
                       canRollDice: _controller.phase == TurnPhase.rolling &&
-                          !_animating,
-                      movablePawns:
-                          _controller.movablePawns().toSet(),
+                          !_animating &&
+                          !_isAiTurn,
+                      // Aucun sélecteur, aucun pion cliquable tant que
+                      // c'est un ordinateur qui joue : il n'attend rien.
+                      movablePawns: _isAiTurn
+                          ? const <Pawn>{}
+                          : _controller.movablePawns().toSet(),
                       onRollDice: _rollDiceRandom,
                       onPawnTap: _movePawn,
                       pawnAsset: _pawnAsset,
