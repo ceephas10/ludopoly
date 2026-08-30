@@ -142,6 +142,16 @@ class _BoardScreenState extends State<BoardScreen>
   /// d'un pixel avant cet instant, et ne quitte la case qu'à la fin.
   static const Duration _captureHold = Duration(milliseconds: 340);
 
+  /// Temps que prend une IA avant de saisir le dé. C'est aussi le blanc
+  /// que l'on voit entre deux ordinateurs qui s'enchaînent : sans lui, les
+  /// couleurs défilent d'un bloc et on ne suit plus qui joue.
+  static const Duration _aiRollDelay = Duration(milliseconds: 900);
+
+  /// Temps entre le lancer d'une IA et le départ de son pion. Il rend le
+  /// chiffre lisible avant que quoi que ce soit ne bouge — l'équivalent
+  /// pour l'IA de [_dicePause] côté humain.
+  static const Duration _aiMoveDelay = Duration(milliseconds: 700);
+
   /// Durée d'UNE case pendant le retour à contre-sens du pion capturé. Il
   /// rembobine son parcours — de la case où il s'est fait manger jusqu'à sa
   /// flèche d'entrée — avant de rentrer dans sa base. Nettement plus rapide
@@ -488,25 +498,55 @@ class _BoardScreenState extends State<BoardScreen>
     if (!_ruleAiOpponents) return;
     if (_controller.phase == TurnPhase.gameOver) return;
     if (!_isAiColor(_controller.currentColor)) return;
-    _aiTimer = Timer(const Duration(milliseconds: 650), _playAiTurn);
+    _aiTimer = Timer(_aiRollDelay, _playAiTurn);
   }
 
-  /// Un tour d'IA : lancer le dé, puis jouer le meilleur pion. Le coup
-  /// passe par [_movePawn] — donc par le moteur, jamais par l'animation.
+  /// Vrai tant que l'IA courante peut continuer à agir. Les trois causes
+  /// d'arrêt : le widget est parti, la règle a été coupée, ou la main n'est
+  /// plus à une IA.
+  bool get _aiMayAct =>
+      mounted &&
+      _ruleAiOpponents &&
+      _controller.phase != TurnPhase.gameOver &&
+      _isAiColor(_controller.currentColor);
+
+  /// Premier temps du tour d'une IA : le lancer, et RIEN d'autre.
+  ///
+  /// Le coup est volontairement repoussé à [_playAiMove] : jouer dans la
+  /// foulée du lancer ne laissait pas le temps de lire le dé — on voyait le
+  /// pion partir avant le chiffre. Le seul cas où l'on ne programme rien
+  /// est celui où [_roll] a déjà posé un coup automatique (un unique pion
+  /// jouable) : il a sa propre pause et rendra la main tout seul.
   void _playAiTurn() {
-    if (!mounted || _animating) {
-      // Le plateau bouge encore : on repasse plus tard.
-      if (mounted) _scheduleAiTurn();
+    if (!mounted) return;
+    if (_animating) {
+      _scheduleAiTurn(); // le plateau bouge encore, on repasse plus tard
       return;
     }
-    if (!_ruleAiOpponents ||
-        _controller.phase == TurnPhase.gameOver ||
-        !_isAiColor(_controller.currentColor)) {
+    if (!_aiMayAct) return;
+    if (_controller.phase != TurnPhase.rolling) {
+      _playAiMove();
       return;
     }
-    if (_controller.phase == TurnPhase.rolling) {
-      _roll(_controller.pickDiceValue(_secureRng));
+    _roll(_controller.pickDiceValue(_secureRng));
+    if (_animating) return; // coup automatique déjà programmé par _roll
+    if (_controller.phase == TurnPhase.moving) {
+      _aiTimer = Timer(_aiMoveDelay, _playAiMove);
+    } else {
+      // Le lancer n'a rien donné et a passé la main : au suivant.
+      _scheduleAiTurn();
     }
+  }
+
+  /// Second temps : l'IA choisit son pion et le joue. Le coup passe par
+  /// [_movePawn] — donc par le moteur, jamais par l'animation.
+  void _playAiMove() {
+    if (!mounted) return;
+    if (_animating) {
+      _scheduleAiTurn();
+      return;
+    }
+    if (!_aiMayAct) return;
     if (_controller.phase == TurnPhase.moving) {
       final choice = _controller.pickAiPawn();
       if (choice != null) {
