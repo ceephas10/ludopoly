@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'game/ai_difficulty.dart';
 import 'game/board_painter.dart';
 import 'game/board_painter_5p.dart';
 import 'game/board_path.dart';
@@ -82,6 +83,26 @@ class BoardScreenState extends State<BoardScreen>
   @visibleForTesting
   bool get aiOpponents => _aiSeats.isNotEmpty;
 
+  /// Mode Accélérateur et niveau de l'ordinateur, exposés aux tests pour
+  /// qu'ils vérifient le câblage sans dépendre des libellés du panneau.
+  @visibleForTesting
+  bool get aiTurbo => _aiTurbo;
+
+  @visibleForTesting
+  set aiTurbo(bool v) => setState(() => _aiTurbo = v);
+
+  @visibleForTesting
+  AiDifficulty get aiDifficulty => _controller.aiDifficulty;
+
+  /// Le délai [d] tel qu'il sera RÉELLEMENT armé, mode Accélérateur
+  /// compris. C'est le seul moyen d'observer l'accélération : les durées
+  /// sont consommées par des minuteries, pas stockées.
+  @visibleForTesting
+  Duration paceForTest(Duration d, {bool? ai}) => _pace(d, ai: ai);
+
+  @visibleForTesting
+  PlayerColor get currentColor => _controller.currentColor;
+
   @visibleForTesting
   set aiOpponents(bool v) => setAiSeats(
       v ? _controller.turnOrder.skip(1).toSet() : const {});
@@ -133,6 +154,24 @@ class BoardScreenState extends State<BoardScreen>
   /// 4 H + 0 IA à 0 H + 4 IA sont donc possibles — y compris la partie
   /// 100 % automatique, qui se déroule seule jusqu'au classement complet.
   final Set<PlayerColor> _aiSeats = {};
+
+  /// Mode Accélérateur : divise par [_turboFactor] toutes les temporisations
+  /// d'un tour d'ORDINATEUR. Jamais celles d'un tour humain — un joueur doit
+  /// garder le temps de lire le dé et de suivre son pion.
+  bool _aiTurbo = false;
+
+  /// Diviseur du mode Accélérateur. 2 : deux fois plus rapide, pas
+  /// instantané — on doit continuer à VOIR l'ordinateur jouer.
+  static const int _turboFactor = 2;
+
+  /// Applique le mode Accélérateur à [d] si le tour en cours est celui d'un
+  /// ordinateur. Passe [ai] explicitement quand la couleur concernée n'est
+  /// plus celle du tour courant (le moteur a pu passer la main entre-temps).
+  Duration _pace(Duration d, {bool? ai}) {
+    final isAi = ai ?? _isAiColor(_controller.currentColor);
+    if (!_aiTurbo || !isAi) return d;
+    return Duration(microseconds: d.inMicroseconds ~/ _turboFactor);
+  }
 
   /// Verrou anti-bug. Vrai pendant qu'un pion glisse : tant qu'il est levé,
   /// AUCUNE commande n'est acceptée (double clic sur un pion, relance du dé,
@@ -533,7 +572,7 @@ class BoardScreenState extends State<BoardScreen>
   void _scheduleAutoMove(Pawn p) {
     _autoMoveTimer?.cancel();
     setState(() => _animating = true);
-    _autoMoveTimer = Timer(_dicePause, () {
+    _autoMoveTimer = Timer(_pace(_dicePause), () {
       if (!mounted) return;
       _animating = false; // pour que _movePawn accepte le coup
       _movePawn(p);
@@ -586,7 +625,7 @@ class BoardScreenState extends State<BoardScreen>
     if (_aiSeats.isEmpty) return;
     if (_controller.phase == TurnPhase.gameOver) return;
     if (!_isAiColor(_controller.currentColor)) return;
-    _aiTimer = Timer(delay ?? _aiRollDelay, _playAiTurn);
+    _aiTimer = Timer(_pace(delay ?? _aiRollDelay), _playAiTurn);
   }
 
   /// Filet de sécurité, et il faut dire pourquoi il existe.
@@ -688,7 +727,7 @@ class BoardScreenState extends State<BoardScreen>
             '${_controller.phase == TurnPhase.moving ? '' : ' — aucun coup, la main passe'}');
         if (_animating) return; // coup automatique déjà programmé par _roll
         if (_controller.phase == TurnPhase.moving) {
-          _aiTimer = Timer(_aiMoveDelay, _playAiMove);
+          _aiTimer = Timer(_pace(_aiMoveDelay), _playAiMove);
         } else {
           // Le lancer n'a rien donné et a passé la main : au suivant.
           _scheduleAiTurn();
@@ -742,9 +781,13 @@ class BoardScreenState extends State<BoardScreen>
     // Trajet case par case, calculé AVANT que le moteur n'applique le coup.
     // Une sortie de base est un saut unique, pas un parcours.
     final path = _controller.pathFor(p, distance);
-    final stepDur = (oldLoc == PawnLocation.base)
-        ? _baseExitDuration
-        : _stepDuration;
+    // Ce tour appartient-il à un ordinateur ? Lu AVANT que le moteur ne
+    // passe la main : sinon le mode Accélérateur s'appliquerait selon le
+    // joueur SUIVANT, et accélérerait le coup d'un humain.
+    final aiMove = _isAiColor(_controller.currentColor);
+    final stepDur = _pace(
+        (oldLoc == PawnLocation.base) ? _baseExitDuration : _stepDuration,
+        ai: aiMove);
     // Instant où l'attaquant est VISUELLEMENT sur sa case d'arrivée. Le
     // `Timer.periodic` ci-dessous retire `_travelStep` à son tick
     // `path.length - 1` ; un trajet d'une seule étape (sortie de base)
@@ -816,7 +859,8 @@ class BoardScreenState extends State<BoardScreen>
     // VISUELLEMENT sur la case. Pendant `_captureHold`, les deux pions sont
     // affichés ensemble sur cette case — le capturé n'a toujours pas bougé.
     // Sans capture, il n'y a rien à montrer : la pause est nulle.
-    final holdDur = capturedNow.isEmpty ? Duration.zero : _captureHold;
+    final holdDur =
+        capturedNow.isEmpty ? Duration.zero : _pace(_captureHold, ai: aiMove);
     final totalDur = arrivalDur + holdDur;
 
     // Libère le verrou une fois le trajet parcouru ET la pause écoulée,
@@ -1327,6 +1371,20 @@ class BoardScreenState extends State<BoardScreen>
                         _controller.teamMode = v;
                       });
                     },
+                    aiTurbo: _aiTurbo,
+                    onToggleAiTurbo: (v) {
+                      setState(() => _aiTurbo = v);
+                      // Prise d'effet IMMÉDIATE, même au milieu d'un tour
+                      // d'ordinateur : le prochain délai armé utilisera
+                      // déjà le nouveau rythme.
+                      if (_isAiColor(_controller.currentColor) &&
+                          !_animating) {
+                        _scheduleAiTurn();
+                      }
+                    },
+                    aiDifficulty: _controller.aiDifficulty,
+                    onChangeAiDifficulty: (d) =>
+                        setState(() => _controller.aiDifficulty = d),
                     aiSeats: _aiSeats,
                     onSetAiSeats: (seats) {
                       _aiTimer?.cancel();
@@ -1448,6 +1506,14 @@ class _ControlPanel extends StatelessWidget {
   /// interrupteurs individuels H/IA de chaque siège.
   final ValueChanged<Set<PlayerColor>> onSetAiSeats;
 
+  /// Mode Accélérateur : l'ordinateur joue deux fois plus vite.
+  final bool aiTurbo;
+  final ValueChanged<bool> onToggleAiTurbo;
+
+  /// Niveau de jeu de l'ordinateur, un seul actif à la fois.
+  final AiDifficulty aiDifficulty;
+  final ValueChanged<AiDifficulty> onChangeAiDifficulty;
+
   /// Ordre d'arrivée courant : 1er, 2e, 3e, 4e.
   final List<PlayerColor> ranking;
 
@@ -1496,6 +1562,10 @@ class _ControlPanel extends StatelessWidget {
     required this.onToggleRuleTeamMode,
     required this.aiSeats,
     required this.onSetAiSeats,
+    required this.aiTurbo,
+    required this.onToggleAiTurbo,
+    required this.aiDifficulty,
+    required this.onChangeAiDifficulty,
     required this.ranking,
     required this.busy,
   });
@@ -1605,6 +1675,14 @@ class _ControlPanel extends StatelessWidget {
                       activePlayers: activePlayers,
                       aiSeats: aiSeats,
                       onSetAiSeats: onSetAiSeats,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _SectionCard(
+                    title: "Niveau de l'ordinateur",
+                    child: _AiDifficultyCard(
+                      selected: aiDifficulty,
+                      onChanged: onChangeAiDifficulty,
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -1730,6 +1808,49 @@ class _ControlPanel extends StatelessWidget {
                       const SizedBox(width: 8),
                       Expanded(flex: 3, child: _manualCard(theme, cs)),
                     ],
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // ---- Mode Accélérateur IA ----
+                _SectionCard(
+                  title: 'Rythme de l\'ordinateur',
+                  padding: EdgeInsets.zero,
+                  child: SwitchListTile(
+                    secondary: Icon(
+                      Icons.bolt,
+                      color: aiTurbo ? cs.primary : cs.outline,
+                    ),
+                    title: Row(
+                      children: [
+                        const Text('Mode Accélérateur IA'),
+                        if (aiTurbo) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: cs.primary,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              '⚡ ACTIF',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: cs.onPrimary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    subtitle: const Text(
+                        'Divise par deux les temps d\'attente des tours de '
+                        'l\'ordinateur — lancer, choix du pion, déplacement. '
+                        'Les tours humains gardent leur rythme.'),
+                    value: aiTurbo,
+                    onChanged: onToggleAiTurbo,
                   ),
                 ),
 
@@ -2174,6 +2295,57 @@ class _PlayerSeatsCard extends StatelessWidget {
 /// mode rapide (tous les joueurs jouent sans attendre leur tour) et le
 /// multijoueur multi-appareils sont affichés mais VERROUILLÉS — leurs
 /// boutons annoncent la suite sans prétendre qu'elle est jouable.
+/// Les cinq niveaux de l'ordinateur, en boutons EXCLUSIFS : un seul actif.
+///
+/// L'ordre de la liste est celui de l'enum, du plus tendre au plus dur —
+/// c'est [AiDifficulty] qui porte les libellés et les résumés, pour que le
+/// texte affiché et le comportement réel ne puissent pas diverger.
+class _AiDifficultyCard extends StatelessWidget {
+  final AiDifficulty selected;
+  final ValueChanged<AiDifficulty> onChanged;
+
+  const _AiDifficultyCard({
+    required this.selected,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final level in AiDifficulty.values)
+              ChoiceChip(
+                label: Text(level.label),
+                selected: level == selected,
+                onSelected: (_) => onChanged(level),
+                showCheckmark: false,
+                avatar: level == selected
+                    ? Icon(Icons.check, size: 16, color: cs.onSecondaryContainer)
+                    : null,
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(selected.summary, style: theme.textTheme.bodySmall),
+        const SizedBox(height: 6),
+        Text(
+          'Le dé reste tiré dans la même urne pour tout le monde : un niveau '
+          'élevé ne gagne pas avec de meilleurs dés, il gagne en ne se '
+          'trompant pas.',
+          style: theme.textTheme.bodySmall?.copyWith(color: cs.outline),
+        ),
+      ],
+    );
+  }
+}
+
 class _GameModeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {

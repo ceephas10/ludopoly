@@ -6,13 +6,17 @@
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ludopoly/game/ai_difficulty.dart';
 import 'package:ludopoly/game/game_controller.dart';
 import 'package:ludopoly/game/game_state.dart';
 import 'package:ludopoly/game/pawn.dart';
 import 'package:ludopoly/game/player_color.dart';
 
 /// Contrôleur neuf avec les 4 couleurs dans l'ordre bleu → rouge → vert → jaune.
-GameController newGame({bool team = false}) {
+GameController newGame({
+  bool team = false,
+  AiDifficulty ai = AiDifficulty.expert,
+}) {
   final c = GameController(
     turnOrder: const [
       PlayerColor.blue,
@@ -23,6 +27,11 @@ GameController newGame({bool team = false}) {
     state: GameState.initial(),
   );
   c.teamMode = team;
+  // EXPERT par défaut dans les tests, pas le niveau par défaut du jeu :
+  // ces cas décrivent la stratégie complète, et seul un niveau sans erreur
+  // volontaire ([AiDifficulty.blunderRate] nul) la joue de façon
+  // déterministe. L'échelle elle-même est testée dans son propre groupe.
+  c.aiDifficulty = ai;
   return c;
 }
 
@@ -481,6 +490,156 @@ void main() {
       expect(c.undoDepth, 1);
       c.reset();
       expect(c.undoDepth, 0);
+    });
+  });
+
+  // Échelle de difficulté. Trois leviers seulement — erreur volontaire,
+  // conscience du risque, anticipation — et AUCUN d'eux ne touche au dé.
+  group('🎚️ Niveaux de difficulté de l\'IA', () {
+    test('le niveau par défaut du jeu est Moyen', () {
+      final c = GameController(
+        turnOrder: const [PlayerColor.blue, PlayerColor.red],
+        state: GameState.initial(),
+      );
+      expect(c.aiDifficulty, AiDifficulty.moyen);
+      expect(AiDifficulty.defaultLevel, AiDifficulty.moyen);
+    });
+
+    test('un seul niveau actif : l\'enum ne permet pas d\'en cumuler', () {
+      final c = newGame(ai: AiDifficulty.debutant);
+      c.aiDifficulty = AiDifficulty.imbattable;
+      expect(c.aiDifficulty, AiDifficulty.imbattable);
+    });
+
+    test('Expert et au-dessus ne se trompent JAMAIS', () {
+      for (final level in [
+        AiDifficulty.expert,
+        AiDifficulty.grandMaitre,
+        AiDifficulty.imbattable,
+      ]) {
+        expect(level.blunderRate, 0.0, reason: level.label);
+      }
+    });
+
+    test('Débutant se trompe bien plus souvent que Moyen', () {
+      expect(AiDifficulty.debutant.blunderRate,
+          greaterThan(AiDifficulty.moyen.blunderRate));
+      expect(AiDifficulty.moyen.blunderRate, greaterThan(0.0));
+    });
+
+    test('Débutant rate souvent une capture que l\'Expert prend toujours',
+        () {
+      // Même position pour les deux : capture évidente contre déplacement
+      // banal. On compte sur 400 tirages, avec un RNG graine — le Débutant
+      // doit visiblement passer à côté, l\'Expert jamais.
+      int capturesFor(AiDifficulty level, int seed) {
+        int taken = 0;
+        for (int i = 0; i < 400; i++) {
+          final c = GameController(
+            turnOrder: const [PlayerColor.blue, PlayerColor.red],
+            state: GameState.initial(),
+            rng: math.Random(seed + i),
+          );
+          c.aiDifficulty = level;
+          final b0 = c.state.pawnsByColor[PlayerColor.blue]![0];
+          final b1 = c.state.pawnsByColor[PlayerColor.blue]![1];
+          final red = c.state.pawnsByColor[PlayerColor.red]![0];
+          red.location = PawnLocation.ring;
+          red.position = 5;
+          b0.location = PawnLocation.ring;
+          b0.position = 2; // +3 → capture
+          b1.location = PawnLocation.ring;
+          b1.position = 20; // +3 → rien
+          c.roll(3);
+          if (identical(c.pickAiPawn(), b0)) taken++;
+        }
+        return taken;
+      }
+
+      expect(capturesFor(AiDifficulty.expert, 1000), 400,
+          reason: 'l\'Expert ne laisse jamais passer la capture');
+      final debutant = capturesFor(AiDifficulty.debutant, 1000);
+      expect(debutant, lessThan(350),
+          reason: 'le Débutant doit rater des captures, il en a pris '
+              '\$debutant/400');
+    });
+
+    test('seul Expert et au-dessus fuit une case exposée', () {
+      // b0 avance vers une case juste devant un pion rouge : la case est à
+      // portée de capture. b1 a un déplacement équivalent, sans danger.
+      Pawn choiceAt(AiDifficulty level) {
+        final c = newGame(ai: level);
+        final b0 = c.state.pawnsByColor[PlayerColor.blue]![0];
+        final b1 = c.state.pawnsByColor[PlayerColor.blue]![1];
+        final red = c.state.pawnsByColor[PlayerColor.red]![0];
+        red.location = PawnLocation.ring;
+        red.position = 1; // menace les cases 2..7
+        b0.location = PawnLocation.ring;
+        b0.position = 2; // +3 → case 5, à portée du rouge
+        b1.location = PawnLocation.ring;
+        b1.position = 30; // +3 → case 33, tranquille
+        c.roll(3);
+        return c.pickAiPawn()!;
+      }
+
+      // Moyen ne voit pas le danger : il prend le pion le plus avancé.
+      expect(choiceAt(AiDifficulty.expert).id, 1,
+          reason: 'l\'Expert évite la case exposée');
+      expect(choiceAt(AiDifficulty.grandMaitre).id, 1,
+          reason: 'le Grand Maître aussi');
+      expect(choiceAt(AiDifficulty.imbattable).id, 1,
+          reason: 'l\'Imbattable aussi');
+    });
+
+    test('l\'anticipation ne renverse jamais une arrivée à la maison', () {
+      for (final level in [
+        AiDifficulty.grandMaitre,
+        AiDifficulty.imbattable,
+      ]) {
+        final c = newGame(ai: level);
+        final b0 = c.state.pawnsByColor[PlayerColor.blue]![0];
+        final b1 = c.state.pawnsByColor[PlayerColor.blue]![1];
+        b0.location = PawnLocation.homeColumn;
+        b0.position = 2; // +3 → maison
+        b1.location = PawnLocation.ring;
+        b1.position = 20;
+        c.roll(3);
+        expect(c.pickAiPawn(), b0, reason: level.label);
+      }
+    });
+
+    test('AUCUN niveau ne touche au dé', () {
+      // Le tirage doit rester identique pour tous les niveaux à graine
+      // égale : la difficulté ne joue que sur le choix du pion.
+      List<int> rolls(AiDifficulty level) {
+        final c = newGame(ai: level);
+        final rng = math.Random(4242);
+        return [for (int i = 0; i < 200; i++) c.pickDiceValue(rng)];
+      }
+
+      final reference = rolls(AiDifficulty.debutant);
+      for (final level in AiDifficulty.values) {
+        expect(rolls(level), reference, reason: level.label);
+      }
+    });
+
+    test('tout niveau joue un coup dès qu\'il en existe un', () {
+      // Filet anti-blocage : quel que soit le niveau, phase moving implique
+      // un pion choisi. C'est la garantie qui manquait quand l'IA se figeait.
+      for (final level in AiDifficulty.values) {
+        final c = newGame(ai: level);
+        final rng = math.Random(level.index + 1);
+        for (int turn = 0; turn < 300; turn++) {
+          if (c.phase == TurnPhase.gameOver) break;
+          c.roll(c.pickDiceValue(rng));
+          if (c.phase == TurnPhase.moving) {
+            final choice = c.pickAiPawn();
+            expect(choice, isNotNull,
+                reason: '\${level.label} : bloqué au tour \$turn');
+            c.movePawn(choice!);
+          }
+        }
+      }
     });
   });
 

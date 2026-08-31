@@ -7,6 +7,7 @@
 
 import 'dart:math' as math;
 
+import 'ai_difficulty.dart';
 import 'game_state.dart';
 import 'pawn.dart';
 import 'player_color.dart';
@@ -505,9 +506,23 @@ class GameController {
   /// négatifs nulle part dans ce moteur.
   static const int _aiScoreFloor = -0x40000000;
 
+  /// Niveau de jeu de l'ordinateur. Ne touche QUE le choix du pion — le dé
+  /// l'ignore complètement, voir [AiDifficulty].
+  AiDifficulty aiDifficulty = AiDifficulty.defaultLevel;
+
   Pawn? pickAiPawn() {
     final options = movablePawns();
     if (options.isEmpty) return null;
+    if (options.length == 1) return options.single;
+
+    // Erreur VOLONTAIRE des niveaux bas : on joue un coup légal au hasard
+    // au lieu du meilleur. C'est le seul endroit où le hasard entre dans
+    // la décision, et il ne touche jamais le dé.
+    final blunder = aiDifficulty.blunderRate;
+    if (blunder > 0 && _rng.nextDouble() < blunder) {
+      return options[_rng.nextInt(options.length)];
+    }
+
     Pawn? best;
     int bestScore = _aiScoreFloor;
     for (final p in options) {
@@ -518,6 +533,61 @@ class GameController {
       }
     }
     return best;
+  }
+
+  /// Ce que vaut la position APRÈS le coup, du point de vue de [mover].
+  ///
+  /// Deux termes, tous deux pondérés par l'AVANCEMENT des pions concernés —
+  /// perdre un pion à 40 pas coûte bien plus que d'en perdre un à 3 :
+  ///
+  ///   * le DANGER : mes pions, celui qui vient de bouger compris, qui se
+  ///     retrouvent à portée d'un adversaire ;
+  ///   * la MENACE : les pions adverses que je pourrai capturer au tour
+  ///     suivant depuis ma nouvelle case.
+  ///
+  /// Portée honnête : c'est UN demi-coup d'avance, pas une recherche
+  /// profonde. « À portée » veut dire à 1..6 pas, soit une chance sur six
+  /// par poursuivant — l'espérance sur le dé est dans la pondération, pas
+  /// dans un arbre de variantes.
+  ///
+  /// [destCell] est la case du ring où le pion atterrit, ou `null` s'il
+  /// quitte le ring (couloir ou maison) : il devient alors intouchable et
+  /// ne compte plus dans le danger.
+  int _positionAfterMove(PlayerColor mover, Pawn moved, int? destCell,
+      int destSteps) {
+    int danger = 0;
+    for (final p in state.pawnsByColor[mover]!) {
+      final int cell;
+      final int steps;
+      if (identical(p, moved)) {
+        if (destCell == null) continue; // sorti du ring : hors d'atteinte
+        cell = destCell;
+        steps = destSteps;
+      } else {
+        if (p.location != PawnLocation.ring) continue;
+        cell = p.position;
+        steps = _stepsTaken(p);
+      }
+      if (_isCapturableAt(cell, mover)) danger += 10 + steps;
+    }
+
+    int threat = 0;
+    if (destCell != null) {
+      for (final entry in state.pawnsByColor.entries) {
+        if (_sameTeam(entry.key, mover)) continue;
+        for (final foe in entry.value) {
+          if (foe.location != PawnLocation.ring) continue;
+          if (_safeCells.contains(foe.position)) continue;
+          final gap = (foe.position - destCell + ringSize) % ringSize;
+          // Il faut aussi que je puisse ENCORE l'atteindre : au-delà de ma
+          // bouche de couloir je quitte le ring avant lui.
+          if (gap >= 1 && gap <= 6 && destSteps + gap <= lastRingStep) {
+            threat += 10 + _stepsTaken(foe);
+          }
+        }
+      }
+    }
+    return threat - danger;
   }
 
   /// Vrai si un pion ADVERSE, encore sur l'anneau, se trouve de 1 à 6 pas
@@ -568,9 +638,10 @@ class GameController {
           // la case d'arrivée pourrait capturer au tour suivant. Le malus
           // reste sous les gros bonus (maison, capture, couloir) : on ne
           // renonce pas à un coup fort par peur, on départage les coups
-          // ordinaires.
-          if (score < 600 && _isCapturableAt(
-              (_startIdx[p.color]! + newSteps) % ringSize, p.color)) {
+          // ordinaires. Débutant et Moyen ne voient pas ce danger.
+          if (aiDifficulty.riskAware &&
+              score < 600 &&
+              _isCapturableAt(target, p.color)) {
             score -= 150;
           }
         }
@@ -584,6 +655,33 @@ class GameController {
         // déjà arrivé le meilleur choix possible.
         score = _aiScoreFloor;
         break;
+    }
+
+    // Anticipation (Grand Maître, Imbattable) : peser la position qui
+    // SUIVRA le coup. Le terme est borné par le niveau pour qu'il départage
+    // les coups ordinaires sans jamais renverser une arrivée à la maison ou
+    // une capture — un pion rentré vaut mieux qu'un pion bien placé.
+    final horizon = aiDifficulty.lookahead;
+    if (horizon > 0 &&
+        score != _aiScoreFloor &&
+        p.location != PawnLocation.home) {
+      final int? destCell;
+      final int destSteps;
+      if (p.location == PawnLocation.ring) {
+        final newSteps = taken + diceValue;
+        destSteps = newSteps;
+        destCell = newSteps <= lastRingStep
+            ? (_startIdx[p.color]! + newSteps) % ringSize
+            : null; // couloir ou maison : plus sur le ring
+      } else if (p.location == PawnLocation.base) {
+        destSteps = 0;
+        destCell = _startIdx[p.color]!;
+      } else {
+        destSteps = totalStepsToHome; // couloir : hors d'atteinte
+        destCell = null;
+      }
+      final delta = _positionAfterMove(p.color, p, destCell, destSteps);
+      score += delta.clamp(-horizon, horizon);
     }
     return score;
   }

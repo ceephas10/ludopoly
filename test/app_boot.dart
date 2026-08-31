@@ -53,3 +53,21 @@ Future<void> bootApp(WidgetTester t) async {
     'sur son écran de chargement',
   );
 }
+
+/// Démonte l'arbre en fin de test.
+///
+/// Deux choses à purger, sans quoi le test échoue sur « A Timer is still
+/// pending even after the widget tree was disposed » :
+///
+///   * les minuteries de la boucle IA — `dispose` les coupe, watchdog
+///     périodique compris ;
+///   * le démarrage DÉCALÉ de l'animation de chaque pion, un
+///     `Future.delayed` de 0 à 799 ms (`_PawnAnimatedGifState._init`).
+///     Celui-là n'est pas annulable : il est simplement gardé par un
+///     `!mounted`, donc inoffensif en production. On lui laisse le temps
+///     de retomber plutôt que d'alourdir le code de rendu pour un
+///     détail de harnais.
+Future<void> shutdownApp(WidgetTester t) async {
+  await t.pumpWidget(const SizedBox());
+  await t.pump(const Duration(milliseconds: 900));
+}
