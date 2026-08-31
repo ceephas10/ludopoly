@@ -83,24 +83,25 @@ void main() {
               return p.dx * side.dx + p.dy * side.dy;
             }(),
         ];
-        // Largeur du triangle à cette profondeur : 2 cases. Les milieux des
-        // quarts sont donc à -0,75 / -0,25 / +0,25 / +0,75 de l'axe.
+        // L'hypoténuse mesure 3 cases. Les milieux des quarts sont donc à
+        // -1,125 / -0,375 / +0,375 / +1,125 de l'axe.
         for (final v in along) {
-          expect(v.abs(), anyOf(closeTo(0.25, 1e-9), closeTo(0.75, 1e-9)),
+          expect(v.abs(), anyOf(closeTo(0.375, 1e-9), closeTo(1.125, 1e-9)),
               reason: '${color.name} : $along');
         }
         // Pas constant entre voisins.
         final sorted = [...along]..sort();
         for (int i = 1; i < sorted.length; i++) {
-          expect(sorted[i] - sorted[i - 1], closeTo(0.5, 1e-9),
+          expect(sorted[i] - sorted[i - 1], closeTo(0.75, 1e-9),
               reason: '${color.name} : parts inégales $sorted');
         }
       }
     });
 
-    test('toutes les places restent DANS le triangle', () {
-      // Le triangle a son sommet au centre et sa base à 1,5 case. À une
-      // profondeur d, sa demi-largeur vaut exactement d.
+    test('toutes les places sont SUR la ligne de l\'hypoténuse', () {
+      // Le triangle a son sommet au centre et sa base à 1,5 case. Être
+      // « sur l'hypoténuse » veut donc dire : profondeur exactement 1,5,
+      // et latéral strictement dans la largeur de la base.
       for (final color in PlayerColor.values) {
         final out = _outward[color]!;
         final side = Offset(-out.dy, out.dx);
@@ -108,13 +109,11 @@ void main() {
           final p = BoardView.homeSlotCenter(color, slot) - _apex;
           final depth = p.dx * out.dx + p.dy * out.dy;
           final lateral = (p.dx * side.dx + p.dy * side.dy).abs();
-          expect(depth, greaterThan(0),
-              reason: '${color.name}#$slot est du mauvais côté du sommet');
-          expect(depth, lessThanOrEqualTo(1.5),
-              reason: '${color.name}#$slot déborde la base');
-          expect(lateral, lessThan(depth),
-              reason: '${color.name}#$slot sort par le flanc du triangle '
-                  '(latéral $lateral ≥ profondeur $depth)');
+          expect(depth, closeTo(1.5, 1e-9),
+              reason: '${color.name}#$slot n\'est pas SUR la base '
+                  '(profondeur $depth au lieu de 1,5)');
+          expect(lateral, lessThan(1.5),
+              reason: '${color.name}#$slot sort par le flanc de la base');
         }
       }
     });
@@ -140,25 +139,14 @@ void main() {
       }
     });
 
-    test('la profondeur reste celle du placement d\'avant', () {
-      // Le point unique historique de chaque couleur, qu'on ne veut pas
-      // avoir déplacé : seule la RÉPARTITION latérale est nouvelle.
-      const before = {
-        PlayerColor.blue: Offset(7.5, 8.5),
-        PlayerColor.red: Offset(6.5, 7.5),
-        PlayerColor.green: Offset(7.5, 6.5),
-        PlayerColor.yellow: Offset(8.5, 7.5),
-      };
-      for (final entry in before.entries) {
-        final out = _outward[entry.key]!;
-        final oldDepth = (entry.value - _apex);
-        final expected = oldDepth.dx * out.dx + oldDepth.dy * out.dy;
-        for (int slot = 0; slot < 4; slot++) {
-          final p = BoardView.homeSlotCenter(entry.key, slot) - _apex;
-          final depth = p.dx * out.dx + p.dy * out.dy;
-          expect(depth, closeTo(expected, 1e-9),
-              reason: '${entry.key.name} a changé de profondeur');
-        }
+    test('les 4 places tiennent sur la base, sans la déborder', () {
+      // L'écart entre les deux extrêmes doit valoir 3 parts de 0,75, soit
+      // 2,25 case — donc bien à l'intérieur des 3 cases de la base.
+      for (final color in PlayerColor.values) {
+        final first = BoardView.homeSlotCenter(color, 0);
+        final last = BoardView.homeSlotCenter(color, 3);
+        expect((last - first).distance, closeTo(2.25, 1e-9),
+            reason: '${color.name} : étalement inattendu');
       }
     });
   });

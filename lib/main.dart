@@ -33,6 +33,103 @@ class LudoPolyApp extends StatelessWidget {
   }
 }
 
+/// Minuterie qui sait se METTRE EN PAUSE et repartir avec le temps qui lui
+/// restait — pas depuis zéro.
+///
+/// C'est toute la difficulté du bouton Pause : si l'ordinateur avait déjà
+/// « réfléchi » 700 ms de ses 900, la reprise ne doit lui en laisser que
+/// 200. Une simple annulation suivie d'un rearmement ferait repartir le
+/// délai entier, et l'on verrait le jeu hésiter à chaque reprise.
+///
+/// Elle implémente [Timer] : tout le code qui stocke des `Timer?` ou des
+/// `Map<Pawn, Timer>` et appelle `.cancel()` / `.isActive` continue de
+/// fonctionner sans une ligne de changement.
+class PausableTimer implements Timer {
+  PausableTimer(this._duration, this._onFire, {bool periodic = false})
+      : _periodic = periodic {
+    _arm(_duration);
+  }
+
+  final Duration _duration;
+  final void Function() _onFire;
+  final bool _periodic;
+
+  Timer? _inner;
+  final Stopwatch _watch = Stopwatch();
+  Duration _remaining = Duration.zero;
+  bool _cancelled = false;
+  int _ticks = 0;
+
+  /// Vrai quand la minuterie est gelée : elle attend, mais son compte à
+  /// rebours ne court plus.
+  bool get isPaused => !_cancelled && _inner == null;
+
+  void _arm(Duration d) {
+    _remaining = d;
+    _watch
+      ..reset()
+      ..start();
+    _inner = Timer(d, () {
+      _ticks++;
+      if (_periodic) {
+        _onFire();
+        // Le premier intervalle a pu être RACCOURCI par une reprise ;
+        // les suivants reprennent la cadence pleine.
+        if (!_cancelled) _armPeriodic();
+      } else {
+        _watch.stop();
+        _onFire();
+      }
+    });
+  }
+
+  void _armPeriodic() {
+    _remaining = _duration;
+    _watch
+      ..reset()
+      ..start();
+    _inner = Timer.periodic(_duration, (_) {
+      _ticks++;
+      _watch
+        ..reset()
+        ..start();
+      _onFire();
+    });
+  }
+
+  /// Gèle la minuterie en retenant ce qu'il lui restait à courir.
+  void pause() {
+    if (_cancelled || _inner == null) return;
+    _watch.stop();
+    final left = _remaining - _watch.elapsed;
+    _remaining = left.isNegative ? Duration.zero : left;
+    _inner!.cancel();
+    _inner = null;
+  }
+
+  /// Repart pour le temps restant seulement.
+  void resume() {
+    if (_cancelled || _inner != null) return;
+    _arm(_remaining);
+  }
+
+  @override
+  void cancel() {
+    _cancelled = true;
+    _inner?.cancel();
+    _inner = null;
+    _watch.stop();
+  }
+
+  /// Une minuterie en pause reste ACTIVE : elle est en attente, pas morte.
+  /// Le watchdog s'appuie là-dessus pour ne pas la croire perdue.
+  @override
+  bool get isActive => !_cancelled && (_inner?.isActive ?? true);
+
+  @override
+  int get tick => _ticks;
+}
+
 class Player {
   final String name;
   final PlayerColor color;
@@ -154,6 +251,56 @@ class BoardScreenState extends State<BoardScreen>
   /// 4 H + 0 IA à 0 H + 4 IA sont donc possibles — y compris la partie
   /// 100 % automatique, qui se déroule seule jusqu'au classement complet.
   final Set<PlayerColor> _aiSeats = {};
+
+  /// Pause générale du plateau. Rien ne bouge, rien ne se lance, aucune
+  /// minuterie ne court : voir [setPaused].
+  bool _paused = false;
+
+  @visibleForTesting
+  bool get paused => _paused;
+
+  /// Déclenche le lancer du joueur, comme un clic sur le dé. Les tests
+  /// s'en servent pour vérifier que la pause rend la commande INERTE.
+  @visibleForTesting
+  void rollDiceForTest() => _rollDiceRandom();
+
+  /// Toutes les minuteries du JEU. Elles sont gelées d'un bloc à la pause
+  /// et repartent avec leur temps restant à la reprise.
+  final Set<PausableTimer> _timers = {};
+
+  /// Arme une minuterie unique, inscrite au registre de la pause.
+  Timer _after(Duration d, void Function() cb) {
+    final t = PausableTimer(d, cb);
+    _timers.add(t);
+    if (_paused) t.pause(); // née pendant la pause : elle naît gelée
+    return t;
+  }
+
+  /// Arme une minuterie répétée, inscrite au registre de la pause.
+  Timer _every(Duration d, void Function() cb) {
+    final t = PausableTimer(d, cb, periodic: true);
+    _timers.add(t);
+    if (_paused) t.pause();
+    return t;
+  }
+
+  /// Met le plateau en pause, ou le relance.
+  ///
+  /// À la pause : chaque minuterie retient le temps qui lui RESTAIT, et
+  /// l'état logique n'est pas touché — aucun tour n'est sauté, aucune
+  /// action n'est rejouée. Un pion à mi-parcours reste figé sur la case
+  /// qu'il avait atteinte, et son trajet reprend à cette case.
+  void setPaused(bool value) {
+    if (_paused == value) return;
+    setState(() {
+      _paused = value;
+      _timers.removeWhere((t) => !t.isActive); // purge des minuteries mortes
+      for (final t in _timers) {
+        value ? t.pause() : t.resume();
+      }
+    });
+    debugPrint(value ? '[pause] plateau gelé' : '[pause] reprise');
+  }
 
   /// Mode Rapide — sans attente de tour. Chaque couleur d'ordinateur mène
   /// SON tour en continu, en parallèle des autres, pendant que l'humain
@@ -288,6 +435,11 @@ class BoardScreenState extends State<BoardScreen>
   /// flèche d'entrée — avant de rentrer dans sa base. Nettement plus rapide
   /// qu'un déplacement joué : c'est un rembobinage, pas un coup.
   static const Duration _returnStep = Duration(milliseconds: 55);
+
+  /// Durée TOTALE maximale d'un rembobinage. Au-delà, le pas se resserre :
+  /// le retour reste lisible mais ne traîne jamais au point de sembler
+  /// détaché de la capture qui l'a provoqué.
+  static const Duration _returnBudget = Duration(milliseconds: 850);
 
   /// Position VISUELLE d'un pion pendant son trajet. Tant qu'une entrée est
   /// présente, le plateau dessine le pion sur cette case-là et non sur sa
@@ -642,7 +794,7 @@ class BoardScreenState extends State<BoardScreen>
   void _scheduleAutoMove(Pawn p) {
     _autoMoveTimer?.cancel();
     setState(() => _animating = true);
-    _autoMoveTimer = Timer(_pace(_dicePause), () {
+    _autoMoveTimer = _after(_pace(_dicePause), () {
       if (!mounted) return;
       _animating = false; // pour que _movePawn accepte le coup
       _movePawn(p);
@@ -668,6 +820,7 @@ class BoardScreenState extends State<BoardScreen>
   final math.Random _secureRng = math.Random.secure();
 
   void _rollDiceRandom() {
+    if (_paused) return; // plateau gelé : aucune commande n'aboutit
     if (_ruleFastMode) {
       // Mode Rapide : on lance pour SON siège, quand on veut, sans attendre
       // que qui que ce soit ait fini. C'est tout l'objet du mode.
@@ -694,6 +847,7 @@ class BoardScreenState extends State<BoardScreen>
   /// Mode Rapide : dès que NOTRE siège attend un lancer — on ne demande la
   /// permission à personne, c'est tout l'objet du mode.
   bool get _canRollNow {
+    if (_paused) return false;
     if (_ruleFastMode) {
       final me = _humanSeat;
       if (me == null) return false;
@@ -709,6 +863,7 @@ class BoardScreenState extends State<BoardScreen>
   /// portent le sélecteur et acceptent le clic ; ceux d'un ordinateur n'en
   /// ont jamais, il n'attend rien de nous.
   Set<Pawn> get _humanMovablePawns {
+    if (_paused) return const {};
     if (_ruleFastMode) {
       final me = _humanSeat;
       if (me == null || _lockedFor(me)) return const {};
@@ -749,10 +904,13 @@ class BoardScreenState extends State<BoardScreen>
   /// Le délai laisse voir le dé et l'animation du coup précédent.
   void _scheduleAiTurn({Duration? delay}) {
     _aiTimer?.cancel();
+    // En pause on n'arme rien : la reprise s'en chargera. Sans ça, une
+    // minuterie naîtrait gelée et brouillerait le compte du temps restant.
+    if (_paused) return;
     if (_aiSeats.isEmpty) return;
     if (_controller.phase == TurnPhase.gameOver) return;
     if (!_isAiColor(_controller.currentColor)) return;
-    _aiTimer = Timer(_pace(delay ?? _aiRollDelay), _playAiTurn);
+    _aiTimer = _after(_pace(delay ?? _aiRollDelay), _playAiTurn);
   }
 
   // --- Mode Rapide : une boucle INDÉPENDANTE par couleur -------------------
@@ -777,12 +935,13 @@ class BoardScreenState extends State<BoardScreen>
   /// Programme le prochain geste de la couleur [c].
   void _scheduleFastSeat(PlayerColor c, {Duration? delay}) {
     _fastTimers.remove(c)?.cancel();
+    if (_paused) return;
     if (!_ruleFastMode) return;
     if (!mounted) return;
     if (!_isAiColor(c)) return;
     if (_controller.phase == TurnPhase.gameOver) return;
     if (_controller.hasFinished(c)) return; // cette couleur a fini sa partie
-    _fastTimers[c] = Timer(
+    _fastTimers[c] = _after(
       _pace(delay ?? _aiRollDelay, ai: true),
       () => _playFastSeat(c),
     );
@@ -844,6 +1003,8 @@ class BoardScreenState extends State<BoardScreen>
     int stuckTicks = 0;
     _aiWatchdog = Timer.periodic(const Duration(seconds: 2), (_) {
       if (!mounted) return;
+      // Un plateau en pause n'est pas un plateau bloqué : ne rien secourir.
+      if (_paused) return;
       // Un verrou levé sans AUCUN timer pour le rabaisser = animation
       // orpheline (exception en plein coup, timer perdu). L'ancien
       // watchdog était AVEUGLE à ce cas : il se contentait de repasser
@@ -927,7 +1088,7 @@ class BoardScreenState extends State<BoardScreen>
             '${_controller.phase == TurnPhase.moving ? '' : ' — aucun coup, la main passe'}');
         if (_animating) return; // coup automatique déjà programmé par _roll
         if (_controller.phase == TurnPhase.moving) {
-          _aiTimer = Timer(_pace(_aiMoveDelay), _playAiMove);
+          _aiTimer = _after(_pace(_aiMoveDelay), _playAiMove);
         } else {
           // Le lancer n'a rien donné et a passé la main : au suivant.
           _scheduleAiTurn();
@@ -969,6 +1130,7 @@ class BoardScreenState extends State<BoardScreen>
   /// couleur ayant son propre tour, on ne peut plus le déduire d'un
   /// « joueur courant » qui n'ordonne plus rien.
   void _movePawn(Pawn p, {PlayerColor? seat}) {
+    if (_paused) return; // plateau gelé
     final actor = _ruleFastMode ? (seat ?? p.color) : _controller.currentColor;
     // Verrou anti-bug : double clic sur un pion, clic pendant l'animation,
     // deux commandes simultanées → une seule est acceptée. Par couleur en
@@ -1026,6 +1188,20 @@ class BoardScreenState extends State<BoardScreen>
           pp != p &&
           beforeLoc[pp]!.location != PawnLocation.base &&
           pp.location == PawnLocation.base));
+      // Trace de diagnostic demandée : elle dit ce que la détection a
+      // RÉELLEMENT vu, pour qu'on puisse confirmer en conditions réelles
+      // qu'aucune animation ne part sans victime.
+      if (capturedNow.isEmpty) {
+        debugPrint('[capture] pas de capture : '
+            '${p.color.name}#${p.id} arrive sur '
+            '${p.location.name}:${p.position}, case vide ou sûre');
+      } else {
+        debugPrint('[capture] capture détectée : '
+            '${capturedNow.map((c) => '${c.color.name}#${c.id} depuis '
+                '${beforeLoc[c]!.location.name}:${beforeLoc[c]!.position}').join(' + ')} '
+            'par ${p.color.name}#${p.id} sur '
+            '${p.location.name}:${p.position}');
+      }
       for (final cap in capturedNow) {
         _captureOverride[cap] = beforeLoc[cap]!;
         // Le pion capturé doit DISPARAÎTRE net à la fin de la pause, pas
@@ -1051,9 +1227,9 @@ class BoardScreenState extends State<BoardScreen>
     // Une étape par tick : le pion s'arrête visiblement sur chaque case.
     if (path.length > 1) {
       int idx = 0;
-      _travelTimers[p] = Timer.periodic(stepDur, (t) {
+      _travelTimers[p] = _every(stepDur, () {
         if (!mounted) {
-          t.cancel();
+          _travelTimers.remove(p)?.cancel();
           return;
         }
         idx++;
@@ -1061,7 +1237,7 @@ class BoardScreenState extends State<BoardScreen>
           if (idx >= path.length - 1) {
             // Dernière case = position réelle du pion : on retire l'override.
             _travelStep.remove(p);
-            t.cancel();
+            _travelTimers.remove(p)?.cancel();
           } else {
             _travelStep[p] = path[idx];
           }
@@ -1083,7 +1259,7 @@ class BoardScreenState extends State<BoardScreen>
     // Libère le verrou une fois le trajet parcouru ET la pause écoulée,
     // puis rend la main à l'IA si c'est à son tour.
     _travelEndTimers.remove(p)?.cancel();
-    _travelEndTimers[p] = Timer(totalDur, () {
+    _travelEndTimers[p] = _after(totalDur, () {
       if (!mounted) return;
       setState(() {
         if (_ruleFastMode) {
@@ -1115,7 +1291,7 @@ class BoardScreenState extends State<BoardScreen>
     final captures = capturedNow;
     if (captures.isNotEmpty) {
       _explosionTimer?.cancel();
-      _explosionTimer = Timer(totalDur, () {
+      _explosionTimer = _after(totalDur, () {
         if (!mounted) return;
         setState(() {
           for (final cap in captures) {
@@ -1161,18 +1337,29 @@ class BoardScreenState extends State<BoardScreen>
       setState(() => _captureOverride.remove(cap));
       return;
     }
+    // Le rembobinage ne doit JAMAIS survivre à la capture qui l'a causé :
+    // un pion mangé loin de sa flèche remontait jusqu'à 51 cases, soit
+    // près de 3 s, pendant lesquelles il glissait seul à l'écran bien
+    // après le coup — on croyait voir une capture sans adversaire.
+    // On borne donc la durée TOTALE et on resserre le pas si besoin.
+    final steps = math.max(path.length, 1);
+    final stepDur = Duration(
+      microseconds: math.min(
+        _returnStep.inMicroseconds,
+        _returnBudget.inMicroseconds ~/ steps,
+      ),
+    );
     setState(() {
       // Le pion glisse d'une case à l'autre au rythme du rembobinage.
-      _moveDuration[cap] = _returnStep;
+      _moveDuration[cap] = stepDur;
       _captureOverride[cap] = path.first;
     });
     int i = 0;
-    _returnTimers[cap] = Timer.periodic(_returnStep, (timer) {
+    _returnTimers[cap] = _every(stepDur, () {
       // Le pion est ressorti de sa base entre-temps : son trajet normal
       // reprend la main, on s'efface immédiatement.
       if (!mounted || cap.location != PawnLocation.base) {
-        timer.cancel();
-        _returnTimers.remove(cap);
+        _returnTimers.remove(cap)?.cancel();
         if (mounted) setState(() => _captureOverride.remove(cap));
         return;
       }
@@ -1182,8 +1369,7 @@ class BoardScreenState extends State<BoardScreen>
           // Dernière étape = la base, sa position réelle : on retire
           // l'override plutôt que de l'y poser, c'est le même point.
           _captureOverride.remove(cap);
-          timer.cancel();
-          _returnTimers.remove(cap);
+          _returnTimers.remove(cap)?.cancel();
         } else {
           _captureOverride[cap] = path[i];
         }
@@ -1297,6 +1483,7 @@ class BoardScreenState extends State<BoardScreen>
   /// relancer. Et l'IA ne « rejoue » rien : elle relance le dé, donc tire
   /// une nouvelle valeur.
   void _stepBack() {
+    if (_paused) return;
     if (_anyBusy) return;
     if (_controller.undoDepth == 0) return;
     _cancelAnimations();
@@ -1346,6 +1533,7 @@ class BoardScreenState extends State<BoardScreen>
   /// pression redescend d'un coup. Jouer un nouveau coup vide la pile de
   /// rétablissement — on ne rejoue pas une branche abandonnée.
   void _stepForward() {
+    if (_paused) return;
     if (_anyBusy) return;
     if (_controller.redoDepth == 0) return;
     _cancelAnimations();
@@ -1361,6 +1549,7 @@ class BoardScreenState extends State<BoardScreen>
 
   void _endTurn() {
     // Changement de joueur pendant une animation : interdit.
+    if (_paused) return;
     if (_anyBusy) return;
     setState(() {
       _controller.skipTurn();
@@ -1512,6 +1701,7 @@ class BoardScreenState extends State<BoardScreen>
                       diceValue: _shownDice,
                       diceColor: _shownDiceColor,
                       currentPlayerColor: _controller.currentColor,
+                      paused: _paused,
                       canRollDice: _canRollNow,
                       // Aucun sélecteur, aucun pion cliquable tant que
                       // c'est un ordinateur qui joue : il n'attend rien.
@@ -1606,6 +1796,8 @@ class BoardScreenState extends State<BoardScreen>
                         _controller.teamMode = v;
                       });
                     },
+                    paused: _paused,
+                    onSetPaused: setPaused,
                     fastMode: _ruleFastMode,
                     onToggleFastMode: setFastMode,
                     aiTurbo: _aiTurbo,
@@ -1743,6 +1935,10 @@ class _ControlPanel extends StatelessWidget {
   /// interrupteurs individuels H/IA de chaque siège.
   final ValueChanged<Set<PlayerColor>> onSetAiSeats;
 
+  /// Pause générale du plateau.
+  final bool paused;
+  final ValueChanged<bool> onSetPaused;
+
   /// Mode Rapide — sans attente de tour.
   final bool fastMode;
   final ValueChanged<bool> onToggleFastMode;
@@ -1803,6 +1999,8 @@ class _ControlPanel extends StatelessWidget {
     required this.onToggleRuleTeamMode,
     required this.aiSeats,
     required this.onSetAiSeats,
+    required this.paused,
+    required this.onSetPaused,
     required this.fastMode,
     required this.onToggleFastMode,
     required this.aiTurbo,
@@ -2054,6 +2252,36 @@ class _ControlPanel extends StatelessWidget {
                       const SizedBox(width: 8),
                       Expanded(flex: 3, child: _manualCard(theme, cs)),
                     ],
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // ---- Pause du plateau ----
+                _SectionCard(
+                  title: 'Plateau',
+                  padding: EdgeInsets.zero,
+                  child: ListTile(
+                    leading: Icon(
+                      paused ? Icons.play_arrow : Icons.pause,
+                      color: paused ? cs.primary : cs.onSurfaceVariant,
+                    ),
+                    title: Text(paused ? 'Reprendre' : 'Pause'),
+                    subtitle: Text(paused
+                        ? 'Le plateau est gelé. La reprise repart exactement '
+                            "où tout s'est arrêté."
+                        : 'Fige tout : pions, dé, ordinateurs et minuteries.'),
+                    trailing: paused
+                        ? FilledButton.icon(
+                            onPressed: () => onSetPaused(false),
+                            icon: const Icon(Icons.play_arrow, size: 18),
+                            label: const Text('Reprendre'),
+                          )
+                        : OutlinedButton.icon(
+                            onPressed: () => onSetPaused(true),
+                            icon: const Icon(Icons.pause, size: 18),
+                            label: const Text('Pause'),
+                          ),
                   ),
                 ),
 
@@ -2763,6 +2991,11 @@ class BoardView extends StatelessWidget {
   /// pion et ne passe au joueur suivant qu'à son ARRIVÉE.
   final PlayerColor diceColor;
   final PlayerColor currentPlayerColor;
+  /// Plateau gelé : voile « Pause » par-dessus, et les pions cessent même
+  /// leur animation d'attente — sinon le plateau respire encore et la pause
+  /// n'a pas l'air d'en être une.
+  final bool paused;
+
   final bool canRollDice;
   final Set<Pawn> movablePawns;
   final VoidCallback onRollDice;
@@ -2801,6 +3034,7 @@ class BoardView extends StatelessWidget {
     required this.diceValue,
     required this.diceColor,
     required this.currentPlayerColor,
+    this.paused = false,
     required this.canRollDice,
     required this.movablePawns,
     required this.onRollDice,
@@ -2924,15 +3158,15 @@ class BoardView extends StatelessWidget {
   /// deux par rapport à l'axe du triangle, et aucun n'en recouvre un autre
   /// — avant, les quatre se superposaient sur un point unique.
   ///
-  /// La PROFONDEUR ne change pas : c'est celle où le pion unique se posait,
-  /// aux deux tiers du sommet vers la base. Le triangle y mesure exactement
-  /// 2 cases de large, d'où un pas de 0,5 case entre voisins.
+  /// Les pions se posent SUR la ligne de l'hypoténuse elle-même, pas en
+  /// retrait à l'intérieur du triangle : `reach` vaut donc la demi-largeur
+  /// pleine du bloc central. La base y mesure 3 cases, d'où un pas de
+  /// 0,75 case entre voisins — plus d'air qu'en retrait, et les pions ne
+  /// se chevauchent plus.
   static Offset homeSlotCenter(PlayerColor color, int slot) {
     const center = 7.5;
-    const half = 1.5;             // demi-côté du bloc central, en cases
-    const depth = 2 / 3;          // fraction parcourue du sommet vers la base
-    const reach = half * depth;   // 1,0 : distance du centre à la rangée
-    const step = (2 * reach) / 4; // 0,5 : largeur d'une part
+    const reach = 1.5;            // demi-côté du bloc : on est SUR la base
+    const step = (2 * reach) / 4; // 0,75 : largeur d'une part
     final along = (slot.clamp(0, 3) - 1.5) * step;
     switch (color) {
       case PlayerColor.blue:   return Offset(center + along, center + reach);
@@ -3241,7 +3475,7 @@ class BoardView extends StatelessWidget {
                       // Only the current player's pawns animate. The
                       // others stay on their rest frame so the board
                       // doesn't get visually overloaded.
-                      paused: pawn.color != currentPlayerColor,
+                      paused: paused || pawn.color != currentPlayerColor,
                     ),
                   ),
                 );
@@ -3340,6 +3574,45 @@ class BoardView extends StatelessWidget {
                         ),
                       );
                     },
+                  ),
+                ),
+              ),
+
+            // Voile de PAUSE, tout en haut de la pile : il grise le plateau
+            // et absorbe les clics, pour qu'on voie ET qu'on sente que rien
+            // ne répond plus.
+            if (paused)
+              Positioned.fill(
+                child: AbsorbPointer(
+                  child: ColoredBox(
+                    color: Colors.black.withValues(alpha: 0.45),
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 22, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.72),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.pause_circle_filled,
+                                color: Colors.white, size: 26),
+                            SizedBox(width: 10),
+                            Text(
+                              'PAUSE',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 2,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
