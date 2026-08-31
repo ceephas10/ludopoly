@@ -818,6 +818,83 @@ void main() {
     });
   });
 
+  // Un 6 doit TOUJOURS laisser le choix : sortir un pion, ou en avancer un.
+  // C'est la règle la plus fondamentale du Ludo, et l'interdit d'empilement
+  // l'avait cassée — voir wouldSelfStack.
+  group('🎲 Sur un 6, le joueur garde toujours le choix', () {
+    test('2e six consécutif : les 4 pions restent jouables', () {
+      for (final color in PlayerColor.values) {
+        final c = newGame();
+        c.currentPlayerIdx = c.turnOrder.indexOf(color);
+        c.roll(6);
+        expect(c.movablePawns().length, 4,
+            reason: '${color.name} : 1er six');
+        c.movePawn(c.state.pawnsByColor[color]![0]);
+        // Le pion est sur la case de départ ; le six suivant doit encore
+        // proposer les trois pions de base EN PLUS de celui qui est sorti.
+        c.roll(6);
+        expect(c.movablePawns().length, 4,
+            reason: '${color.name} : le 2e six ne laisse plus le choix '
+                '— ${c.movablePawns()}');
+      }
+    });
+
+    test('sortir reste possible même avec un pion sur sa case de départ', () {
+      for (final color in PlayerColor.values) {
+        final c = newGame();
+        c.currentPlayerIdx = c.turnOrder.indexOf(color);
+        final onStart = c.state.pawnsByColor[color]![0];
+        onStart.location = PawnLocation.ring;
+        onStart.position = GameController.startIdx(color);
+        for (final p in c.state.pawnsByColor[color]!.skip(1)) {
+          expect(c.wouldSelfStack(p, 6), isFalse,
+              reason: '${color.name} : une sortie de base ne doit JAMAIS '
+                  'être bloquée');
+        }
+      }
+    });
+
+    test('trois six d\'affilée laissent le choix à chaque fois', () {
+      final c = newGame();
+      c.roll(6);
+      expect(c.movablePawns().length, 4, reason: '1er six');
+      c.movePawn(c.state.pawnsByColor[PlayerColor.blue]![0]);
+      c.roll(6);
+      expect(c.movablePawns().length, 4, reason: '2e six');
+      c.movePawn(c.state.pawnsByColor[PlayerColor.blue]![1]);
+      // Le 3e six annule le tour (§9) : c'est une autre règle, préservée.
+      c.roll(6);
+      expect(c.consecutiveSixes, 0,
+          reason: 'la règle des trois 6 doit rester intacte');
+    });
+
+    test('l\'interdit d\'empilement ANNEAU → ANNEAU reste entier', () {
+      final c = newGame();
+      final a = c.state.pawnsByColor[PlayerColor.blue]![0];
+      final b = c.state.pawnsByColor[PlayerColor.blue]![1];
+      a.location = PawnLocation.ring;
+      a.position = 10;
+      b.location = PawnLocation.ring;
+      b.position = 7; // +3 tomberait sur a
+      expect(c.wouldSelfStack(b, 3), isTrue,
+          reason: 'deux pions d\'une couleur ne peuvent pas partager une '
+              'case du ring');
+      c.roll(3);
+      expect(c.movablePawns(), isNot(contains(b)));
+    });
+
+    test('un seul coup possible reste joué tout seul', () {
+      // L'automatisme ne doit PAS disparaître : il n'y a simplement rien
+      // à choisir quand un seul pion peut bouger.
+      final c = newGame();
+      final only = c.state.pawnsByColor[PlayerColor.blue]![0];
+      only.location = PawnLocation.ring;
+      only.position = 10;
+      c.roll(3); // pas de 6 : aucune sortie possible
+      expect(c.movablePawns(), [only]);
+    });
+  });
+
   group('🔄 Ordre des tours', () {
     test('rotation simple sur un 1-5 joué', () {
       final c = newGame();

@@ -825,8 +825,18 @@ class GameController {
     if (occupied.isEmpty) return false;
     switch (p.location) {
       case PawnLocation.base:
-        // Sortie de base : l'arrivée est la case de départ de la couleur.
-        return v == 6 && occupied.contains(_startIdx[p.color]!);
+        // Une SORTIE DE BASE n'est jamais bloquée, même si la case de
+        // départ porte déjà un pion de la couleur.
+        //
+        // C'est la règle la plus fondamentale du Ludo : un 6 doit TOUJOURS
+        // offrir le choix entre sortir un pion et en avancer un. L'interdit
+        // d'empilement s'y appliquait, et il suffisait qu'un pion occupe sa
+        // propre case de départ pour que les trois pions de base deviennent
+        // injouables — le second 6 consécutif n'avait alors plus qu'un seul
+        // coup possible et partait tout seul, sans laisser choisir.
+        //
+        // L'interdit reste entier pour tout déplacement ANNEAU → ANNEAU.
+        return false;
       case PawnLocation.ring:
         final steps = _stepsTaken(p) + v;
         if (steps > lastRingStep) return false; // couloir ou maison

@@ -264,6 +264,11 @@ class BoardScreenState extends State<BoardScreen>
   @visibleForTesting
   void rollDiceForTest() => _rollDiceRandom();
 
+  /// Force une valeur de dé, comme le fait la carte Jeu manuel. Les tests
+  /// s'en servent pour provoquer un coup à option unique.
+  @visibleForTesting
+  void rollManualForTest(int value) => _roll(value);
+
   /// Toutes les minuteries du JEU. Elles sont gelées d'un bloc à la pause
   /// et repartent avec leur temps restant à la reprise.
   final Set<PausableTimer> _timers = {};
@@ -768,6 +773,7 @@ class BoardScreenState extends State<BoardScreen>
       // La couleur est lue AVANT roll() : roll() peut passer la main (aucun
       // coup jouable, ou 3 six), et le dé affiché doit rester celui du
       // joueur qui vient de lancer.
+      _autoNotice = null; // un nouveau lancer efface le message précédent
       _controller.roll(value);
       // The ONLY rule, applied to every roll:
       // 1 pion movable → play it.
@@ -793,13 +799,33 @@ class BoardScreenState extends State<BoardScreen>
   /// surligné, et aucune autre commande ne peut s'intercaler.
   void _scheduleAutoMove(Pawn p) {
     _autoMoveTimer?.cancel();
-    setState(() => _animating = true);
+    setState(() {
+      _animating = true;
+      // Le joueur doit SAVOIR pourquoi ça part sans lui : un seul coup
+      // était possible, il n'y avait rien à choisir. Sans ce mot, un coup
+      // automatique ressemble à un coup volé.
+      _autoNotice = 'Un seul coup possible : le pion ${p.id + 1} de '
+          '${_frenchColor(p.color)} part tout seul.';
+    });
     _autoMoveTimer = _after(_pace(_dicePause), () {
       if (!mounted) return;
       _animating = false; // pour que _movePawn accepte le coup
       _movePawn(p);
     });
   }
+
+  /// Message expliquant un coup joué automatiquement. `null` = rien à dire.
+  String? _autoNotice;
+
+  @visibleForTesting
+  String? get autoNotice => _autoNotice;
+
+  static String _frenchColor(PlayerColor c) => switch (c) {
+        PlayerColor.blue => 'bleu',
+        PlayerColor.red => 'rouge',
+        PlayerColor.green => 'vert',
+        PlayerColor.yellow => 'jaune',
+      };
 
   /// Recale le sélecteur de couleur du Jeu manuel sur le joueur dont c'est
   /// réellement le tour. À appeler après TOUT changement de tour.
@@ -1796,6 +1822,7 @@ class BoardScreenState extends State<BoardScreen>
                         _controller.teamMode = v;
                       });
                     },
+                    autoNotice: _autoNotice,
                     paused: _paused,
                     onSetPaused: setPaused,
                     fastMode: _ruleFastMode,
@@ -1939,6 +1966,9 @@ class _ControlPanel extends StatelessWidget {
   final bool paused;
   final ValueChanged<bool> onSetPaused;
 
+  /// Message expliquant un coup joué automatiquement, ou `null`.
+  final String? autoNotice;
+
   /// Mode Rapide — sans attente de tour.
   final bool fastMode;
   final ValueChanged<bool> onToggleFastMode;
@@ -1999,6 +2029,7 @@ class _ControlPanel extends StatelessWidget {
     required this.onToggleRuleTeamMode,
     required this.aiSeats,
     required this.onSetAiSeats,
+    this.autoNotice,
     required this.paused,
     required this.onSetPaused,
     required this.fastMode,
@@ -2436,6 +2467,22 @@ class _ControlPanel extends StatelessWidget {
               padding: const EdgeInsets.only(top: 4),
               child: Text('Série de 6 : $consecutiveSixes',
                   style: TextStyle(color: cs.tertiary, fontSize: 12)),
+            ),
+          // Coup joué sans le joueur : on lui dit pourquoi.
+          if (autoNotice != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.info_outline, size: 14, color: cs.primary),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(autoNotice!,
+                        style: TextStyle(color: cs.primary, fontSize: 12)),
+                  ),
+                ],
+              ),
             ),
           if (ranking.isNotEmpty)
             Padding(

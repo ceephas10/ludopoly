@@ -184,6 +184,51 @@ void main() {
     });
   });
 
+  group('🎲 Le choix sur un 6, à travers l\'interface', () {
+    testWidgets('un 6 après une sortie propose encore les 4 pions',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+
+      c.roll(6);
+      await t.pump(const Duration(milliseconds: 700));
+      c.movePawn(c.state.pawnsByColor[c.currentColor]![0]);
+      await t.pump(const Duration(seconds: 2));
+
+      c.roll(6);
+      await t.pump(const Duration(milliseconds: 100));
+      expect(c.movablePawns().length, 4,
+          reason: 'le 2e six doit laisser le choix, pas partir tout seul');
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('un coup joué tout seul est ANNONCÉ au joueur', (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+
+      // Un seul pion jouable : sorti sur l'anneau, dé de 3 (pas de sortie
+      // possible pour les autres).
+      final only = c.state.pawnsByColor[c.currentColor]![0];
+      only.location = PawnLocation.ring;
+      only.position = GameController.startIdx(c.currentColor) + 4;
+      expect(state.autoNotice, isNull, reason: 'rien à annoncer au départ');
+
+      state.rollManualForTest(3);
+      await t.pump(const Duration(milliseconds: 100));
+
+      expect(state.autoNotice, isNotNull,
+          reason: 'un coup automatique doit être expliqué');
+      expect(state.autoNotice, contains('Un seul coup possible'));
+      expect(find.textContaining('Un seul coup possible'), findsOneWidget,
+          reason: 'le message doit être VISIBLE dans le panneau');
+
+      await shutdownApp(t);
+    });
+  });
+
   group('🎚️ Niveaux de difficulté', () {
     testWidgets('les 5 niveaux sont proposés, Moyen actif par défaut',
         (t) async {

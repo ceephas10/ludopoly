@@ -743,15 +743,22 @@ void main() {
           (GameController.startIdx(PlayerColor.blue) + 6) % 52);
     });
 
-    test('sortir de base sur sa case départ occupée est illégal', () {
-      final c = newGame();
-      placeOnRing(c, PlayerColor.blue, [0]); // blue#0 sur la case départ
-      c.roll(6);
-      final stillInBase = c.state.pawnsByColor[PlayerColor.blue]!
-          .where((p) => p.location == PawnLocation.base);
-      for (final p in stillInBase) {
-        expect(c.movablePawns(), isNot(contains(p)),
-            reason: '$p ne peut pas sortir, la case départ est prise');
+    test('sortir de base reste TOUJOURS possible, case départ occupée ou non',
+        () {
+      // Seule EXCEPTION à l'interdit d'empilement, et elle est décisive :
+      // un 6 doit toujours offrir le choix entre sortir et avancer. Sans
+      // elle, un pion posé sur sa propre case de départ rendait les trois
+      // autres injouables, et le 6 suivant partait tout seul.
+      for (final color in _fourPlayers) {
+        final c = newGame(order: [color]);
+        placeOnRing(c, color, [0]); // un pion sur la case départ
+        c.roll(6);
+        final stillInBase = c.state.pawnsByColor[color]!
+            .where((p) => p.location == PawnLocation.base);
+        for (final p in stillInBase) {
+          expect(c.movablePawns(), contains(p),
+              reason: '${color.name} : $p doit pouvoir sortir sur un 6');
+        }
       }
     });
 
@@ -777,8 +784,13 @@ void main() {
           reason: 'la règle ne vise que le ring');
     });
 
-    test('aucune partie ne peut produire un empilement sur le ring', () {
+    test('aucune partie n\'empile hors de la case de départ', () {
       // 300 coups joués au hasard : l'invariant doit tenir en permanence.
+      //
+      // SEULE la case de départ peut porter plusieurs pions d'une couleur,
+      // et uniquement parce qu'une sortie de base ne se refuse jamais —
+      // sinon un 6 cesserait d'offrir le choix. Partout ailleurs sur
+      // l'anneau, l'empilement reste impossible.
       final c = newGame();
       final rng = math.Random(20260830);
       for (int turn = 0; turn < 300; turn++) {
@@ -790,12 +802,15 @@ void main() {
           }
         }
         for (final color in _fourPlayers) {
+          final start = GameController.startIdx(color);
           final cells = c.state.pawnsByColor[color]!
               .where((p) => p.location == PawnLocation.ring)
               .map((p) => p.position)
+              .where((pos) => pos != start)
               .toList();
           expect(cells.toSet().length, cells.length,
-              reason: 'tour $turn : ${color.name} empilé sur $cells');
+              reason: 'tour $turn : ${color.name} empilé sur $cells '
+                  '(hors case départ $start)');
         }
       }
     });
