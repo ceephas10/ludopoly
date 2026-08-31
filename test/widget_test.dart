@@ -49,12 +49,14 @@ void main() {
       expect(find.text(name), findsWidgets, reason: '$name absent du panneau');
     }
 
-    // ── Les modes de partie : l'ordinaire actif, les deux autres à venir ──
+    // ── Les modes de partie ──
     expect(find.text('Ordinaire — tour par tour (local)'), findsOneWidget);
     expect(find.text('Rapide — sans attente de tour'), findsOneWidget);
     expect(find.text('Multijoueur — plusieurs appareils'), findsOneWidget);
-    expect(find.text('À venir'), findsNWidgets(2),
-        reason: 'rapide et multijoueur doivent être verrouillés « À venir »');
+    // Rapide est désormais IMPLÉMENTÉ : il a son propre interrupteur, et
+    // seul le multijoueur reste verrouillé « À venir ».
+    expect(find.text('À venir'), findsOneWidget,
+        reason: 'seul le multijoueur reste à venir');
 
     // ── L'ancien interrupteur unique a bien disparu ──
     expect(find.text('Adversaires ordinateur'), findsNothing,

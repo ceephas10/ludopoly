@@ -10,6 +10,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludopoly/game/ai_difficulty.dart';
+import 'package:ludopoly/game/game_controller.dart';
+import 'package:ludopoly/game/pawn.dart';
 import 'package:ludopoly/main.dart';
 
 import 'app_boot.dart';
@@ -86,6 +88,98 @@ void main() {
       expect(state.paceForTest(ref, ai: true),
           const Duration(milliseconds: 450),
           reason: 'un coup explicitement marqué IA est bien accéléré');
+      await shutdownApp(t);
+    });
+  });
+
+  group('⚡ Mode Rapide — sans attente de tour', () {
+    testWidgets('le bouton existe, bascule, et pilote le moteur', (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      await openRules(t);
+
+      expect(find.text('Rapide — sans attente de tour'), findsOneWidget);
+      expect(state.controller.fastMode, isFalse, reason: 'éteint au départ');
+
+      await t.tap(find.byType(Switch).last);
+      await t.pump(const Duration(milliseconds: 400));
+      expect(state.controller.fastMode, isTrue);
+
+      await t.tap(find.byType(Switch).last);
+      await t.pump(const Duration(milliseconds: 400));
+      expect(state.controller.fastMode, isFalse,
+          reason: 'le bouton doit aussi DÉSACTIVER le mode');
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('les ordinateurs jouent en parallèle, sans attendre un tour',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+
+      // Les quatre couleurs à l'ordinateur : la partie doit avancer toute
+      // seule, et surtout PLUSIEURS couleurs doivent progresser sans que
+      // l'une attende l'autre.
+      state.setAiSeats(PlayerColor.values.toSet());
+      state.setFastMode(true);
+
+      // On observe quelles couleurs ont sorti au moins un pion.
+      final progressed = <PlayerColor>{};
+      for (int i = 0; i < 400; i++) {
+        await t.pump(const Duration(milliseconds: 100));
+        for (final c in PlayerColor.values) {
+          final out = state.controller.state.pawnsByColor[c]!
+              .any((p) => p.location != PawnLocation.base);
+          if (out) progressed.add(c);
+        }
+        if (progressed.length == 4) break;
+      }
+
+      expect(progressed.length, 4,
+          reason: 'les 4 couleurs doivent avoir progressé sans intervention, '
+              'or seules $progressed ont bougé');
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('chaque couleur garde SON dé pendant que les autres jouent',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      state.setAiSeats({PlayerColor.red, PlayerColor.green});
+      state.setFastMode(true);
+
+      await t.pump(const Duration(seconds: 4));
+
+      // Les sièges existent et sont indépendants : aucun n'écrase l'autre.
+      final seats = {
+        for (final c in PlayerColor.values) c: state.controller.seatOf(c),
+      };
+      expect(seats.length, 4);
+      // Le siège humain n'a jamais été joué par personne : il attend.
+      expect(state.controller.seatOf(PlayerColor.blue).phase,
+          anyOf(TurnPhase.rolling, TurnPhase.moving),
+          reason: 'le siège humain ne doit pas être piloté par le mode');
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('revenir en mode ordinaire rétablit le tour par tour',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      state.setAiSeats({PlayerColor.red});
+      state.setFastMode(true);
+      await t.pump(const Duration(seconds: 2));
+
+      state.setFastMode(false);
+      await t.pump(const Duration(milliseconds: 500));
+
+      expect(state.controller.fastMode, isFalse);
+      expect(find.byType(BoardScreen), findsOneWidget,
+          reason: 'la bascule ne doit pas casser la partie en cours');
+
       await shutdownApp(t);
     });
   });

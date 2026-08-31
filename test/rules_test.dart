@@ -643,6 +643,181 @@ void main() {
     });
   });
 
+  // Mode Rapide — sans attente de tour. Chaque couleur mène SON tour avec
+  // son propre dé, sa propre série de 6 et sa propre phase.
+  group('⚡ Mode Rapide — sans attente de tour', () {
+    GameController fast() {
+      final c = newGame();
+      c.fastMode = true;
+      c.resetSeats();
+      return c;
+    }
+
+    test('OFF par défaut : le Ludo classique ne change pas', () {
+      expect(newGame().fastMode, isFalse);
+    });
+
+    test('jouer une couleur ne passe PAS la main à la suivante', () {
+      final c = fast();
+      final red = c.state.pawnsByColor[PlayerColor.red]![0];
+      red.location = PawnLocation.ring;
+      red.position = 20;
+      c.runAsSeat(PlayerColor.red, () {
+        c.roll(3);
+        c.movePawn(red);
+      });
+      // Rouge a joué un 3 sans capture : en mode ordinaire la main
+      // passerait. Ici, son propre siège revient simplement en attente.
+      expect(c.seatOf(PlayerColor.red).phase, TurnPhase.rolling);
+      expect(red.position, 23);
+    });
+
+    test('chaque couleur garde SON dé, indépendamment des autres', () {
+      final c = fast();
+      // Chacune a besoin d'un coup JOUABLE, sinon son tour se termine
+      // aussitôt et son dé retombe à 0 — ce qui est la règle normale.
+      for (final color in [PlayerColor.red, PlayerColor.green]) {
+        final p = c.state.pawnsByColor[color]![0];
+        p.location = PawnLocation.ring;
+        p.position = GameController.startIdx(color) + 2;
+      }
+      c.runAsSeat(PlayerColor.blue, () => c.roll(6));
+      c.runAsSeat(PlayerColor.red, () => c.roll(2));
+      c.runAsSeat(PlayerColor.green, () => c.roll(4));
+
+      expect(c.seatOf(PlayerColor.blue).diceValue, 6);
+      expect(c.seatOf(PlayerColor.red).diceValue, 2);
+      expect(c.seatOf(PlayerColor.green).diceValue, 4);
+    });
+
+    test('la série de 6 est propre à chaque couleur', () {
+      final c = fast();
+      // Bleu enchaîne deux 6 ; rouge lance entre les deux et ne doit rien
+      // casser de la série de bleu.
+      final b0 = c.state.pawnsByColor[PlayerColor.blue]![0];
+      c.runAsSeat(PlayerColor.blue, () {
+        c.roll(6);
+        c.movePawn(b0);
+      });
+      c.runAsSeat(PlayerColor.red, () => c.roll(1));
+      c.runAsSeat(PlayerColor.blue, () => c.roll(6));
+
+      expect(c.seatOf(PlayerColor.blue).consecutiveSixes, 2);
+      expect(c.seatOf(PlayerColor.red).consecutiveSixes, 0);
+    });
+
+    test('la règle des trois 6 s\'applique par couleur', () {
+      final c = fast();
+      final b0 = c.state.pawnsByColor[PlayerColor.blue]![0];
+      c.runAsSeat(PlayerColor.blue, () {
+        c.roll(6);
+        c.movePawn(b0); // sortie
+      });
+      c.runAsSeat(PlayerColor.blue, () {
+        c.roll(6);
+        c.movePawn(b0);
+      });
+      expect(b0.location, PawnLocation.ring);
+      c.runAsSeat(PlayerColor.blue, () => c.roll(6)); // 3e six
+      expect(b0.location, PawnLocation.base,
+          reason: 'le 3e six renvoie le dernier pion joué en base');
+    });
+
+    test('une capture entre deux couleurs qui jouent chacune de leur côté',
+        () {
+      final c = fast();
+      final blue = c.state.pawnsByColor[PlayerColor.blue]![0];
+      final red = c.state.pawnsByColor[PlayerColor.red]![0];
+      red.location = PawnLocation.ring;
+      red.position = 5;
+      blue.location = PawnLocation.ring;
+      blue.position = 1;
+      c.runAsSeat(PlayerColor.blue, () {
+        c.roll(4);
+        c.movePawn(blue);
+      });
+      expect(red.location, PawnLocation.base, reason: 'rouge est mangé');
+      expect(blue.position, 5);
+    });
+
+    test('le classement reste COMPLET : la partie continue après le 1er',
+        () {
+      final c = fast();
+      for (final p in c.state.pawnsByColor[PlayerColor.blue]!) {
+        p.location = PawnLocation.home;
+      }
+      final b = c.state.pawnsByColor[PlayerColor.blue]![3];
+      b.location = PawnLocation.homeColumn;
+      b.position = 4;
+      c.runAsSeat(PlayerColor.blue, () {
+        c.roll(1);
+        c.movePawn(b);
+      });
+      expect(c.ranking, [PlayerColor.blue]);
+      expect(c.phase, isNot(TurnPhase.gameOver),
+          reason: 'trois couleurs doivent encore jouer pour leur place');
+    });
+
+    test('la fin de partie est GLOBALE, pas rangée dans un siège', () {
+      final c = fast();
+      // Trois couleurs rentrent : la 4e prend la dernière place et la
+      // partie s'arrête pour tout le monde.
+      for (final color in [
+        PlayerColor.blue,
+        PlayerColor.red,
+        PlayerColor.green,
+      ]) {
+        for (final p in c.state.pawnsByColor[color]!) {
+          p.location = PawnLocation.home;
+        }
+        final last = c.state.pawnsByColor[color]![3];
+        last.location = PawnLocation.homeColumn;
+        last.position = 4;
+        c.runAsSeat(color, () {
+          c.roll(1);
+          c.movePawn(last);
+        });
+      }
+      expect(c.phase, TurnPhase.gameOver);
+      expect(c.ranking.length, 4);
+      // Une couleur ne peut plus agir sur un plateau terminé.
+      final yellow = c.state.pawnsByColor[PlayerColor.yellow]![0];
+      c.runAsSeat(PlayerColor.yellow, () => c.roll(6));
+      expect(yellow.location, PawnLocation.base);
+    });
+
+    test('un retour arrière rend AUSSI les tours en cours des autres', () {
+      final c = fast();
+      for (final color in [PlayerColor.red, PlayerColor.green]) {
+        final p = c.state.pawnsByColor[color]![0];
+        p.location = PawnLocation.ring;
+        p.position = GameController.startIdx(color) + 2;
+      }
+      c.runAsSeat(PlayerColor.red, () => c.roll(4));
+      c.runAsSeat(PlayerColor.green, () => c.roll(2));
+      c.pushHistory('avant bleu');
+      c.runAsSeat(PlayerColor.blue, () => c.roll(6));
+
+      c.stepBack();
+      expect(c.seatOf(PlayerColor.red).diceValue, 4,
+          reason: 'le tour de rouge doit survivre au retour arrière');
+      expect(c.seatOf(PlayerColor.green).diceValue, 2);
+    });
+
+    test('repasser en mode ordinaire rétablit la rotation', () {
+      final c = fast();
+      c.fastMode = false;
+      final red = c.state.pawnsByColor[PlayerColor.red]![0];
+      red.location = PawnLocation.ring;
+      red.position = 20;
+      c.currentPlayerIdx = 1; // rouge
+      c.roll(3);
+      c.movePawn(red);
+      expect(c.currentColor, PlayerColor.green,
+          reason: 'la main repasse au joueur suivant');
+    });
+  });
+
   group('🔄 Ordre des tours', () {
     test('rotation simple sur un 1-5 joué', () {
       final c = newGame();

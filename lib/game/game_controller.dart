@@ -35,6 +35,27 @@ class PawnStep {
   String toString() => '${location.name}:$position';
 }
 
+/// État de tour d'UNE couleur : son dé, sa série de 6, sa phase.
+///
+/// En mode ordinaire ces valeurs vivent directement sur le contrôleur, et
+/// une seule couleur les utilise à la fois. En mode Rapide chaque couleur
+/// a les siennes — c'est ce qui lui permet de jouer sans attendre les
+/// autres. Voir [GameController.fastMode] et [GameController.runAsSeat].
+class SeatTurn {
+  int diceValue = 0;
+  int consecutiveSixes = 0;
+  Pawn? lastMoved;
+  TurnPhase phase = TurnPhase.rolling;
+
+  SeatTurn();
+
+  SeatTurn.from(SeatTurn other)
+      : diceValue = other.diceValue,
+        consecutiveSixes = other.consecutiveSixes,
+        lastMoved = other.lastMoved,
+        phase = other.phase;
+}
+
 /// Position figée d'un pion dans un [GameSnapshot].
 class PawnSnapshot {
   final PawnLocation location;
@@ -59,6 +80,12 @@ class GameSnapshot {
   final PlayerColor? winner;
   final List<PlayerColor> ranking;
 
+  /// État de tour de chaque couleur. Vide en mode ordinaire — la seule
+  /// couleur qui joue a son état dans les champs ci-dessus. En mode Rapide
+  /// il FAUT le mémoriser, sinon un retour arrière rendrait le plateau
+  /// sans rendre les tours en cours des autres couleurs.
+  final Map<PlayerColor, SeatTurn> seats;
+
   /// Libellé lisible de l'action qui a suivi cet instantané, p. ex.
   /// « red · dé 4 ». Affiché dans l'infobulle du bouton Retour.
   final String label;
@@ -72,6 +99,7 @@ class GameSnapshot {
     required this.phase,
     required this.winner,
     required this.ranking,
+    required this.seats,
     required this.label,
   });
 }
@@ -114,6 +142,74 @@ class GameController {
   ///     but moves their partner's remaining pawns instead
   ///   - victory = a team has its 8 pawns home (4 + 4)
   bool teamMode = false;
+
+  /// Mode Rapide — sans attente de tour.
+  ///
+  /// OFF (défaut) : les couleurs jouent chacune à leur tour, dans l'ordre
+  /// fixe de [turnOrder]. C'est le Ludo classique.
+  ///
+  /// ON : chaque couleur mène SON tour indépendamment, avec son propre dé,
+  /// sa propre série de 6 et sa propre phase — voir [SeatTurn]. Personne
+  /// n'attend personne : un ordinateur joue pendant que l'humain réfléchit.
+  /// [currentPlayerIdx] n'ordonne plus rien, il reflète simplement la
+  /// dernière couleur à avoir agi.
+  ///
+  /// Le CLASSEMENT ne change pas : la partie continue après le premier
+  /// arrivé, jusqu'à ce que tout le monde ait sa place.
+  bool fastMode = false;
+
+  /// État de tour de chaque couleur, utilisé par le mode Rapide.
+  final Map<PlayerColor, SeatTurn> _seats = {};
+
+  SeatTurn seatOf(PlayerColor c) => _seats.putIfAbsent(c, SeatTurn.new);
+
+  /// Joue [body] au nom de [c], avec l'état de tour de SA couleur.
+  ///
+  /// Le principe est un simple échange : on charge le siège de [c] dans les
+  /// champs partagés, on laisse le code de règles travailler exactement
+  /// comme en mode ordinaire — il n'a aucune idée du mode Rapide — puis on
+  /// remet le résultat dans le siège. Aucune règle n'est dupliquée.
+  ///
+  /// Dart n'a qu'un fil d'exécution : chaque appel est donc ATOMIQUE, et
+  /// deux couleurs ne peuvent pas se marcher dessus au milieu d'un coup.
+  /// « En même temps » veut dire entrelacé au fil des minuteries, ce qui
+  /// suffit à ce qu'aucune couleur n'attende son tour.
+  ///
+  /// Hors mode Rapide, [body] s'exécute tel quel sur l'état partagé.
+  void runAsSeat(PlayerColor c, void Function() body) {
+    if (!fastMode) {
+      body();
+      return;
+    }
+    if (phase == TurnPhase.gameOver) return;
+    final seat = seatOf(c);
+    final idx = turnOrder.indexOf(c);
+    if (idx < 0) return;
+
+    currentPlayerIdx = idx;
+    diceValue = seat.diceValue;
+    consecutiveSixes = seat.consecutiveSixes;
+    lastMovedThisTurn = seat.lastMoved;
+    phase = seat.phase;
+
+    body();
+
+    seat.diceValue = diceValue;
+    seat.consecutiveSixes = consecutiveSixes;
+    seat.lastMoved = lastMovedThisTurn;
+    // La fin de partie est GLOBALE : elle reste sur la phase partagée et
+    // n'est pas rangée dans le siège, sinon les autres couleurs
+    // continueraient de jouer sur un plateau terminé.
+    seat.phase = phase == TurnPhase.gameOver ? TurnPhase.rolling : phase;
+  }
+
+  /// Remet tous les sièges à zéro. Appelé au reset et au changement de mode.
+  void resetSeats() {
+    _seats.clear();
+    for (final c in turnOrder) {
+      seatOf(c);
+    }
+  }
 
   /// Static team mapping. Each color points to its teammate.
   static const Map<PlayerColor, PlayerColor> _partners = {
@@ -779,6 +875,9 @@ class GameController {
         phase: phase,
         winner: winner,
         ranking: List<PlayerColor>.from(ranking),
+        seats: {
+          for (final e in _seats.entries) e.key: SeatTurn.from(e.value),
+        },
         label: label,
       );
 
@@ -802,6 +901,10 @@ class GameController {
       ..clear()
       ..addAll(snap.ranking);
     lastMovedThisTurn = null;
+    _seats
+      ..clear()
+      ..addEntries(
+          snap.seats.entries.map((e) => MapEntry(e.key, SeatTurn.from(e.value))));
   }
 
   /// Fige l'état courant AVANT une action. À appeler juste avant tout ce qui
@@ -896,6 +999,10 @@ class GameController {
     consecutiveSixes = 0;
     lastMovedThisTurn = null;
     phase = TurnPhase.rolling;
+    // Mode Rapide : il n'y a pas de « joueur suivant ». La couleur qui
+    // vient de jouer reprend simplement la main sur SON tour, et les autres
+    // mènent le leur de leur côté. C'est tout l'objet du mode.
+    if (fastMode) return;
     for (int i = 0; i < turnOrder.length; i++) {
       currentPlayerIdx = (currentPlayerIdx + 1) % turnOrder.length;
       final c = currentColor;

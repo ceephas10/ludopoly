@@ -155,6 +155,57 @@ class BoardScreenState extends State<BoardScreen>
   /// 100 % automatique, qui se déroule seule jusqu'au classement complet.
   final Set<PlayerColor> _aiSeats = {};
 
+  /// Mode Rapide — sans attente de tour. Chaque couleur d'ordinateur mène
+  /// SON tour en continu, en parallèle des autres, pendant que l'humain
+  /// réfléchit. Voir [GameController.fastMode] pour le versant règles.
+  bool _ruleFastMode = false;
+
+  /// Couleurs dont un coup est en cours d'animation.
+  ///
+  /// En mode ordinaire le verrou reste GLOBAL ([_animating]) : une seule
+  /// commande à la fois, comme depuis toujours. En mode Rapide il devient
+  /// PAR COULEUR — c'est précisément ce qui autorise plusieurs pions à
+  /// glisser en même temps.
+  final Set<PlayerColor> _busySeats = {};
+
+  /// Minuteries du mode Rapide, une par couleur d'ordinateur. Chacune mène
+  /// son tour sans rien savoir des autres.
+  final Map<PlayerColor, Timer> _fastTimers = {};
+
+  /// Bascule le mode Rapide. Prend effet immédiatement, y compris en pleine
+  /// partie : on coupe tout ce qui est en vol, on remet les sièges à plat,
+  /// puis on redémarre la boucle qui correspond au nouveau mode.
+  void setFastMode(bool on) {
+    setState(() {
+      _cancelAnimations();
+      _ruleFastMode = on;
+      _controller.fastMode = on;
+      _controller.resetSeats();
+      if (on) {
+        // Chaque siège repart d'un tour propre, dé compris.
+        _controller.diceValue = 0;
+        _controller.phase = _controller.phase == TurnPhase.gameOver
+            ? TurnPhase.gameOver
+            : TurnPhase.rolling;
+      }
+      _syncManualPlayer();
+    });
+    if (on) {
+      _startFastLoops();
+    } else {
+      _scheduleAiTurn();
+    }
+  }
+
+  /// Le verrou qui s'applique à [c].
+  bool _lockedFor(PlayerColor c) =>
+      _ruleFastMode ? _busySeats.contains(c) : _animating;
+
+  /// Vrai dès qu'une animation est en vol, quelle que soit la couleur.
+  /// C'est ce que regardent les commandes GLOBALES — Retour, Rejouer, fin
+  /// de tour — qui ne doivent pas s'exécuter au milieu d'un coup.
+  bool get _anyBusy => _animating || _busySeats.isNotEmpty;
+
   /// Mode Accélérateur : divise par [_turboFactor] toutes les temporisations
   /// d'un tour d'ORDINATEUR. Jamais celles d'un tour humain — un joueur doit
   /// garder le temps de lire le dé et de suivre son pion.
@@ -251,13 +302,15 @@ class BoardScreenState extends State<BoardScreen>
   final Map<Pawn, PawnStep> _captureOverride = {};
 
   /// Timer du trajet en cours et du coup automatique en attente.
-  Timer? _travelTimer;
+  /// Trajets en cours, une minuterie PAR PION : en mode Rapide plusieurs
+  /// pions avancent en même temps, un timer unique les écraserait.
+  final Map<Pawn, Timer> _travelTimers = {};
   Timer? _autoMoveTimer;
 
   /// Fin de trajet (verrou + pause de capture) et explosion différée. Ils
   /// étaient anonymes — impossibles à annuler, ils survivaient au dispose
   /// et à l'annulation d'un coup. Suivis pour être coupés proprement.
-  Timer? _travelEndTimer;
+  final Map<Pawn, Timer> _travelEndTimers = {};
   Timer? _explosionTimer;
 
   /// Timers des retours à contre-sens des pions capturés, indexés par pion.
@@ -390,7 +443,14 @@ class BoardScreenState extends State<BoardScreen>
     setState(() => _aiSeats
       ..clear()
       ..addAll(seats));
-    _scheduleAiTurn();
+    // `?fast=1` bascule aussi le mode Rapide — même motif que les sièges :
+    // le pane de test ne transmet pas les clics à l'app canvaskit.
+    final fast = Uri.base.queryParameters['fast'];
+    if (fast == '1' || fast == 'true') {
+      setFastMode(true);
+    } else {
+      _scheduleAiTurn();
+    }
   }
 
   @override
@@ -598,11 +658,68 @@ class BoardScreenState extends State<BoardScreen>
   final math.Random _secureRng = math.Random.secure();
 
   void _rollDiceRandom() {
+    if (_ruleFastMode) {
+      // Mode Rapide : on lance pour SON siège, quand on veut, sans attendre
+      // que qui que ce soit ait fini. C'est tout l'objet du mode.
+      final me = _humanSeat;
+      if (me == null) return; // aucune couleur humaine en jeu
+      if (_lockedFor(me)) return;
+      if (_controller.seatOf(me).phase != TurnPhase.rolling) return;
+      setState(() {
+        _controller.runAsSeat(
+            me, () => _controller.roll(_controller.pickDiceValue(_secureRng)));
+      });
+      return;
+    }
     if (_animating) return; // verrou : une commande à la fois
     if (_isAiTurn) return;  // c'est à l'ordinateur de lancer, pas à nous
     if (_controller.phase != TurnPhase.rolling) return;
     _roll(_controller.pickDiceValue(_secureRng));
     _scheduleAiTurn();
+  }
+
+  /// Le dé est-il cliquable maintenant ?
+  ///
+  /// Mode ordinaire : seulement quand c'est notre tour et que rien ne bouge.
+  /// Mode Rapide : dès que NOTRE siège attend un lancer — on ne demande la
+  /// permission à personne, c'est tout l'objet du mode.
+  bool get _canRollNow {
+    if (_ruleFastMode) {
+      final me = _humanSeat;
+      if (me == null) return false;
+      return _controller.seatOf(me).phase == TurnPhase.rolling &&
+          !_lockedFor(me);
+    }
+    return _controller.phase == TurnPhase.rolling &&
+        !_animating &&
+        !_isAiTurn;
+  }
+
+  /// Les pions que l'HUMAIN peut jouer là, tout de suite. Ce sont eux qui
+  /// portent le sélecteur et acceptent le clic ; ceux d'un ordinateur n'en
+  /// ont jamais, il n'attend rien de nous.
+  Set<Pawn> get _humanMovablePawns {
+    if (_ruleFastMode) {
+      final me = _humanSeat;
+      if (me == null || _lockedFor(me)) return const {};
+      if (_controller.seatOf(me).phase != TurnPhase.moving) return const {};
+      late final Set<Pawn> movable;
+      _controller.runAsSeat(
+          me, () => movable = _controller.movablePawns().toSet());
+      return movable;
+    }
+    if (_isAiTurn) return const {};
+    return _controller.movablePawns().toSet();
+  }
+
+  /// La couleur que pilote l'humain en mode Rapide : la première de l'ordre
+  /// des tours qui n'est pas confiée à un ordinateur. `null` quand les
+  /// quatre sièges sont des ordinateurs — la partie se joue alors seule.
+  PlayerColor? get _humanSeat {
+    for (final c in _controller.turnOrder) {
+      if (!_isAiColor(c) && !_controller.hasFinished(c)) return c;
+    }
+    return null;
   }
 
   // --- Mode contre ordinateur ------------------------------------------------
@@ -628,6 +745,79 @@ class BoardScreenState extends State<BoardScreen>
     _aiTimer = Timer(_pace(delay ?? _aiRollDelay), _playAiTurn);
   }
 
+  // --- Mode Rapide : une boucle INDÉPENDANTE par couleur -------------------
+  //
+  // En mode ordinaire une seule boucle suit le joueur courant. Ici chaque
+  // couleur d'ordinateur a la sienne : elle lance son dé, joue son pion et
+  // se replanifie sans jamais consulter les autres. C'est ce qui fait qu'on
+  // n'attend plus son tour.
+  //
+  // Dart n'ayant qu'un fil d'exécution, ces boucles s'ENTRELACENT au fil des
+  // minuteries plutôt que de tourner vraiment en parallèle : chaque coup
+  // reste atomique, et deux couleurs ne peuvent pas se marcher dessus au
+  // milieu d'un déplacement.
+
+  /// (Re)démarre les boucles de toutes les couleurs d'ordinateur.
+  void _startFastLoops() {
+    for (final c in _aiSeats) {
+      _scheduleFastSeat(c);
+    }
+  }
+
+  /// Programme le prochain geste de la couleur [c].
+  void _scheduleFastSeat(PlayerColor c, {Duration? delay}) {
+    _fastTimers.remove(c)?.cancel();
+    if (!_ruleFastMode) return;
+    if (!mounted) return;
+    if (!_isAiColor(c)) return;
+    if (_controller.phase == TurnPhase.gameOver) return;
+    if (_controller.hasFinished(c)) return; // cette couleur a fini sa partie
+    _fastTimers[c] = Timer(
+      _pace(delay ?? _aiRollDelay, ai: true),
+      () => _playFastSeat(c),
+    );
+  }
+
+  /// Un geste de la couleur [c] : lancer, puis coup s'il y en a un.
+  void _playFastSeat(PlayerColor c) => _aiGuard('le tour rapide de ${c.name}',
+      () {
+        if (!mounted) return;
+        if (!_ruleFastMode || !_isAiColor(c)) return;
+        if (_controller.phase == TurnPhase.gameOver) return;
+        if (_controller.hasFinished(c)) return;
+        // Cette couleur anime encore son coup précédent : on repasse.
+        if (_busySeats.contains(c)) {
+          _scheduleFastSeat(c);
+          return;
+        }
+
+        final seat = _controller.seatOf(c);
+        if (seat.phase == TurnPhase.rolling) {
+          setState(() {
+            _controller.runAsSeat(
+                c, () => _controller.roll(_controller.pickDiceValue(_secureRng)));
+          });
+          debugPrint('[rapide] ${c.name} lance : ${_controller.seatOf(c).diceValue}');
+        }
+
+        // Le lancer a pu ne rien donner de jouable : le siège est revenu en
+        // attente tout seul, on relance simplement sa boucle.
+        if (_controller.seatOf(c).phase != TurnPhase.moving) {
+          _scheduleFastSeat(c);
+          return;
+        }
+
+        Pawn? choice;
+        _controller.runAsSeat(c, () => choice = _controller.pickAiPawn());
+        if (choice == null) {
+          _scheduleFastSeat(c);
+          return;
+        }
+        debugPrint('[rapide] ${c.name} joue ${choice!.color.name}#${choice!.id}');
+        // _movePawn replanifie cette couleur à la fin de son trajet.
+        _movePawn(choice!, seat: c);
+      });
+
   /// Filet de sécurité, et il faut dire pourquoi il existe.
   ///
   /// Depuis que le plateau est en LECTURE SEULE pendant un tour
@@ -651,8 +841,8 @@ class BoardScreenState extends State<BoardScreen>
       // partie pour toujours. Trois contrôles de suite (~6 s, plus long
       // que n'importe quel trajet + pause) → on force le déverrouillage.
       if (_animating) {
-        final somethingRuns = (_travelTimer?.isActive ?? false) ||
-            (_travelEndTimer?.isActive ?? false) ||
+        final somethingRuns = _travelTimers.values.any((t) => t.isActive) ||
+            _travelEndTimers.values.any((t) => t.isActive) ||
             (_autoMoveTimer?.isActive ?? false);
         stuckTicks = somethingRuns ? 0 : stuckTicks + 1;
         if (stuckTicks >= 3) {
@@ -765,12 +955,22 @@ class BoardScreenState extends State<BoardScreen>
     _scheduleAiTurn();
   }
 
-  void _movePawn(Pawn p) {
+  /// Joue le pion [p]. En mode Rapide, [seat] dit AU NOM DE QUI — chaque
+  /// couleur ayant son propre tour, on ne peut plus le déduire d'un
+  /// « joueur courant » qui n'ordonne plus rien.
+  void _movePawn(Pawn p, {PlayerColor? seat}) {
+    final actor = _ruleFastMode ? (seat ?? p.color) : _controller.currentColor;
     // Verrou anti-bug : double clic sur un pion, clic pendant l'animation,
-    // deux commandes simultanées → une seule est acceptée.
-    if (_animating) return;
-    if (_controller.phase != TurnPhase.moving) return;
-    final distance = _controller.diceValue;
+    // deux commandes simultanées → une seule est acceptée. Par couleur en
+    // mode Rapide, global sinon.
+    if (_lockedFor(actor)) return;
+    if (_ruleFastMode && _controller.seatOf(actor).phase != TurnPhase.moving) {
+      return;
+    }
+    if (!_ruleFastMode && _controller.phase != TurnPhase.moving) return;
+    final distance = _ruleFastMode
+        ? _controller.seatOf(actor).diceValue
+        : _controller.diceValue;
     final oldLoc = p.location;
     // Snapshot capture state to spawn explosions for any pawn that got
     // sent back to base by this move. Sauvegarde aussi la position exacte.
@@ -780,11 +980,14 @@ class BoardScreenState extends State<BoardScreen>
     };
     // Trajet case par case, calculé AVANT que le moteur n'applique le coup.
     // Une sortie de base est un saut unique, pas un parcours.
-    final path = _controller.pathFor(p, distance);
-    // Ce tour appartient-il à un ordinateur ? Lu AVANT que le moteur ne
+    late final List<PawnStep> path;
+    _controller.runAsSeat(actor, () {
+      path = _controller.pathFor(p, distance);
+    });
+    // Ce coup appartient-il à un ordinateur ? Lu AVANT que le moteur ne
     // passe la main : sinon le mode Accélérateur s'appliquerait selon le
     // joueur SUIVANT, et accélérerait le coup d'un humain.
-    final aiMove = _isAiColor(_controller.currentColor);
+    final aiMove = _isAiColor(actor);
     final stepDur = _pace(
         (oldLoc == PawnLocation.base) ? _baseExitDuration : _stepDuration,
         ai: aiMove);
@@ -796,7 +999,7 @@ class BoardScreenState extends State<BoardScreen>
     // Pions capturés par ce coup, détectés en comparant l'avant / l'après.
     final capturedNow = <Pawn>[];
 
-    _travelTimer?.cancel();
+    _travelTimers.remove(p)?.cancel();
     setState(() {
       // Ce pion REPART : s'il rembobinait encore un retour de capture, on
       // le coupe ici. Sinon il resterait dessiné à sa case de rembobinage
@@ -807,7 +1010,7 @@ class BoardScreenState extends State<BoardScreen>
       // L'état LOGIQUE est mis à jour AVANT l'animation : le moteur a déjà
       // décidé capture / tour supplémentaire / classement quand le pion
       // commence à glisser.
-      _controller.movePawn(p);
+      _controller.runAsSeat(actor, () => _controller.movePawn(p));
       // Pions capturés : on garde leur ancienne position visible pendant le trajet.
       capturedNow.addAll(_game.allPawns.where((pp) =>
           pp != p &&
@@ -823,7 +1026,11 @@ class BoardScreenState extends State<BoardScreen>
       }
       // Le déplacement peut passer la main : le sélecteur manuel suit.
       _syncManualPlayer();
-      _animating = true;
+      if (_ruleFastMode) {
+        _busySeats.add(actor);
+      } else {
+        _animating = true;
+      }
       // Le dé garde la couleur du pion tant qu'il n'a pas fini de compter.
       _diceColorHold = p.color;
       // On force l'affichage sur la 1re case du trajet ; le pion glissera
@@ -834,7 +1041,7 @@ class BoardScreenState extends State<BoardScreen>
     // Une étape par tick : le pion s'arrête visiblement sur chaque case.
     if (path.length > 1) {
       int idx = 0;
-      _travelTimer = Timer.periodic(stepDur, (t) {
+      _travelTimers[p] = Timer.periodic(stepDur, (t) {
         if (!mounted) {
           t.cancel();
           return;
@@ -865,12 +1072,17 @@ class BoardScreenState extends State<BoardScreen>
 
     // Libère le verrou une fois le trajet parcouru ET la pause écoulée,
     // puis rend la main à l'IA si c'est à son tour.
-    _travelEndTimer?.cancel();
-    _travelEndTimer = Timer(totalDur, () {
+    _travelEndTimers.remove(p)?.cancel();
+    _travelEndTimers[p] = Timer(totalDur, () {
       if (!mounted) return;
       setState(() {
-        _animating = false;
+        if (_ruleFastMode) {
+          _busySeats.remove(actor);
+        } else {
+          _animating = false;
+        }
         _travelStep.remove(p);
+        _travelEndTimers.remove(p);
         // Le pion est arrivé : c'est MAINTENANT que le dé prend la couleur
         // du joueur suivant.
         _diceColorHold = null;
@@ -881,7 +1093,13 @@ class BoardScreenState extends State<BoardScreen>
       for (final cap in capturedNow) {
         _startReturnTravel(cap);
       }
-      _scheduleAiTurn();
+      // Mode Rapide : seule CETTE couleur reprend la main, les autres
+      // mènent leur tour de leur côté.
+      if (_ruleFastMode) {
+        _scheduleFastSeat(actor);
+      } else {
+        _scheduleAiTurn();
+      }
     });
     // Explosion de capture : au moment EXACT où le pion capturé s'efface.
     final captures = capturedNow;
@@ -1069,7 +1287,7 @@ class BoardScreenState extends State<BoardScreen>
   /// relancer. Et l'IA ne « rejoue » rien : elle relance le dé, donc tire
   /// une nouvelle valeur.
   void _stepBack() {
-    if (_animating) return;
+    if (_anyBusy) return;
     if (_controller.undoDepth == 0) return;
     _cancelAnimations();
     setState(() {
@@ -1089,9 +1307,20 @@ class BoardScreenState extends State<BoardScreen>
   /// partie — sinon un timer d'une position abandonnée retomberait dessus.
   void _cancelAnimations() {
     _aiTimer?.cancel();
-    _travelTimer?.cancel();
+    for (final t in _travelTimers.values) {
+      t.cancel();
+    }
+    _travelTimers.clear();
     _autoMoveTimer?.cancel();
-    _travelEndTimer?.cancel();
+    for (final t in _travelEndTimers.values) {
+      t.cancel();
+    }
+    _travelEndTimers.clear();
+    for (final t in _fastTimers.values) {
+      t.cancel();
+    }
+    _fastTimers.clear();
+    _busySeats.clear();
     _explosionTimer?.cancel();
     for (final t in _returnTimers.values) {
       t.cancel();
@@ -1107,7 +1336,7 @@ class BoardScreenState extends State<BoardScreen>
   /// pression redescend d'un coup. Jouer un nouveau coup vide la pile de
   /// rétablissement — on ne rejoue pas une branche abandonnée.
   void _stepForward() {
-    if (_animating) return;
+    if (_anyBusy) return;
     if (_controller.redoDepth == 0) return;
     _cancelAnimations();
     setState(() {
@@ -1122,7 +1351,7 @@ class BoardScreenState extends State<BoardScreen>
 
   void _endTurn() {
     // Changement de joueur pendant une animation : interdit.
-    if (_animating) return;
+    if (_anyBusy) return;
     setState(() {
       _controller.skipTurn();
     });
@@ -1273,16 +1502,12 @@ class BoardScreenState extends State<BoardScreen>
                       diceValue: _shownDice,
                       diceColor: _shownDiceColor,
                       currentPlayerColor: _controller.currentColor,
-                      canRollDice: _controller.phase == TurnPhase.rolling &&
-                          !_animating &&
-                          !_isAiTurn,
+                      canRollDice: _canRollNow,
                       // Aucun sélecteur, aucun pion cliquable tant que
                       // c'est un ordinateur qui joue : il n'attend rien.
-                      movablePawns: _isAiTurn
-                          ? const <Pawn>{}
-                          : _controller.movablePawns().toSet(),
+                      movablePawns: _humanMovablePawns,
                       onRollDice: _rollDiceRandom,
-                      onPawnTap: _movePawn,
+                      onPawnTap: (p) => _movePawn(p),
                       pawnAsset: _pawnAsset,
                       pawnInfo: _pawnInfo,
                       onPawnHover: _onPawnHover,
@@ -1371,6 +1596,8 @@ class BoardScreenState extends State<BoardScreen>
                         _controller.teamMode = v;
                       });
                     },
+                    fastMode: _ruleFastMode,
+                    onToggleFastMode: setFastMode,
                     aiTurbo: _aiTurbo,
                     onToggleAiTurbo: (v) {
                       setState(() => _aiTurbo = v);
@@ -1506,6 +1733,10 @@ class _ControlPanel extends StatelessWidget {
   /// interrupteurs individuels H/IA de chaque siège.
   final ValueChanged<Set<PlayerColor>> onSetAiSeats;
 
+  /// Mode Rapide — sans attente de tour.
+  final bool fastMode;
+  final ValueChanged<bool> onToggleFastMode;
+
   /// Mode Accélérateur : l'ordinateur joue deux fois plus vite.
   final bool aiTurbo;
   final ValueChanged<bool> onToggleAiTurbo;
@@ -1562,6 +1793,8 @@ class _ControlPanel extends StatelessWidget {
     required this.onToggleRuleTeamMode,
     required this.aiSeats,
     required this.onSetAiSeats,
+    required this.fastMode,
+    required this.onToggleFastMode,
     required this.aiTurbo,
     required this.onToggleAiTurbo,
     required this.aiDifficulty,
@@ -1688,7 +1921,10 @@ class _ControlPanel extends StatelessWidget {
                   const SizedBox(height: 10),
                   _SectionCard(
                     title: 'Mode de partie',
-                    child: _GameModeCard(),
+                    child: _GameModeCard(
+                      fastMode: fastMode,
+                      onToggleFastMode: onToggleFastMode,
+                    ),
                   ),
                 ] else ...[
 
@@ -2347,6 +2583,15 @@ class _AiDifficultyCard extends StatelessWidget {
 }
 
 class _GameModeCard extends StatelessWidget {
+  /// Mode Rapide — sans attente de tour.
+  final bool fastMode;
+  final ValueChanged<bool> onToggleFastMode;
+
+  const _GameModeCard({
+    required this.fastMode,
+    required this.onToggleFastMode,
+  });
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -2400,17 +2645,46 @@ class _GameModeCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            FilledButton.tonal(
-              onPressed: () {},
-              child: const Text('Actif'),
-            ),
+            fastMode
+                ? OutlinedButton(
+                    onPressed: () => onToggleFastMode(false),
+                    child: const Text('Reprendre'),
+                  )
+                : FilledButton.tonal(
+                    onPressed: null,
+                    child: const Text('Actif'),
+                  ),
           ],
         ),
-        lockedRow(
-            Icons.bolt,
-            'Rapide — sans attente de tour',
-            'Chacun joue le plus vite possible, en même temps ; le '
-                'premier vainqueur termine la partie.'),
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Row(
+            children: [
+              Icon(Icons.bolt,
+                  size: 16, color: fastMode ? cs.primary : cs.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Rapide — sans attente de tour',
+                        style: theme.textTheme.bodyMedium),
+                    Text(
+                        "Les couleurs ordinateur jouent en continu, chacune "
+                        "de son côté, pendant que vous réfléchissez : vous "
+                        "lancez votre dé quand vous voulez, sans jamais "
+                        "patienter. Le classement reste complet — la partie "
+                        "continue après le premier arrivé.",
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: cs.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Switch(value: fastMode, onChanged: onToggleFastMode),
+            ],
+          ),
+        ),
         lockedRow(
             Icons.wifi,
             'Multijoueur — plusieurs appareils',
