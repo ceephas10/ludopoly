@@ -301,13 +301,29 @@ class GameController {
   /// `test/gameplay_test.dart` le verrouille.
   int pickDiceValue([math.Random? rng]) {
     final r = rng ?? _rng;
-    final mine = state.pawnsByColor[currentColor]!;
     final pool = [
       for (int v = 1; v <= 6; v++)
-        if (!mine.any((p) => wouldSelfStack(p, v))) v,
+        if (!_wastedByStackBan(v)) v,
     ];
     if (pool.isEmpty) return r.nextInt(6) + 1;
     return pool[r.nextInt(pool.length)];
+  }
+
+  /// Vrai quand la valeur [v] ne donnerait AUCUN coup jouable, et que le
+  /// seul obstacle est l'interdit d'empilement.
+  ///
+  /// C'est le seul cas où il vaut la peine d'éviter une valeur. L'ancien
+  /// filtre écartait [v] dès qu'UN pion s'y serait empilé, même quand la
+  /// valeur offrait par ailleurs d'excellents coups — avec un pion sur sa
+  /// flèche d'entrée et un autre 6 cases devant, le dé ne pouvait alors
+  /// PLUS JAMAIS sortir de 6, et le joueur perdait du même coup toute
+  /// possibilité de sortir un pion de sa base. L'interdit d'empilement,
+  /// lui, suffit déjà à garantir que deux pions d'une couleur ne se posent
+  /// jamais sur la même case : le dé n'a pas à s'en mêler davantage.
+  bool _wastedByStackBan(int v) {
+    final mine = state.pawnsByColor[currentColor]!;
+    if (mine.any((p) => _canMoveAs(p, v, currentColor))) return false;
+    return mine.any((p) => wouldSelfStack(p, v));
   }
 
   /// Roll a random 1..6, en évitant les valeurs qui viseraient un

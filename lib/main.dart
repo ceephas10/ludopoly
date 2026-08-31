@@ -775,6 +775,10 @@ class BoardScreenState extends State<BoardScreen>
       // joueur qui vient de lancer.
       _autoNotice = null; // un nouveau lancer efface le message précédent
       _controller.roll(value);
+      // Trace demandée : sur un 6, dire EXACTEMENT quels pions sont
+      // jouables et d'où, pour vérifier que celui posé sur la flèche
+      // d'entrée figure bien parmi les choix.
+      if (value == 6) _logSixOptions();
       // The ONLY rule, applied to every roll:
       // 1 pion movable → play it.
       if (_controller.phase == TurnPhase.moving) {
@@ -812,6 +816,38 @@ class BoardScreenState extends State<BoardScreen>
       _animating = false; // pour que _movePawn accepte le coup
       _movePawn(p);
     });
+  }
+
+  /// Où se trouve [p], dit en clair : base, flèche d'entrée, case du ring,
+  /// couloir final ou maison. La flèche d'entrée est une case d'anneau
+  /// comme les autres — elle n'a droit à son nom que pour la lisibilité de
+  /// la trace, jamais dans la logique de jeu.
+  String _whereIs(Pawn p) {
+    switch (p.location) {
+      case PawnLocation.base:
+        return 'base(${p.position})';
+      case PawnLocation.ring:
+        final start = GameController.startIdx(p.color);
+        return p.position == start
+            ? 'FLÈCHE D\'ENTRÉE(${p.position})'
+            : 'ring(${p.position})';
+      case PawnLocation.homeColumn:
+        return 'couloir(${p.position})';
+      case PawnLocation.home:
+        return 'maison';
+    }
+  }
+
+  /// Journalise les options offertes par un 6.
+  void _logSixOptions() {
+    final color = _controller.currentColor;
+    final playable = _controller.movablePawns().toSet();
+    final lines = _game.pawnsByColor[color]!
+        .map((p) => '${playable.contains(p) ? '✔' : '✘'} '
+            '${p.color.name}#${p.id} ${_whereIs(p)}')
+        .join('  |  ');
+    debugPrint('[six] ${color.name} fait 6 → '
+        '${playable.length} pion(s) jouable(s) : $lines');
   }
 
   /// Message expliquant un coup joué automatiquement. `null` = rien à dire.
@@ -992,7 +1028,13 @@ class BoardScreenState extends State<BoardScreen>
             _controller.runAsSeat(
                 c, () => _controller.roll(_controller.pickDiceValue(_secureRng)));
           });
-          debugPrint('[rapide] ${c.name} lance : ${_controller.seatOf(c).diceValue}');
+          final rolled = _controller.seatOf(c).diceValue;
+          debugPrint('[rapide] ${c.name} lance : $rolled');
+          // Même trace qu'en mode ordinaire : le mode Rapide court-circuite
+          // `_roll`, il faut donc la poser ici aussi.
+          if (rolled == 6) {
+            _controller.runAsSeat(c, _logSixOptions);
+          }
         }
 
         // Le lancer a pu ne rien donner de jouable : le siège est revenu en

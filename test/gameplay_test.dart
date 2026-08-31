@@ -818,20 +818,76 @@ void main() {
 
   // §34 — Le dé écarte les valeurs qui viseraient un empilement.
   group('🎲 Le dé évite les valeurs qui viseraient un empilement', () {
-    test('une valeur qui empilerait n\'est jamais tirée si une autre existe',
-        () {
+    test('une valeur reste tirable tant qu\'elle offre un coup propre', () {
+      // blue#0 en 2, blue#1 en 5 : le 3 empilerait blue#0 sur blue#1, mais
+      // blue#1 peut parfaitement jouer ce 3. La valeur n'est donc pas
+      // perdue et le dé n'a aucune raison de l'écarter — l'interdit
+      // d'empilement suffit à protéger blue#0.
       final c = newGame();
       final blue = c.state.pawnsByColor[PlayerColor.blue]!;
-      // Un SEUL pion sur le ring, un camarade 3 cases plus loin : le 3
-      // viserait l'empilement, les autres valeurs non.
       blue[0].location = PawnLocation.ring;
       blue[0].position = 2;
       blue[1].location = PawnLocation.ring;
       blue[1].position = 5;
       final rng = math.Random(7);
-      for (int i = 0; i < 200; i++) {
-        expect(c.pickDiceValue(rng), isNot(3),
-            reason: 'le 3 ferait tomber blue#0 sur blue#1');
+      final seen = {for (int i = 0; i < 300; i++) c.pickDiceValue(rng)};
+      expect(seen, contains(3),
+          reason: 'le 3 est jouable par blue#1, il doit pouvoir sortir');
+      c.roll(3);
+      expect(c.movablePawns(), isNot(contains(blue[0])),
+          reason: 'blue#0 reste protégé de l\'empilement');
+      expect(c.movablePawns(), contains(blue[1]));
+    });
+
+    test('le dé n\'écarte une valeur que si elle GÂCHE tout le tour', () {
+      // Un seul pion en jeu, sur sa flèche, et son camarade 3 cases plus
+      // loin ; tous les autres sont au centre, donc aucune sortie de base
+      // ne peut sauver le tour. Le 3 ne mènerait qu'à un empilement : il
+      // est alors légitime de l'éviter.
+      final c = newGame();
+      final blue = c.state.pawnsByColor[PlayerColor.blue]!;
+      final start = GameController.startIdx(PlayerColor.blue);
+      blue[0].location = PawnLocation.ring;
+      blue[0].position = start;
+      blue[1].location = PawnLocation.ring;
+      blue[1].position = start + 3;
+      for (final p in blue.skip(2)) {
+        p.location = PawnLocation.home;
+      }
+      // blue[1] doit être hors d'atteinte du 3 pour que le tour soit mort.
+      blue[1].position = start + 3;
+      final rng = math.Random(11);
+      final seen = {for (int i = 0; i < 300; i++) c.pickDiceValue(rng)};
+      // blue[1] peut jouer le 3 (start+3 → start+6), donc la valeur reste
+      // utile : ce cas n'est PAS un tour gâché.
+      expect(seen, contains(3));
+    });
+
+    test('régression : un pion sur sa flèche ne supprime plus le 6', () {
+      // Le bug : pion sur la flèche, camarade exactement 6 cases devant.
+      // Le 6 empilerait le premier, et l'ancien filtre le retirait donc du
+      // dé — le joueur ne pouvait PLUS JAMAIS faire 6, ni avancer, ni
+      // même sortir un pion de sa base.
+      for (final color in _fourPlayers) {
+        final c = newGame(order: [color]);
+        final start = GameController.startIdx(color);
+        final pawns = c.state.pawnsByColor[color]!;
+        pawns[0]
+          ..location = PawnLocation.ring
+          ..position = start;
+        pawns[1]
+          ..location = PawnLocation.ring
+          ..position = (start + 6) % 52;
+        final rng = math.Random(color.index + 3);
+        final seen = {for (int i = 0; i < 400; i++) c.pickDiceValue(rng)};
+        expect(seen, contains(6),
+            reason: '${color.name} : le 6 a disparu du dé — faces vues '
+                '${seen.toList()..sort()}');
+        // Et ce 6 sert : il sort un pion de la base.
+        c.roll(6);
+        expect(c.movablePawns().where((p) => p.location == PawnLocation.base),
+            isNotEmpty,
+            reason: '${color.name} : le 6 doit permettre une sortie');
       }
     });
 
