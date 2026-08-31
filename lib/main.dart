@@ -323,6 +323,35 @@ class BoardScreenState extends State<BoardScreen>
     // pendant ce temps. 24 images à précharger, une fois pour toutes.
     WidgetsBinding.instance.addPostFrameCallback((_) => _precacheDice());
     _startAiWatchdog();
+    _applyAiSeatsFromUrl();
+  }
+
+  /// Sièges IA depuis l'URL : `?ai=all` ou `?ai=red,green,yellow`.
+  ///
+  /// D'abord un outil de REPRODUCTION : le pane de test ne transmet pas les
+  /// clics à l'app (rendu canvaskit), ce paramètre permet de lancer une
+  /// partie contre l'ordinateur sans toucher au panneau — et accessoirement
+  /// de partager une configuration par lien.
+  void _applyAiSeatsFromUrl() {
+    final param = Uri.base.queryParameters['ai'];
+    if (param == null || param.isEmpty) return;
+    final seats = <PlayerColor>{};
+    if (param == 'all') {
+      seats.addAll(_controller.turnOrder);
+    } else {
+      for (final name in param.split(',')) {
+        for (final c in PlayerColor.values) {
+          if (c.name == name.trim()) seats.add(c);
+        }
+      }
+    }
+    if (seats.isEmpty) return;
+    debugPrint('[ai] sièges depuis l\'URL : '
+        '${seats.map((c) => c.name).join(', ')}');
+    setState(() => _aiSeats
+      ..clear()
+      ..addAll(seats));
+    _scheduleAiTurn();
   }
 
   @override

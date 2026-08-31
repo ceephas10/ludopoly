@@ -493,11 +493,23 @@ class GameController {
   ///   5. un coup qui termine sur une case SÛRE ;
   ///   6. à défaut, le pion le plus AVANCÉ.
   /// Retourne `null` si aucun coup n'est jouable.
+  /// Score plancher de l'IA, en LITTÉRAL et surtout PAS `-1 << 30`.
+  ///
+  /// Sur le web, les opérations bit à bit de Dart travaillent en 32 bits
+  /// NON SIGNÉS : `-1 << 30` y vaut +3 221 225 472 et non −1 073 741 824.
+  /// La sentinelle « moins l'infini » devenait donc un plafond
+  /// infranchissable : aucun score ne la dépassait, [pickAiPawn] rendait
+  /// null avec des coups plein les mains, et l'IA ne jouait JAMAIS dans le
+  /// navigateur — alors que tous les tests, exécutés sur la VM où le
+  /// décalage est signé, passaient. Aucun décalage de bits sur des
+  /// négatifs nulle part dans ce moteur.
+  static const int _aiScoreFloor = -0x40000000;
+
   Pawn? pickAiPawn() {
     final options = movablePawns();
     if (options.isEmpty) return null;
     Pawn? best;
-    int bestScore = -1 << 30;
+    int bestScore = _aiScoreFloor;
     for (final p in options) {
       final s = _aiScore(p);
       if (s > bestScore) {
@@ -567,7 +579,10 @@ class GameController {
         score = (p.position + diceValue == 5) ? 1000 : 600 + p.position;
         break;
       case PawnLocation.home:
-        score = -1 << 29;
+        // Littéral, pas `-1 << 29` : voir [_aiScoreFloor] — sur le web ce
+        // décalage devenait un score COLOSSAL et positif, faisant du pion
+        // déjà arrivé le meilleur choix possible.
+        score = _aiScoreFloor;
         break;
     }
     return score;
