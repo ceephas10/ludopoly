@@ -833,6 +833,35 @@ void main() {
       }
     });
 
+    test('tous les pions en base : le dé reste UNIFORME, jamais toujours 6',
+        () {
+      // Régression. Un ancien filtre préférait les valeurs « jouables » ;
+      // or en début de partie seule la sortie sur 6 est jouable, et le
+      // premier lancer de CHAQUE couleur donnait donc 6 à coup sûr.
+      final c = newGame();
+      final rng = math.Random(20260831);
+      final counts = <int, int>{};
+      for (int i = 0; i < 600; i++) {
+        final v = c.pickDiceValue(rng);
+        counts[v] = (counts[v] ?? 0) + 1;
+      }
+      expect(counts.keys.toSet(), {1, 2, 3, 4, 5, 6},
+          reason: 'toutes les faces doivent sortir : $counts');
+      expect(counts[6]!, lessThan(200),
+          reason: 'le 6 ne doit pas être favorisé : $counts');
+    });
+
+    test('le premier lancer de chaque couleur n\'est pas forcément un 6', () {
+      for (final color in _fourPlayers) {
+        final c = newGame();
+        c.currentPlayerIdx = _fourPlayers.indexOf(color);
+        final rng = math.Random(color.index + 7);
+        final seen = {for (int i = 0; i < 60; i++) c.pickDiceValue(rng)};
+        expect(seen, {1, 2, 3, 4, 5, 6},
+            reason: '${color.name} : premier lancer biaisé, faces vues $seen');
+      }
+    });
+
     test('sans risque d\'empilement, les 6 valeurs restent atteignables', () {
       final c = newGame(); // tout en base : seul le 6 sort un pion…
       final blue = c.state.pawnsByColor[PlayerColor.blue]!;

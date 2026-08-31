@@ -573,8 +573,31 @@ class BoardScreenState extends State<BoardScreen>
   /// c'est qu'il en manque un quelque part — d'où la trace.
   void _startAiWatchdog() {
     _aiWatchdog?.cancel();
+    int stuckTicks = 0;
     _aiWatchdog = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (!mounted || _animating || !_aiMayAct) return;
+      if (!mounted) return;
+      // Un verrou levé sans AUCUN timer pour le rabaisser = animation
+      // orpheline (exception en plein coup, timer perdu). L'ancien
+      // watchdog était AVEUGLE à ce cas : il se contentait de repasser
+      // tant que _animating était vrai, donc un verrou coincé figeait la
+      // partie pour toujours. Trois contrôles de suite (~6 s, plus long
+      // que n'importe quel trajet + pause) → on force le déverrouillage.
+      if (_animating) {
+        final somethingRuns = (_travelTimer?.isActive ?? false) ||
+            (_travelEndTimer?.isActive ?? false) ||
+            (_autoMoveTimer?.isActive ?? false);
+        stuckTicks = somethingRuns ? 0 : stuckTicks + 1;
+        if (stuckTicks >= 3) {
+          debugPrint('[ai] verrou orphelin : _animating levé sans aucun '
+              'timer actif depuis ~6 s — déverrouillage forcé');
+          stuckTicks = 0;
+          setState(_cancelAnimations);
+          _scheduleAiTurn();
+        }
+        return;
+      }
+      stuckTicks = 0;
+      if (!_aiMayAct) return;
       if ((_aiTimer?.isActive ?? false) ||
           (_autoMoveTimer?.isActive ?? false)) {
         return;
@@ -583,6 +606,24 @@ class BoardScreenState extends State<BoardScreen>
           '_scheduleAiTurn sur le chemin qui vient de passer la main');
       _scheduleAiTurn();
     });
+  }
+
+  /// Dernier rempart du tour d'IA : si une exception éclate en plein coup,
+  /// on nettoie tout et on PASSE LE TOUR plutôt que de figer la partie.
+  /// Le joueur perd un coup d'ordinateur ; c'est infiniment mieux qu'un
+  /// plateau mort.
+  void _aiGuard(String stage, void Function() body) {
+    try {
+      body();
+    } catch (e, st) {
+      debugPrint('[ai] EXCEPTION pendant $stage : $e\n$st');
+      if (!mounted) return;
+      setState(() {
+        _cancelAnimations();
+        if (_controller.phase == TurnPhase.moving) _controller.skipTurn();
+      });
+      _scheduleAiTurn();
+    }
   }
 
   /// Vrai tant que l'IA courante peut continuer à agir. Les trois causes
@@ -600,45 +641,53 @@ class BoardScreenState extends State<BoardScreen>
   /// pion partir avant le chiffre. Le seul cas où l'on ne programme rien
   /// est celui où [_roll] a déjà posé un coup automatique (un unique pion
   /// jouable) : il a sa propre pause et rendra la main tout seul.
-  void _playAiTurn() {
-    if (!mounted) return;
-    if (_animating) {
-      _scheduleAiTurn(); // le plateau bouge encore, on repasse plus tard
-      return;
-    }
-    if (!_aiMayAct) return;
-    if (_controller.phase != TurnPhase.rolling) {
-      _playAiMove();
-      return;
-    }
-    _roll(_controller.pickDiceValue(_secureRng));
-    if (_animating) return; // coup automatique déjà programmé par _roll
-    if (_controller.phase == TurnPhase.moving) {
-      _aiTimer = Timer(_aiMoveDelay, _playAiMove);
-    } else {
-      // Le lancer n'a rien donné et a passé la main : au suivant.
-      _scheduleAiTurn();
-    }
-  }
+  void _playAiTurn() => _aiGuard('le lancer', () {
+        if (!mounted) return;
+        if (_animating) {
+          _scheduleAiTurn(); // le plateau bouge encore, on repasse plus tard
+          return;
+        }
+        if (!_aiMayAct) return;
+        if (_controller.phase != TurnPhase.rolling) {
+          _playAiMove();
+          return;
+        }
+        final who = _controller.currentColor.name;
+        final v = _controller.pickDiceValue(_secureRng);
+        _roll(v);
+        debugPrint('[ai] $who lance : $v'
+            '${_controller.phase == TurnPhase.moving ? '' : ' — aucun coup, la main passe'}');
+        if (_animating) return; // coup automatique déjà programmé par _roll
+        if (_controller.phase == TurnPhase.moving) {
+          _aiTimer = Timer(_aiMoveDelay, _playAiMove);
+        } else {
+          // Le lancer n'a rien donné et a passé la main : au suivant.
+          _scheduleAiTurn();
+        }
+      });
 
   /// Second temps : l'IA choisit son pion et le joue. Le coup passe par
   /// [_movePawn] — donc par le moteur, jamais par l'animation.
-  void _playAiMove() {
-    if (!mounted) return;
-    if (_animating) {
-      _scheduleAiTurn();
-      return;
-    }
-    if (!_aiMayAct) return;
-    if (_controller.phase == TurnPhase.moving) {
-      final choice = _controller.pickAiPawn();
-      if (choice != null) {
-        _movePawn(choice);
-        return; // _movePawn replanifie le tour suivant
-      }
-    }
-    _scheduleAiTurn();
-  }
+  void _playAiMove() => _aiGuard('le coup', () {
+        if (!mounted) return;
+        if (_animating) {
+          _scheduleAiTurn();
+          return;
+        }
+        if (!_aiMayAct) return;
+        if (_controller.phase == TurnPhase.moving) {
+          final choice = _controller.pickAiPawn();
+          if (choice != null) {
+            debugPrint('[ai] ${_controller.currentColor.name} joue '
+                '${choice.color.name}#${choice.id} '
+                '(${choice.location.name}:${choice.position}, '
+                'dé ${_controller.diceValue})');
+            _movePawn(choice);
+            return; // _movePawn replanifie le tour suivant
+          }
+        }
+        _scheduleAiTurn();
+      });
 
   void _rollDiceManual(PlayerColor player, int value) {
     _roll(value, forPlayer: player);

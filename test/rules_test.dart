@@ -306,6 +306,22 @@ void main() {
       expect(c.pickAiPawn(), isNull);
     });
 
+    test('à coups égaux, l\'IA évite la case où elle serait capturable', () {
+      final c = newGame();
+      final b0 = c.state.pawnsByColor[PlayerColor.blue]![0];
+      final b1 = c.state.pawnsByColor[PlayerColor.blue]![1];
+      final red = c.state.pawnsByColor[PlayerColor.red]![0];
+      // Deux avances ordinaires équivalentes… sauf qu'un rouge rôde à
+      // 3 pas derrière la case visée par b1.
+      putOnRing(b0, 30);
+      putOnRing(b1, 20);
+      red.location = PawnLocation.ring;
+      red.position = (GameController.startIdx(PlayerColor.blue) + 18) % 52;
+      c.roll(2); // b0 → pas 32 (tranquille), b1 → pas 22 (rouge à 4 pas)
+      expect(c.pickAiPawn(), b0,
+          reason: 'b1 irait s\'exposer sous le pion rouge');
+    });
+
     test('jamais de blocage : phase moving implique toujours un coup', () {
       // C'est l'invariant qui permet à l'interface de faire jouer une IA
       // sans jamais rendre la main. S'il tombait, la partie resterait

@@ -191,35 +191,25 @@ class GameController {
 
   PlayerColor get currentColor => turnOrder[currentPlayerIdx];
 
-  /// Tire une valeur 1..6 en ÉVITANT, quand c'est possible, celles qui
-  /// mettraient le joueur courant en situation d'empilement.
+  /// Tire une valeur 1..6, uniforme SAUF sur un point : les valeurs qui
+  /// feraient tomber un pion sur une case du ring déjà tenue par SA couleur
+  /// sont écartées tant qu'il reste au moins une autre valeur.
   ///
-  /// L'empilement est de toute façon interdit ([wouldSelfStack]) : ce tri
-  /// sert à ne pas gâcher un lancer dont le seul défaut serait de viser une
-  /// case déjà tenue par un pion de la couleur. Trois filtres, du plus
-  /// exigeant au plus permissif, le premier non vide gagne :
-  ///
-  ///   1. aucun pion ne viserait un empilement, ET au moins un coup jouable ;
-  ///   2. au moins un coup jouable ;
-  ///   3. les six valeurs (le tour passera, c'est légitime).
-  ///
-  /// Le dé n'est donc PAS uniforme : c'est un biais assumé, demandé, et
-  /// borné — il ne retire jamais une valeur sans que le repli 3 puisse la
-  /// redonner. Un lancer forcé par [roll] n'est pas concerné.
+  /// C'est le SEUL biais autorisé. Une version précédente préférait aussi
+  /// les valeurs « jouables » — conséquence désastreuse : quand tous les
+  /// pions étaient en base, la seule valeur jouable était 6, et le premier
+  /// lancer de CHAQUE couleur donnait donc 6 à coup sûr. Un lancer sans
+  /// coup jouable est un lancer normal du Ludo : le tour passe, c'est tout.
+  /// Ne réintroduisez jamais de filtre de jouabilité ici —
+  /// `test/gameplay_test.dart` le verrouille.
   int pickDiceValue([math.Random? rng]) {
     final r = rng ?? _rng;
     final mine = state.pawnsByColor[currentColor]!;
-    final playable = <int>[];
-    final clean = <int>[];
-    for (int v = 1; v <= 6; v++) {
-      if (mine.any((p) => _canMoveAs(p, v, currentColor))) {
-        playable.add(v);
-        if (!mine.any((p) => wouldSelfStack(p, v))) clean.add(v);
-      }
-    }
-    final pool = clean.isNotEmpty
-        ? clean
-        : (playable.isNotEmpty ? playable : const [1, 2, 3, 4, 5, 6]);
+    final pool = [
+      for (int v = 1; v <= 6; v++)
+        if (!mine.any((p) => wouldSelfStack(p, v))) v,
+    ];
+    if (pool.isEmpty) return r.nextInt(6) + 1;
     return pool[r.nextInt(pool.length)];
   }
 
@@ -518,6 +508,28 @@ class GameController {
     return best;
   }
 
+  /// Vrai si un pion ADVERSE, encore sur l'anneau, se trouve de 1 à 6 pas
+  /// derrière [cell] : il pourrait donc y capturer au prochain tour. Les
+  /// cases sûres ne sont jamais dangereuses.
+  bool _isCapturableAt(int cell, PlayerColor mover) {
+    if (_safeCells.contains(cell)) return false;
+    for (final entry in state.pawnsByColor.entries) {
+      if (_sameTeam(entry.key, mover)) continue;
+      for (final foe in entry.value) {
+        if (foe.location != PawnLocation.ring) continue;
+        final gap = (cell - foe.position + ringSize) % ringSize;
+        // Le poursuivant doit aussi pouvoir ATTEINDRE la case : au-delà de
+        // sa bouche de couloir il quitterait l'anneau avant.
+        if (gap >= 1 &&
+            gap <= 6 &&
+            _stepsTaken(foe) + gap <= lastRingStep) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   int _aiScore(Pawn p) {
     final taken = p.location == PawnLocation.ring ? _stepsTaken(p) : 0;
     int score = 0;
@@ -539,6 +551,15 @@ class GameController {
             score = 500;
           } else {
             score = 100 + newSteps; // sinon, faire avancer le plus avancé
+          }
+          // Éviter de S'EXPOSER : un adversaire à 6 pas ou moins derrière
+          // la case d'arrivée pourrait capturer au tour suivant. Le malus
+          // reste sous les gros bonus (maison, capture, couloir) : on ne
+          // renonce pas à un coup fort par peur, on départage les coups
+          // ordinaires.
+          if (score < 600 && _isCapturableAt(
+              (_startIdx[p.color]! + newSteps) % ringSize, p.color)) {
+            score -= 150;
           }
         }
         break;
