@@ -179,4 +179,55 @@ void main() {
       }
     },
   );
+
+  testWidgets('0 humain + 4 IA : la partie se joue entièrement seule', (
+    tester,
+  ) async {
+    await bootApp(tester);
+
+    final state = tester.state<BoardScreenState>(find.byType(BoardScreen));
+    final c = state.controller;
+
+    // Les QUATRE sièges à l'IA — la combinaison « 4 IA » du panneau.
+    state.setAiSeats(c.turnOrder.toSet());
+    await tester.pump();
+
+    String last = fingerprint(c);
+    int idleMs = 0;
+
+    // Personne ne clique JAMAIS : si la partie avance, c'est que la boucle
+    // IA s'auto-entretient de bout en bout.
+    for (int step = 0; step < 1500; step++) {
+      if (c.phase == TurnPhase.gameOver) break;
+      await tester.pump(const Duration(milliseconds: 100));
+      final now = fingerprint(c);
+      if (now == last) {
+        idleMs += 100;
+        expect(
+          idleMs,
+          lessThan(12000),
+          reason:
+              'partie 4 IA figée au tour de ${c.currentColor.name} '
+              '(phase ${c.phase.name}, dé ${c.diceValue})',
+        );
+      } else {
+        idleMs = 0;
+        last = now;
+      }
+    }
+
+    final out = c.state.allPawns
+        .where((p) => p.location != PawnLocation.base)
+        .length;
+    expect(
+      out,
+      greaterThan(4),
+      reason: 'sans aucun clic, la partie 4 IA doit avancer toute seule',
+    );
+
+    // Démonte l'arbre : `dispose` coupe tous les timers de la boucle IA
+    // encore en vol (le test s'arrête volontairement en pleine partie).
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+  });
 }

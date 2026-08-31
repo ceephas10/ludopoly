@@ -37,6 +37,9 @@ void resetSurface() {
 /// fichiers de test en parallèle, et le sondage peut prendre nettement
 /// plus longtemps quand plusieurs s'exécutent en même temps.
 Future<void> bootApp(WidgetTester t) async {
+  // Chaque test a sa propre zone asynchrone : une future mise en cache par
+  // le test précédent ne s'y résout jamais. On repart d'un cache vide.
+  resetPawnAnimationCache();
   await t.pumpWidget(const LudoPolyApp());
   for (int i = 0; i < 3000; i++) {
     if (find.text('Loading tokens…').evaluate().isEmpty) return;

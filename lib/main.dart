@@ -64,17 +64,27 @@ class BoardScreenState extends State<BoardScreen>
   @visibleForTesting
   GameController get controller => _controller;
 
-  /// Règle « adversaires ordinateur ». Exposée aux tests pour éviter de
-  /// dépendre du libellé de l'interrupteur dans le panneau.
+  /// Sièges IA, exposés aux tests pour éviter de dépendre des libellés du
+  /// panneau. [aiOpponents] garde la sémantique historique « 1 humain +
+  /// 3 IA » qu'utilisent les tests existants.
   @visibleForTesting
-  bool get aiOpponents => _ruleAiOpponents;
+  Set<PlayerColor> get aiSeats => Set.unmodifiable(_aiSeats);
 
   @visibleForTesting
-  set aiOpponents(bool v) {
+  void setAiSeats(Set<PlayerColor> seats) {
     _aiTimer?.cancel();
-    setState(() => _ruleAiOpponents = v);
+    setState(() => _aiSeats
+      ..clear()
+      ..addAll(seats));
     _scheduleAiTurn();
   }
+
+  @visibleForTesting
+  bool get aiOpponents => _aiSeats.isNotEmpty;
+
+  @visibleForTesting
+  set aiOpponents(bool v) => setAiSeats(
+      v ? _controller.turnOrder.skip(1).toSet() : const {});
   late final GameController _controller = GameController(
     turnOrder: BoardScreen.players.map((p) => p.color).toList(),
     state: _game,
@@ -118,9 +128,11 @@ class BoardScreenState extends State<BoardScreen>
   bool _ruleStartWith1TokenOut = false;
   bool _ruleTeamMode = false;
 
-  /// Mode "contre ordinateur" : toutes les couleurs sauf la première de
-  /// l'ordre des tours sont pilotées par l'IA locale.
-  bool _ruleAiOpponents = false;
+  /// Sièges pilotés par l'IA locale. Chaque place de la partie peut être
+  /// Humain ou IA, indépendamment des autres : toutes les combinaisons de
+  /// 4 H + 0 IA à 0 H + 4 IA sont donc possibles — y compris la partie
+  /// 100 % automatique, qui se déroule seule jusqu'au classement complet.
+  final Set<PlayerColor> _aiSeats = {};
 
   /// Verrou anti-bug. Vrai pendant qu'un pion glisse : tant qu'il est levé,
   /// AUCUNE commande n'est acceptée (double clic sur un pion, relance du dé,
@@ -202,6 +214,12 @@ class BoardScreenState extends State<BoardScreen>
   /// Timer du trajet en cours et du coup automatique en attente.
   Timer? _travelTimer;
   Timer? _autoMoveTimer;
+
+  /// Fin de trajet (verrou + pause de capture) et explosion différée. Ils
+  /// étaient anonymes — impossibles à annuler, ils survivaient au dispose
+  /// et à l'annulation d'un coup. Suivis pour être coupés proprement.
+  Timer? _travelEndTimer;
+  Timer? _explosionTimer;
 
   /// Timers des retours à contre-sens des pions capturés, indexés par pion.
   /// Il peut y en avoir plusieurs en vol (deux pions mangés d'un coup), et
@@ -523,10 +541,7 @@ class BoardScreenState extends State<BoardScreen>
 
   /// Couleurs pilotées par l'IA : tout le monde sauf le premier joueur de
   /// l'ordre des tours (l'humain), et seulement quand la règle est ON.
-  bool _isAiColor(PlayerColor c) =>
-      _ruleAiOpponents &&
-      _controller.turnOrder.isNotEmpty &&
-      c != _controller.turnOrder.first;
+  bool _isAiColor(PlayerColor c) => _aiSeats.contains(c);
 
   /// Vrai quand la main est à un ordinateur. Le plateau passe alors en
   /// LECTURE SEULE : ni sélecteur sur ses pions, ni dé cliquable. Sans ça
@@ -539,7 +554,7 @@ class BoardScreenState extends State<BoardScreen>
   /// Le délai laisse voir le dé et l'animation du coup précédent.
   void _scheduleAiTurn({Duration? delay}) {
     _aiTimer?.cancel();
-    if (!_ruleAiOpponents) return;
+    if (_aiSeats.isEmpty) return;
     if (_controller.phase == TurnPhase.gameOver) return;
     if (!_isAiColor(_controller.currentColor)) return;
     _aiTimer = Timer(delay ?? _aiRollDelay, _playAiTurn);
@@ -575,7 +590,6 @@ class BoardScreenState extends State<BoardScreen>
   /// plus à une IA.
   bool get _aiMayAct =>
       mounted &&
-      _ruleAiOpponents &&
       _controller.phase != TurnPhase.gameOver &&
       _isAiColor(_controller.currentColor);
 
@@ -729,7 +743,8 @@ class BoardScreenState extends State<BoardScreen>
 
     // Libère le verrou une fois le trajet parcouru ET la pause écoulée,
     // puis rend la main à l'IA si c'est à son tour.
-    Timer(totalDur, () {
+    _travelEndTimer?.cancel();
+    _travelEndTimer = Timer(totalDur, () {
       if (!mounted) return;
       setState(() {
         _animating = false;
@@ -749,7 +764,8 @@ class BoardScreenState extends State<BoardScreen>
     // Explosion de capture : au moment EXACT où le pion capturé s'efface.
     final captures = capturedNow;
     if (captures.isNotEmpty) {
-      Future.delayed(totalDur, () {
+      _explosionTimer?.cancel();
+      _explosionTimer = Timer(totalDur, () {
         if (!mounted) return;
         setState(() {
           for (final cap in captures) {
@@ -953,6 +969,8 @@ class BoardScreenState extends State<BoardScreen>
     _aiTimer?.cancel();
     _travelTimer?.cancel();
     _autoMoveTimer?.cancel();
+    _travelEndTimer?.cancel();
+    _explosionTimer?.cancel();
     for (final t in _returnTimers.values) {
       t.cancel();
     }
@@ -1231,10 +1249,12 @@ class BoardScreenState extends State<BoardScreen>
                         _controller.teamMode = v;
                       });
                     },
-                    ruleAiOpponents: _ruleAiOpponents,
-                    onToggleRuleAiOpponents: (v) {
+                    aiSeats: _aiSeats,
+                    onSetAiSeats: (seats) {
                       _aiTimer?.cancel();
-                      setState(() => _ruleAiOpponents = v);
+                      setState(() => _aiSeats
+                        ..clear()
+                        ..addAll(seats));
                       _scheduleAiTurn();
                     },
                     ranking: _controller.ranking,
@@ -1342,8 +1362,13 @@ class _ControlPanel extends StatelessWidget {
   final ValueChanged<bool> onToggleRuleStartWith1TokenOut;
   final bool ruleTeamMode;
   final ValueChanged<bool> onToggleRuleTeamMode;
-  final bool ruleAiOpponents;
-  final ValueChanged<bool> onToggleRuleAiOpponents;
+  /// Sièges actuellement pilotés par l'IA (peut être vide, ou tous).
+  final Set<PlayerColor> aiSeats;
+
+  /// Remplace d'un bloc l'ensemble des sièges IA — utilisé aussi bien par
+  /// les boutons de combinaison (4 H, 1 H + 3 IA…) que par les
+  /// interrupteurs individuels H/IA de chaque siège.
+  final ValueChanged<Set<PlayerColor>> onSetAiSeats;
 
   /// Ordre d'arrivée courant : 1er, 2e, 3e, 4e.
   final List<PlayerColor> ranking;
@@ -1391,8 +1416,8 @@ class _ControlPanel extends StatelessWidget {
     required this.onToggleRuleStartWith1TokenOut,
     required this.ruleTeamMode,
     required this.onToggleRuleTeamMode,
-    required this.ruleAiOpponents,
-    required this.onToggleRuleAiOpponents,
+    required this.aiSeats,
+    required this.onSetAiSeats,
     required this.ranking,
     required this.busy,
   });
@@ -1492,17 +1517,22 @@ class _ControlPanel extends StatelessWidget {
                           value: ruleTeamMode,
                           onChanged: onToggleRuleTeamMode,
                         ),
-                        SwitchListTile(
-                          title: const Text('Adversaires ordinateur'),
-                          subtitle: const Text(
-                              'Le 1er joueur est humain, les autres couleurs '
-                              'sont jouées par l\'IA locale (capture > '
-                              'maison > couloir > sortie > case sûre).'),
-                          value: ruleAiOpponents,
-                          onChanged: onToggleRuleAiOpponents,
-                        ),
                       ],
                     ),
+                  ),
+                  const SizedBox(height: 10),
+                  _SectionCard(
+                    title: 'Joueurs — Humain ou IA',
+                    child: _PlayerSeatsCard(
+                      activePlayers: activePlayers,
+                      aiSeats: aiSeats,
+                      onSetAiSeats: onSetAiSeats,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _SectionCard(
+                    title: 'Mode de partie',
+                    child: _GameModeCard(),
                   ),
                 ] else ...[
 
@@ -1955,6 +1985,192 @@ class _ColorDot extends StatelessWidget {
 
 /// Reusable section card with a small title above the body. Uses the ambient
 /// Material 3 theme for surface/elevation/typography.
+/// Configuration des sièges : chaque place de la partie est tenue par un
+/// Humain ou par l'IA locale. Les boutons du haut posent d'un clic les
+/// combinaisons classiques (4 H, 3 H + 1 IA, … 4 IA) ; les interrupteurs
+/// du dessous règlent chaque siège individuellement. Les deux vues
+/// commandent le même ensemble [aiSeats].
+class _PlayerSeatsCard extends StatelessWidget {
+  final List<Player> activePlayers;
+  final Set<PlayerColor> aiSeats;
+  final ValueChanged<Set<PlayerColor>> onSetAiSeats;
+
+  const _PlayerSeatsCard({
+    required this.activePlayers,
+    required this.aiSeats,
+    required this.onSetAiSeats,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final n = activePlayers.length;
+    final aiCount =
+        activePlayers.where((p) => aiSeats.contains(p.color)).length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'IA locale : capture > maison > couloir > sortie > case sûre. '
+          'Une partie 100 % IA se joue toute seule jusqu\'au classement.',
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: cs.onSurfaceVariant),
+        ),
+        const SizedBox(height: 8),
+        // ── Les combinaisons, un bouton chacune ──
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (int ia = 0; ia <= n; ia++)
+              ChoiceChip(
+                label: Text(ia == 0
+                    ? '$n H'
+                    : (ia == n ? '$ia IA' : '${n - ia} H + $ia IA')),
+                selected: aiCount == ia,
+                onSelected: (_) {
+                  // Les IA occupent les DERNIERS sièges : le 1er joueur
+                  // reste humain tant qu'il reste au moins un humain.
+                  onSetAiSeats({
+                    for (final p in activePlayers.skip(n - ia)) p.color,
+                  });
+                },
+              ),
+          ],
+        ),
+        const Divider(height: 20),
+        // ── Le détail, siège par siège ──
+        for (final p in activePlayers)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              children: [
+                Icon(Icons.circle, size: 12, color: _seatColor(p.color)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(p.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium),
+                ),
+                SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment(
+                        value: false,
+                        label: Text('H'),
+                        icon: Icon(Icons.person, size: 14)),
+                    ButtonSegment(
+                        value: true,
+                        label: Text('IA'),
+                        icon: Icon(Icons.smart_toy, size: 14)),
+                  ],
+                  selected: {aiSeats.contains(p.color)},
+                  onSelectionChanged: (sel) {
+                    final next = Set<PlayerColor>.from(aiSeats);
+                    sel.first ? next.add(p.color) : next.remove(p.color);
+                    onSetAiSeats(next);
+                  },
+                  showSelectedIcon: false,
+                  style: const ButtonStyle(
+                      visualDensity: VisualDensity.compact),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  static Color _seatColor(PlayerColor c) {
+    switch (c) {
+      case PlayerColor.blue:   return const Color(0xFF3DA4EC);
+      case PlayerColor.red:    return const Color(0xFFD33232);
+      case PlayerColor.green:  return const Color(0xFF2E8B47);
+      case PlayerColor.yellow: return const Color(0xFFE6B800);
+    }
+  }
+}
+
+/// Modes de partie. Seul le mode ordinaire local existe aujourd'hui ; le
+/// mode rapide (tous les joueurs jouent sans attendre leur tour) et le
+/// multijoueur multi-appareils sont affichés mais VERROUILLÉS — leurs
+/// boutons annoncent la suite sans prétendre qu'elle est jouable.
+class _GameModeCard extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    Widget lockedRow(IconData icon, String title, String sub) => Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Row(
+            children: [
+              Icon(icon, size: 16, color: cs.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: theme.textTheme.bodyMedium),
+                    Text(sub,
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: cs.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                onPressed: null,
+                child: const Text('À venir'),
+              ),
+            ],
+          ),
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.play_circle, size: 16, color: cs.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Ordinaire — tour par tour (local)',
+                      style: theme.textTheme.bodyMedium),
+                  Text(
+                      'Les joueurs jouent chacun à leur tour, dans un '
+                      'ordre fixe, sur cet appareil.',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: cs.onSurfaceVariant)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.tonal(
+              onPressed: () {},
+              child: const Text('Actif'),
+            ),
+          ],
+        ),
+        lockedRow(
+            Icons.bolt,
+            'Rapide — sans attente de tour',
+            'Chacun joue le plus vite possible, en même temps ; le '
+                'premier vainqueur termine la partie.'),
+        lockedRow(
+            Icons.wifi,
+            'Multijoueur — plusieurs appareils',
+            'Mêmes combinaisons H / IA, réparties sur plusieurs '
+                'appareils.'),
+      ],
+    );
+  }
+}
+
 class _SectionCard extends StatelessWidget {
   final String title;
   final Widget child;
@@ -2997,6 +3213,11 @@ class _PolygonBoardPainter extends CustomPainter {
 
 /// Decoded frames of a GIF, shared across all pawns of the same color so we
 /// pay the decode cost only once per asset.
+/// Purge le cache de décodage des animations de pions. RÉSERVÉ aux tests —
+/// voir [_GifFrames.evictAll] pour le pourquoi.
+@visibleForTesting
+void resetPawnAnimationCache() => _GifFrames.evictAll();
+
 class _GifFrames {
   final List<ui.Image> images;
   final List<Duration> durations;
@@ -3009,6 +3230,13 @@ class _GifFrames {
   _GifFrames(this.images, this.durations, this.contentBbox);
 
   static final Map<String, Future<_GifFrames>> _cache = {};
+
+  /// Vide le cache. RÉSERVÉ aux tests : chaque `testWidgets` tourne dans
+  /// sa propre zone asynchrone, et une future mise en cache par un test
+  /// précédent ne se résout jamais dans la suivante — le sondage des
+  /// assets du second test restait suspendu dessus indéfiniment.
+  @visibleForTesting
+  static void evictAll() => _cache.clear();
 
   static Future<_GifFrames> load(String asset) {
     return _cache.putIfAbsent(asset, () async {
