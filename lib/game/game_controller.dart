@@ -288,43 +288,25 @@ class GameController {
 
   PlayerColor get currentColor => turnOrder[currentPlayerIdx];
 
-  /// Tire une valeur 1..6, uniforme SAUF sur un point : les valeurs qui
-  /// feraient tomber un pion sur une case du ring déjà tenue par SA couleur
-  /// sont écartées tant qu'il reste au moins une autre valeur.
+  /// Tire une valeur 1..6. STRICTEMENT UNIFORME, sans la moindre exception.
   ///
-  /// C'est le SEUL biais autorisé. Une version précédente préférait aussi
-  /// les valeurs « jouables » — conséquence désastreuse : quand tous les
-  /// pions étaient en base, la seule valeur jouable était 6, et le premier
-  /// lancer de CHAQUE couleur donnait donc 6 à coup sûr. Un lancer sans
-  /// coup jouable est un lancer normal du Ludo : le tour passe, c'est tout.
-  /// Ne réintroduisez jamais de filtre de jouabilité ici —
-  /// `test/gameplay_test.dart` le verrouille.
-  int pickDiceValue([math.Random? rng]) {
-    final r = rng ?? _rng;
-    final pool = [
-      for (int v = 1; v <= 6; v++)
-        if (!_wastedByStackBan(v)) v,
-    ];
-    if (pool.isEmpty) return r.nextInt(6) + 1;
-    return pool[r.nextInt(pool.length)];
-  }
+  /// Deux biais ont existé ici, tous deux retirés après avoir causé des
+  /// bugs bien pires que le problème qu'ils prétendaient résoudre :
+  ///
+  ///   * préférer les valeurs « jouables » — quand tous les pions étaient
+  ///     en base, seul le 6 était jouable, et le premier lancer de CHAQUE
+  ///     couleur donnait donc 6 à coup sûr ;
+  ///   * éviter les valeurs qui feraient tomber un pion sur son camarade —
+  ///     avec un pion sur sa flèche d'entrée et un autre 6 cases devant,
+  ///     le dé ne pouvait alors PLUS JAMAIS sortir de 6, et le joueur
+  ///     perdait toute possibilité de sortir un pion de sa base.
+  ///
+  /// Un lancer sans coup jouable est un lancer normal du Ludo : le tour
+  /// passe, c'est tout. N'ajoutez aucun filtre ici — l'équité du dé est
+  /// verrouillée par `test/gameplay_test.dart`.
+  int pickDiceValue([math.Random? rng]) => (rng ?? _rng).nextInt(6) + 1;
 
-  /// Vrai quand la valeur [v] ne donnerait AUCUN coup jouable, et que le
-  /// seul obstacle est l'interdit d'empilement.
-  ///
-  /// C'est le seul cas où il vaut la peine d'éviter une valeur. L'ancien
-  /// filtre écartait [v] dès qu'UN pion s'y serait empilé, même quand la
-  /// valeur offrait par ailleurs d'excellents coups — avec un pion sur sa
-  /// flèche d'entrée et un autre 6 cases devant, le dé ne pouvait alors
-  /// PLUS JAMAIS sortir de 6, et le joueur perdait du même coup toute
-  /// possibilité de sortir un pion de sa base. L'interdit d'empilement,
-  /// lui, suffit déjà à garantir que deux pions d'une couleur ne se posent
-  /// jamais sur la même case : le dé n'a pas à s'en mêler davantage.
-  bool _wastedByStackBan(int v) {
-    final mine = state.pawnsByColor[currentColor]!;
-    if (mine.any((p) => _canMoveAs(p, v, currentColor))) return false;
-    return mine.any((p) => wouldSelfStack(p, v));
-  }
+
 
   /// Roll a random 1..6, en évitant les valeurs qui viseraient un
   /// empilement — voir [pickDiceValue].
@@ -402,10 +384,18 @@ class GameController {
         return !wouldSelfStack(p, v);
       case PawnLocation.ring:
         final taken = _stepsTaken(p);
-        if (taken + v > totalStepsToHome) return false;
-        // Interdiction d'empilement : deux pions d'une même couleur ne
-        // partagent jamais une case du ring.
-        return !wouldSelfStack(p, v);
+        // SEULE exclusion d'un pion déjà en jeu : dépasser la maison. Le
+        // compte doit être exact pour rentrer, c'est une règle du Ludo.
+        //
+        // Il y en avait une seconde — l'interdiction de se poser sur son
+        // propre pion — et elle a été RETIRÉE. Elle rendait injouable un
+        // pion parfaitement légitime dès que son camarade se trouvait
+        // exactement à distance du dé, et le joueur voyait un pion sans
+        // sélecteur sans comprendre pourquoi. Dans un Ludo classique ce
+        // coup est légal : deux pions d'une couleur peuvent partager une
+        // case. Voir `wouldSelfStack`, conservée mais plus consultée par
+        // les règles.
+        return taken + v <= totalStepsToHome;
       case PawnLocation.homeColumn:
         // Home column has 5 cells (indices 0..4); the 6th step reaches home.
         return p.position + v <= 5;

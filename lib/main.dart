@@ -774,11 +774,16 @@ class BoardScreenState extends State<BoardScreen>
       // coup jouable, ou 3 six), et le dé affiché doit rester celui du
       // joueur qui vient de lancer.
       _autoNotice = null; // un nouveau lancer efface le message précédent
+      // La couleur est lue AVANT roll() : un troisième 6 annule le tour et
+      // passe la main, et la trace attribuerait alors le lancer au joueur
+      // SUIVANT — c'est ce qui produisait des lignes « 0 pion jouable »
+      // incompréhensibles.
+      final roller = _controller.currentColor;
       _controller.roll(value);
       // Trace demandée : sur un 6, dire EXACTEMENT quels pions sont
       // jouables et d'où, pour vérifier que celui posé sur la flèche
       // d'entrée figure bien parmi les choix.
-      if (value == 6) _logSixOptions();
+      if (value == 6) _logSixOptions(roller);
       // The ONLY rule, applied to every roll:
       // 1 pion movable → play it.
       if (_controller.phase == TurnPhase.moving) {
@@ -838,9 +843,13 @@ class BoardScreenState extends State<BoardScreen>
     }
   }
 
-  /// Journalise les options offertes par un 6.
-  void _logSixOptions() {
-    final color = _controller.currentColor;
+  /// Journalise les options offertes par un 6 à la couleur [color].
+  void _logSixOptions(PlayerColor color) {
+    if (_controller.phase != TurnPhase.moving) {
+      debugPrint('[six] ${color.name} fait 6 → aucun choix : le tour est '
+          'déjà passé (troisième 6 de suite, ou aucun coup possible)');
+      return;
+    }
     final playable = _controller.movablePawns().toSet();
     final lines = _game.pawnsByColor[color]!
         .map((p) => '${playable.contains(p) ? '✔' : '✘'} '
@@ -1033,7 +1042,7 @@ class BoardScreenState extends State<BoardScreen>
           // Même trace qu'en mode ordinaire : le mode Rapide court-circuite
           // `_roll`, il faut donc la poser ici aussi.
           if (rolled == 6) {
-            _controller.runAsSeat(c, _logSixOptions);
+            _controller.runAsSeat(c, () => _logSixOptions(c));
           }
         }
 

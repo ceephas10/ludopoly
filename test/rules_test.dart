@@ -846,8 +846,9 @@ void main() {
         final onStart = c.state.pawnsByColor[color]![0];
         onStart.location = PawnLocation.ring;
         onStart.position = GameController.startIdx(color);
+        c.roll(6);
         for (final p in c.state.pawnsByColor[color]!.skip(1)) {
-          expect(c.wouldSelfStack(p, 6), isFalse,
+          expect(c.movablePawns(), contains(p),
               reason: '${color.name} : une sortie de base ne doit JAMAIS '
                   'être bloquée');
         }
@@ -868,19 +869,24 @@ void main() {
           reason: 'la règle des trois 6 doit rester intacte');
     });
 
-    test('l\'interdit d\'empilement ANNEAU → ANNEAU reste entier', () {
+    test('se poser sur son propre pion est LÉGAL (comportement Ludo King)',
+        () {
+      // L'interdit d'empilement anneau → anneau a été retiré : il rendait
+      // injouable un pion légitime dès que son camarade se trouvait
+      // exactement à distance du dé.
       final c = newGame();
       final a = c.state.pawnsByColor[PlayerColor.blue]![0];
       final b = c.state.pawnsByColor[PlayerColor.blue]![1];
       a.location = PawnLocation.ring;
       a.position = 10;
       b.location = PawnLocation.ring;
-      b.position = 7; // +3 tomberait sur a
-      expect(c.wouldSelfStack(b, 3), isTrue,
-          reason: 'deux pions d\'une couleur ne peuvent pas partager une '
-              'case du ring');
+      b.position = 7; // +3 tombe sur a
       c.roll(3);
-      expect(c.movablePawns(), isNot(contains(b)));
+      expect(c.movablePawns(), contains(b),
+          reason: 'le coup doit être proposé au joueur');
+      c.movePawn(b);
+      expect(b.position, 10);
+      expect(a.position, 10, reason: 'a n\'a pas été renvoyé en base');
     });
 
     test('un seul coup possible reste joué tout seul', () {

@@ -704,7 +704,15 @@ void main() {
   // Double garde : le coup est ILLÉGAL, et le dé ÉVITE de proposer une
   // valeur qui viserait un empilement. La règle des blocs (§17), qui
   // reposait sur cet empilement, a été retirée.
-  group('🚫 Pas deux pions de même couleur sur une case du ring', () {
+  // Deux pions d'une même couleur PEUVENT partager une case du ring.
+  //
+  // Un interdit d'empilement a existé ici. Il a été retiré : il rendait
+  // injouable un pion parfaitement légitime dès que son camarade se
+  // trouvait exactement à distance du dé, et l'on voyait un pion sans
+  // sélecteur sans comprendre pourquoi. C'est le comportement d'un Ludo
+  // classique qui prévaut — un pion déjà en jeu se joue toujours, sauf s'il
+  // dépasserait la maison.
+  group('♟️ Deux pions d\'une couleur peuvent partager une case du ring', () {
     /// Place [n] pions de [color] aux pas donnés depuis leur départ.
     List<Pawn> placeOnRing(GameController c, PlayerColor color,
         List<int> steps) {
@@ -717,23 +725,38 @@ void main() {
       return pawns;
     }
 
-    test('se poser sur son propre pion est un coup illégal', () {
-      final c = newGame();
-      final blue = placeOnRing(c, PlayerColor.blue, [2, 5]);
-      c.roll(3); // blue[0] viserait le pas 5, déjà tenu par blue[1]
-      expect(c.movablePawns(), isNot(contains(blue[0])));
+    test('se poser sur son propre pion est un coup LÉGAL', () {
+      for (final color in _fourPlayers) {
+        final c = newGame(order: [color]);
+        final pawns = placeOnRing(c, color, [2, 5]);
+        c.roll(3); // pawns[0] vise le pas 5, tenu par pawns[1]
+        expect(c.movablePawns(), contains(pawns[0]),
+            reason: '${color.name} : le coup doit être proposé');
+        c.movePawn(pawns[0]);
+        expect(pawns[0].position, pawns[1].position,
+            reason: '${color.name} : les deux partagent la case');
+      }
     });
 
-    test('la même valeur reste jouable par un AUTRE pion', () {
-      final c = newGame();
-      final blue = placeOnRing(c, PlayerColor.blue, [2, 5, 20]);
-      c.roll(3);
-      expect(c.movablePawns(), isNot(contains(blue[0])));
-      expect(c.movablePawns(), contains(blue[2]),
-          reason: 'blue#2 vise le pas 23, libre');
+    test('un pion DÉJÀ EN JEU est toujours jouable sur un 6', () {
+      // Le bug signalé : un pion sans sélecteur alors que tous les autres
+      // en avaient un. On balaie toutes les distances entre les deux
+      // pions — aucune ne doit rendre le premier injouable.
+      for (final color in _fourPlayers) {
+        for (int gap = 1; gap <= 12; gap++) {
+          final c = newGame(order: [color]);
+          final pawns = placeOnRing(c, color, [0, gap]);
+          c.roll(6);
+          expect(c.movablePawns(), contains(pawns[0]),
+              reason: '${color.name}, écart $gap : le pion sur la flèche '
+                  "d'entrée doit rester jouable");
+          expect(c.movablePawns(), contains(pawns[1]),
+              reason: '${color.name}, écart $gap : le pion avancé aussi');
+        }
+      }
     });
 
-    test('on TRAVERSE librement son camarade, on ne s\'y arrête pas', () {
+    test('on TRAVERSE librement son camarade', () {
       final c = newGame();
       final blue = placeOnRing(c, PlayerColor.blue, [2, 4]);
       c.roll(4); // blue[0] passe PAR le pas 4 et finit au 6
@@ -743,12 +766,7 @@ void main() {
           (GameController.startIdx(PlayerColor.blue) + 6) % 52);
     });
 
-    test('sortir de base reste TOUJOURS possible, case départ occupée ou non',
-        () {
-      // Seule EXCEPTION à l'interdit d'empilement, et elle est décisive :
-      // un 6 doit toujours offrir le choix entre sortir et avancer. Sans
-      // elle, un pion posé sur sa propre case de départ rendait les trois
-      // autres injouables, et le 6 suivant partait tout seul.
+    test('sortir de base reste TOUJOURS possible sur un 6', () {
       for (final color in _fourPlayers) {
         final c = newGame(order: [color]);
         placeOnRing(c, color, [0]); // un pion sur la case départ
@@ -762,132 +780,69 @@ void main() {
       }
     });
 
-    test('un pion adverse sur la case ne gêne pas — c\'est une capture', () {
+    test('la SEULE exclusion d\'un pion en jeu est le dépassement', () {
+      // Un pion à 2 pas de la maison ne peut pas jouer un 6 : le compte
+      // doit être exact. C'est une vraie règle du Ludo, elle reste.
+      final c = newGame();
+      final p = c.state.pawnsByColor[PlayerColor.blue]![0];
+      p.location = PawnLocation.homeColumn;
+      p.position = 4; // +1 = maison
+      c.roll(6);
+      expect(c.movablePawns(), isNot(contains(p)),
+          reason: 'dépasser la maison reste illégal');
+      c.phase = TurnPhase.rolling;
+      c.roll(1);
+      expect(c.movablePawns(), contains(p), reason: 'le compte exact passe');
+    });
+
+    test('un pion adverse sur la case reste une capture', () {
       final c = newGame();
       final blue = placeOnRing(c, PlayerColor.blue, [2]);
-      placeOnRing(c, PlayerColor.red, [0]); // rouge sur SA case départ 13
       final red = c.state.pawnsByColor[PlayerColor.red]![0];
+      red.location = PawnLocation.ring;
       red.position = (GameController.startIdx(PlayerColor.blue) + 5) % 52;
       c.roll(3);
       expect(c.movablePawns(), contains(blue[0]));
-    });
-
-    test('le couloir final, lui, accepte plusieurs pions de la couleur', () {
-      final c = newGame();
-      final blue = c.state.pawnsByColor[PlayerColor.blue]!;
-      blue[0].location = PawnLocation.homeColumn;
-      blue[0].position = 3;
-      blue[1].location = PawnLocation.homeColumn;
-      blue[1].position = 1;
-      c.roll(2); // blue[1] : 1 → 3, même case que blue[0]
-      expect(c.movablePawns(), contains(blue[1]),
-          reason: 'la règle ne vise que le ring');
-    });
-
-    test('aucune partie n\'empile hors de la case de départ', () {
-      // 300 coups joués au hasard : l'invariant doit tenir en permanence.
-      //
-      // SEULE la case de départ peut porter plusieurs pions d'une couleur,
-      // et uniquement parce qu'une sortie de base ne se refuse jamais —
-      // sinon un 6 cesserait d'offrir le choix. Partout ailleurs sur
-      // l'anneau, l'empilement reste impossible.
-      final c = newGame();
-      final rng = math.Random(20260830);
-      for (int turn = 0; turn < 300; turn++) {
-        c.roll(c.pickDiceValue(rng));
-        if (c.phase == TurnPhase.moving) {
-          final options = c.movablePawns();
-          if (options.isNotEmpty) {
-            c.movePawn(options[rng.nextInt(options.length)]);
-          }
-        }
-        for (final color in _fourPlayers) {
-          final start = GameController.startIdx(color);
-          final cells = c.state.pawnsByColor[color]!
-              .where((p) => p.location == PawnLocation.ring)
-              .map((p) => p.position)
-              .where((pos) => pos != start)
-              .toList();
-          expect(cells.toSet().length, cells.length,
-              reason: 'tour $turn : ${color.name} empilé sur $cells '
-                  '(hors case départ $start)');
-        }
-      }
+      c.movePawn(blue[0]);
+      expect(red.location, PawnLocation.base);
     });
   });
 
   // §34 — Le dé écarte les valeurs qui viseraient un empilement.
-  group('🎲 Le dé évite les valeurs qui viseraient un empilement', () {
-    test('une valeur reste tirable tant qu\'elle offre un coup propre', () {
-      // blue#0 en 2, blue#1 en 5 : le 3 empilerait blue#0 sur blue#1, mais
-      // blue#1 peut parfaitement jouer ce 3. La valeur n'est donc pas
-      // perdue et le dé n'a aucune raison de l'écarter — l'interdit
-      // d'empilement suffit à protéger blue#0.
-      final c = newGame();
-      final blue = c.state.pawnsByColor[PlayerColor.blue]!;
-      blue[0].location = PawnLocation.ring;
-      blue[0].position = 2;
-      blue[1].location = PawnLocation.ring;
-      blue[1].position = 5;
-      final rng = math.Random(7);
-      final seen = {for (int i = 0; i < 300; i++) c.pickDiceValue(rng)};
-      expect(seen, contains(3),
-          reason: 'le 3 est jouable par blue#1, il doit pouvoir sortir');
-      c.roll(3);
-      expect(c.movablePawns(), isNot(contains(blue[0])),
-          reason: 'blue#0 reste protégé de l\'empilement');
-      expect(c.movablePawns(), contains(blue[1]));
-    });
-
-    test('le dé n\'écarte une valeur que si elle GÂCHE tout le tour', () {
-      // Un seul pion en jeu, sur sa flèche, et son camarade 3 cases plus
-      // loin ; tous les autres sont au centre, donc aucune sortie de base
-      // ne peut sauver le tour. Le 3 ne mènerait qu'à un empilement : il
-      // est alors légitime de l'éviter.
-      final c = newGame();
-      final blue = c.state.pawnsByColor[PlayerColor.blue]!;
-      final start = GameController.startIdx(PlayerColor.blue);
-      blue[0].location = PawnLocation.ring;
-      blue[0].position = start;
-      blue[1].location = PawnLocation.ring;
-      blue[1].position = start + 3;
-      for (final p in blue.skip(2)) {
-        p.location = PawnLocation.home;
-      }
-      // blue[1] doit être hors d'atteinte du 3 pour que le tour soit mort.
-      blue[1].position = start + 3;
-      final rng = math.Random(11);
-      final seen = {for (int i = 0; i < 300; i++) c.pickDiceValue(rng)};
-      // blue[1] peut jouer le 3 (start+3 → start+6), donc la valeur reste
-      // utile : ce cas n'est PAS un tour gâché.
-      expect(seen, contains(3));
-    });
-
-    test('régression : un pion sur sa flèche ne supprime plus le 6', () {
-      // Le bug : pion sur la flèche, camarade exactement 6 cases devant.
-      // Le 6 empilerait le premier, et l'ancien filtre le retirait donc du
-      // dé — le joueur ne pouvait PLUS JAMAIS faire 6, ni avancer, ni
-      // même sortir un pion de sa base.
-      for (final color in _fourPlayers) {
-        final c = newGame(order: [color]);
-        final start = GameController.startIdx(color);
-        final pawns = c.state.pawnsByColor[color]!;
-        pawns[0]
-          ..location = PawnLocation.ring
-          ..position = start;
-        pawns[1]
-          ..location = PawnLocation.ring
-          ..position = (start + 6) % 52;
-        final rng = math.Random(color.index + 3);
-        final seen = {for (int i = 0; i < 400; i++) c.pickDiceValue(rng)};
-        expect(seen, contains(6),
-            reason: '${color.name} : le 6 a disparu du dé — faces vues '
-                '${seen.toList()..sort()}');
-        // Et ce 6 sert : il sort un pion de la base.
-        c.roll(6);
-        expect(c.movablePawns().where((p) => p.location == PawnLocation.base),
-            isNotEmpty,
-            reason: '${color.name} : le 6 doit permettre une sortie');
+  group('🎲 Le dé est STRICTEMENT uniforme', () {
+    test('aucune position du plateau ne retire une face au dé', () {
+      // Deux biais ont existé ici et ont tous deux été retirés : préférer
+      // les valeurs jouables, puis éviter celles qui empileraient. Le
+      // second faisait disparaître le 6 quand un pion se tenait sur sa
+      // flèche et un autre 6 cases devant — le joueur ne pouvait alors
+      // plus rien sortir de sa base.
+      final positions = <String, void Function(GameController, PlayerColor)>{
+        'tous en base': (c, col) {},
+        'un sur la flèche, un 6 cases devant': (c, col) {
+          final start = GameController.startIdx(col);
+          c.state.pawnsByColor[col]![0]
+            ..location = PawnLocation.ring
+            ..position = start;
+          c.state.pawnsByColor[col]![1]
+            ..location = PawnLocation.ring
+            ..position = (start + 6) % 52;
+        },
+        'trois au centre': (c, col) {
+          for (final p in c.state.pawnsByColor[col]!.take(3)) {
+            p.location = PawnLocation.home;
+          }
+        },
+      };
+      for (final entry in positions.entries) {
+        for (final color in _fourPlayers) {
+          final c = newGame(order: [color]);
+          entry.value(c, color);
+          final rng = math.Random(color.index + 5);
+          final seen = {for (int i = 0; i < 400; i++) c.pickDiceValue(rng)};
+          expect(seen, {1, 2, 3, 4, 5, 6},
+              reason: '${entry.key} / ${color.name} : faces manquantes, '
+                  'vues ${seen.toList()..sort()}');
+        }
       }
     });
 
