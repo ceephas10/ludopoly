@@ -425,6 +425,16 @@ class BoardScreenState extends State<BoardScreen>
   /// partie contre l'ordinateur sans toucher au panneau — et accessoirement
   /// de partager une configuration par lien.
   void _applyAiSeatsFromUrl() {
+    // `?home=all` range les 16 pions au centre : c'est le seul moyen de
+    // REGARDER le placement dans les triangles sans jouer quatre parties.
+    if (Uri.base.queryParameters['home'] == 'all') {
+      setState(() {
+        for (final p in _game.allPawns) {
+          p.location = PawnLocation.home;
+        }
+      });
+      return;
+    }
     final param = Uri.base.queryParameters['ai'];
     if (param == null || param.isEmpty) return;
     final seats = <PlayerColor>{};
@@ -2888,7 +2898,10 @@ class BoardView extends StatelessWidget {
       PawnLocation.base       => _baseSlotCenter(p.color, pos, cell),
       PawnLocation.ring       => _ringCellCenter(pos, cell),
       PawnLocation.homeColumn => _homeColumnCenter(p.color, pos, cell),
-      PawnLocation.home       => _homeCenter(p.color, cell),
+      // Un pion arrivé se range à SA place sur l'hypoténuse. L'index est
+      // son id (0..3), stable et unique dans sa couleur — `position` ne
+      // veut plus rien dire une fois la maison atteinte.
+      PawnLocation.home       => _homeCenter(p.color, p.id, cell),
     };
     return Offset(
       cellCenter.dx,
@@ -2896,21 +2909,41 @@ class BoardView extends StatelessWidget {
     );
   }
 
-  /// Geometric center of the colored home triangle for [color]. Each
-  /// triangle sits one cell away from the board center in its cardinal
-  /// direction:
-  ///   blue  → bottom (south)
-  ///   red   → left   (west)
-  ///   green → top    (north)
-  ///   yellow→ right  (east)
-  Offset _homeCenter(PlayerColor color, double cell) {
+  /// Place du pion [slot] d'une couleur ARRIVÉE, en unités de case.
+  ///
+  /// Chaque triangle de maison a son sommet au centre du plateau (7,5 ;
+  /// 7,5) et sa base — l'hypoténuse — sur le bord extérieur du bloc
+  /// central, du côté de sa couleur :
+  ///
+  ///   bleu   → sud     rouge → ouest
+  ///   vert   → nord    jaune → est
+  ///
+  /// Les 4 pions se rangent sur 4 parts ÉGALES de cette hypoténuse : le
+  /// pion [slot] occupe le MILIEU de la part n° [slot], soit les fractions
+  /// 1/8, 3/8, 5/8 et 7/8 de la largeur. Ils sont donc symétriques deux à
+  /// deux par rapport à l'axe du triangle, et aucun n'en recouvre un autre
+  /// — avant, les quatre se superposaient sur un point unique.
+  ///
+  /// La PROFONDEUR ne change pas : c'est celle où le pion unique se posait,
+  /// aux deux tiers du sommet vers la base. Le triangle y mesure exactement
+  /// 2 cases de large, d'où un pas de 0,5 case entre voisins.
+  static Offset homeSlotCenter(PlayerColor color, int slot) {
+    const center = 7.5;
+    const half = 1.5;             // demi-côté du bloc central, en cases
+    const depth = 2 / 3;          // fraction parcourue du sommet vers la base
+    const reach = half * depth;   // 1,0 : distance du centre à la rangée
+    const step = (2 * reach) / 4; // 0,5 : largeur d'une part
+    final along = (slot.clamp(0, 3) - 1.5) * step;
     switch (color) {
-      case PlayerColor.blue:   return Offset(7.5 * cell, 8.5 * cell);
-      case PlayerColor.red:    return Offset(6.5 * cell, 7.5 * cell);
-      case PlayerColor.green:  return Offset(7.5 * cell, 6.5 * cell);
-      case PlayerColor.yellow: return Offset(8.5 * cell, 7.5 * cell);
+      case PlayerColor.blue:   return Offset(center + along, center + reach);
+      case PlayerColor.green:  return Offset(center + along, center - reach);
+      case PlayerColor.red:    return Offset(center - reach, center + along);
+      case PlayerColor.yellow: return Offset(center + reach, center + along);
     }
   }
+
+  Offset _homeCenter(PlayerColor color, int slot, double cell) =>
+      homeSlotCenter(color, slot) * cell;
 
   /// Center of home-column cell [position] (0..4) for the given [color].
   /// Position 0 = entry from ring, position 4 = cell just before center.
@@ -3091,7 +3124,11 @@ class BoardView extends StatelessWidget {
                   case PawnLocation.homeColumn:
                     return 'hc_${p.color.name}_$pos';
                   case PawnLocation.home:
-                    return 'home_${p.color.name}';
+                    // Chaque pion arrivé a DÉJÀ sa place propre sur
+                    // l'hypoténuse : le grouper avec ses coéquipiers lui
+                    // ajouterait un décalage latéral par-dessus, et les
+                    // quatre repartiraient de travers.
+                    return 'home_${p.color.name}_${p.id}';
                 }
               }
               final groups = <String, List<Pawn>>{};
