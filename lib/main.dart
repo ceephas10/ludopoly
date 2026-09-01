@@ -236,7 +236,7 @@ class BoardScreenState extends State<BoardScreen>
   int _manualValue = 1;
 
   /// Right-panel tab. `'commandes'` = Centre de commandes (default),
-  /// `'rules'` = Règles du jeu.
+  /// `'rules'` = Règles du jeu, `'settings'` = Settings.
   String _panelTab = 'commandes';
 
   /// Game rules state. **In-memory for now** — persistence across app
@@ -2207,6 +2207,11 @@ class _ControlPanel extends StatelessWidget {
                         label: Text('Règles du jeu'),
                         icon: Icon(Icons.rule, size: 18),
                       ),
+                      ButtonSegment(
+                        value: 'settings',
+                        label: Text('Settings'),
+                        icon: Icon(Icons.settings, size: 18),
+                      ),
                     ],
                     selected: {panelTab},
                     onSelectionChanged: (s) => onChangePanelTab(s.first),
@@ -2276,6 +2281,18 @@ class _ControlPanel extends StatelessWidget {
                       onToggleVortex: onToggleVortex,
                       chanceEnabled: chanceEnabled,
                       onToggleChance: onToggleChance,
+                    ),
+                  ),
+                ] else if (panelTab == 'settings') ...[
+                  // ---- Onglet Settings : même mécanique que les Règles,
+                  //      contenu à venir — les paramètres s'ajouteront ici,
+                  //      chacun dans sa _SectionCard.
+                  _SectionCard(
+                    title: 'Paramètres',
+                    child: Text(
+                      'Aucun paramètre pour l\'instant.',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: cs.onSurfaceVariant),
                     ),
                   ),
                 ] else ...[
