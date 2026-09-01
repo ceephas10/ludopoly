@@ -8,6 +8,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'board_path.dart' show ring;
+import 'player_color.dart';
 import 'upgrades.dart' show SpecialCells;
 
 class BoardPainter extends CustomPainter {
@@ -141,25 +142,32 @@ class BoardPainter extends CustomPainter {
       }
     }
     if (showVortex) {
-      // Vortex BONS : une spirale blanche sur chaque case de départ.
+      // UNE case par couleur, juste devant son départ, peinte à SA couleur
+      // — « elle est à votre couleur et vous seul pouvez l'utiliser ». Elle
+      // porte les DEUX formes côte à côte : la spirale claire (la bonne) et
+      // la spirale sombre (le trou noir).
       for (final color in SpecialCells.startOf.keys) {
-        final c = ring[SpecialCells.goodVortexCell(color)].pos;
-        _drawSpiral(canvas, c.dx * cell, c.dy * cell, cell, Colors.white);
-      }
-      // Vortex MAUVAIS : une spirale sombre sur la 1re case du couloir de
-      // chaque couleur (l'entrée de la dernière ligne droite).
-      const badCells = [
-        [1.5, 7.5],   // rouge
-        [7.5, 1.5],   // vert
-        [13.5, 7.5],  // jaune
-        [7.5, 13.5],  // bleu
-      ];
-      for (final b in badCells) {
-        _drawSpiral(canvas, b[0] * cell, b[1] * cell, cell,
+        final c = ring[SpecialCells.vortexCell(color)].pos;
+        final cx = c.dx * cell;
+        final cy = c.dy * cell;
+        final r = Rect.fromCenter(
+            center: Offset(cx, cy), width: cell * 0.96, height: cell * 0.96);
+        canvas.drawRect(r, fill..color = _playerColors[color]!);
+        final off = cell * 0.21;
+        _drawSpiral(canvas, cx - off, cy, cell * 0.55, Colors.white);
+        _drawSpiral(canvas, cx + off, cy, cell * 0.55,
             const Color(0xE6202020));
       }
     }
   }
+
+  /// Couleur de plateau de chaque joueur, pour peindre sa case Vortex.
+  static const Map<PlayerColor, Color> _playerColors = {
+    PlayerColor.red: _red,
+    PlayerColor.green: _green,
+    PlayerColor.blue: _blue,
+    PlayerColor.yellow: _yellow,
+  };
 
   /// Petite spirale d'Archimède (statique — le rendu animé, s'il arrive un
   /// jour, sera un asset du Studio Animations).

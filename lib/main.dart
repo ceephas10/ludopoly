@@ -3451,11 +3451,11 @@ class _UpgradesCard extends StatelessWidget {
         row(
           icon: Icons.cyclone,
           title: 'Cases Vortex / Trou noir',
-          sub: 'La bonne : votre case de départ vous aspire vers celle de '
-              'l\'adversaire en diagonale (+26 cases). La mauvaise : la '
-              '1re case de votre dernière ligne droite vous renvoie à '
-              'l\'entrée de la sienne. Chacune est à votre couleur — vous '
-              'seul l\'utilisez.',
+          sub: 'Une case par couleur, juste devant votre case de départ, '
+              'et à votre couleur — vous seul l\'utilisez. Elle porte deux '
+              'formes : la bonne vous envoie sur la case de départ de '
+              'l\'adversaire en diagonale, la mauvaise sur sa dernière '
+              'ligne droite.',
           value: vortexEnabled,
           onChanged: onToggleVortex,
         ),

@@ -1141,29 +1141,27 @@ class GameController {
   }
 
   /// Vortex — appliqué à l'atterrissage d'un coup de dé, jamais à un
-  /// déplacement de carte. Chaque vortex n'agit QUE pour sa couleur.
+  /// déplacement de carte.
+  ///
+  /// UNE SEULE case par couleur, juste devant sa case de départ, et elle
+  /// n'agit QUE pour sa couleur. Elle porte deux formes : le pion part
+  /// soit sur la case de départ de la diagonale (la bonne), soit sur la
+  /// case de sa dernière ligne droite (la mauvaise).
   void _applyVortexOnLanding(Pawn p) {
     if (!upgrades.vortexEnabled) return;
-    // Le BON : posé sur sa propre case de départ, le pion est aspiré vers
-    // la case de départ de l'adversaire en diagonale (+26 pas d'un coup).
-    if (p.location == PawnLocation.ring &&
-        p.position == SpecialCells.goodVortexCell(p.color)) {
+    if (p.location != PawnLocation.ring) return;
+    if (p.position != SpecialCells.vortexCell(p.color)) return;
+    final diag = _fr[SpecialCells.diagonalOf[p.color]!];
+    if (upgrades.rng.nextBool()) {
       p.position = SpecialCells.goodVortexTarget(p.color);
       upgrades.addNotice(
-          'Vortex ${_fr[p.color]} : le pion ${p.id + 1} est aspiré vers la '
-          'case de départ de ${_fr[SpecialCells.diagonalOf[p.color]!]} !');
-      return;
-    }
-    // Le MAUVAIS : posé sur la première case de SON couloir final, le pion
-    // est renvoyé sur l'anneau, à l'entrée de la dernière ligne droite de
-    // la diagonale — la moitié du plateau à refaire.
-    if (p.location == PawnLocation.homeColumn && p.position == 0) {
-      p.location = PawnLocation.ring;
+          'Vortex ${_fr[p.color]} : le pion ${p.id + 1} file sur la case '
+          'de départ de $diag !');
+    } else {
       p.position = SpecialCells.badVortexTarget(p.color);
       upgrades.addNotice(
-          'Trou noir ${_fr[p.color]} : le pion ${p.id + 1} est renvoyé à '
-          'l\'entrée de la ligne droite de '
-          '${_fr[SpecialCells.diagonalOf[p.color]!]}…');
+          'Trou noir ${_fr[p.color]} : le pion ${p.id + 1} est envoyé sur '
+          'la dernière ligne droite de $diag…');
     }
   }
 

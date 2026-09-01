@@ -6,17 +6,19 @@
 //
 // GÉOMÉTRIE (verrouillée par test/upgrades_test.dart) :
 //
-//   * Vortex BON — la case de départ de chaque couleur (« première case
-//     après la boîte départ »). Elle est déjà peinte à votre couleur sur
-//     le plateau, ce qui colle au « elle est à votre couleur » de la spec.
-//     Un pion qui s'y pose est aspiré vers la case de départ de
-//     l'adversaire EN DIAGONALE (+26 pas). Réservé à la couleur
-//     propriétaire : un pion adverse posé dessus ne bouge pas.
+//   * Case VORTEX / TROU NOIR — UNE SEULE case par couleur, située juste
+//     DEVANT sa première case de départ (départ + 1 pas). Elle est à la
+//     couleur de son propriétaire et lui seul peut l'utiliser : un pion
+//     adverse qui s'y pose ne bouge pas.
 //
-//   * Vortex MAUVAIS — la première case du couloir final de chaque couleur
-//     (« première case de votre dernière ligne droite »), elle aussi à
-//     votre couleur. Le pion est renvoyé sur l'anneau, à l'entrée de la
-//     dernière ligne droite de l'adversaire en diagonale.
+//     Cette unique case porte DEUX FORMES, et c'est l'une ou l'autre qui
+//     s'applique quand un pion s'y arrête :
+//       - la BONNE  → le pion file sur la case de départ de l'adversaire
+//                     EN DIAGONALE ;
+//       - la MAUVAISE → le pion est envoyé sur la case de la dernière
+//                     ligne droite de ce même adversaire.
+//     Laquelle des deux ? Tirée à pile ou face, comme le reste du hasard
+//     de LudoPoly — voir [LudoUpgrades.rng].
 //
 //   * Cases CHANCE — 4 cases NEUTRES (elles ne portent la couleur d'aucun
 //     joueur, cf. Annexe B), placées 2 cases AVANT chaque étoile de
@@ -476,15 +478,15 @@ class SpecialCells {
     PlayerColor.yellow: PlayerColor.red,
   };
 
-  /// Vortex BON d'une couleur : sa case de départ.
-  static int goodVortexCell(PlayerColor c) => startOf[c]!;
+  /// L'UNIQUE case Vortex d'une couleur : juste devant sa case de départ.
+  static int vortexCell(PlayerColor c) => (startOf[c]! + 1) % ringSize;
 
-  /// Cible du vortex bon : la case de départ de la diagonale.
+  /// Cible de la BONNE forme : la case de départ de la diagonale.
   static int goodVortexTarget(PlayerColor c) => startOf[diagonalOf[c]!]!;
 
-  /// Cible du vortex MAUVAIS : la case d'anneau qui précède l'entrée du
-  /// couloir de la diagonale (son 50e pas) — l'« entrée de la dernière
-  /// ligne droite de l'adversaire en diagonale ».
+  /// Cible de la MAUVAISE forme : la case d'anneau de la dernière ligne
+  /// droite de la diagonale, celle d'où elle entre dans son couloir (son
+  /// 50e pas).
   static int badVortexTarget(PlayerColor c) =>
       (startOf[diagonalOf[c]!]! + 50) % ringSize;
 
