@@ -492,17 +492,20 @@ class BoardScreenState extends State<BoardScreen>
   int get _shownDice =>
       _controller.lastRoll > 0 ? _controller.lastRoll : _initialDiceFace;
 
-  /// Couleur RETENUE par le dé pendant qu'un pion parcourt ses cases.
-  /// Le moteur passe la main dès que le coup est appliqué, c'est-à-dire au
-  /// DÉBUT de l'animation ; sans cette retenue le dé changerait de couleur
-  /// alors que le pion est encore en train de compter. `null` = pas de
-  /// trajet en cours, le dé suit le joueur courant.
-  PlayerColor? _diceColorHold;
+  /// Couleur RETENUE pendant qu'un pion parcourt ses cases. Le moteur
+  /// passe la main dès que le coup est appliqué, c'est-à-dire au DÉBUT de
+  /// l'animation ; sans cette retenue le dé et le Yard clignotant
+  /// sauteraient au joueur suivant alors que le pion est encore en train
+  /// de compter. `null` = pas de trajet en cours, on suit le joueur
+  /// courant.
+  PlayerColor? _activeColorHold;
 
-  /// Couleur affichée par le dé : celle du pion qui compte tant qu'il
-  /// n'est pas arrivé, sinon celle du joueur dont c'est le tour.
-  PlayerColor get _shownDiceColor =>
-      _diceColorHold ?? _controller.currentColor;
+  /// Couleur du siège ACTIF : celle du pion qui compte ses cases tant
+  /// qu'il n'est pas arrivé, sinon celle du joueur dont c'est le tour.
+  /// Elle commande les DEUX indicateurs de tour : la couleur du dé
+  /// central et le Yard qui clignote.
+  PlayerColor get _activeColor =>
+      _activeColorHold ?? _controller.currentColor;
 
   /// One idle-animation index (1..5) per pawn, drawn once at startup.
   late final Map<Pawn, int> _pawnAnimIdx;
@@ -1294,8 +1297,9 @@ class BoardScreenState extends State<BoardScreen>
       } else {
         _animating = true;
       }
-      // Le dé garde la couleur du pion tant qu'il n'a pas fini de compter.
-      _diceColorHold = p.color;
+      // Le dé garde la couleur du pion — et son Yard continue de
+      // clignoter — tant qu'il n'a pas fini de compter ses cases.
+      _activeColorHold = p.color;
       // On force l'affichage sur la 1re case du trajet ; le pion glissera
       // ensuite de case en case jusqu'à sa position réelle.
       if (path.length > 1) _travelStep[p] = path.first;
@@ -1347,8 +1351,8 @@ class BoardScreenState extends State<BoardScreen>
         _travelStep.remove(p);
         _travelEndTimers.remove(p);
         // Le pion est arrivé : c'est MAINTENANT que le dé prend la couleur
-        // du joueur suivant.
-        _diceColorHold = null;
+        // du joueur suivant et que le clignotement passe à son Yard.
+        _activeColorHold = null;
       });
       // L'attaquant est arrivé et la pause est écoulée : les pions capturés
       // quittent MAINTENANT la case, en rembobinant leur parcours à
@@ -1601,7 +1605,7 @@ class BoardScreenState extends State<BoardScreen>
     }
     _returnTimers.clear();
     _travelStep.clear();
-    _diceColorHold = null;
+    _activeColorHold = null;
     _captureOverride.clear();
     _animating = false;
   }
@@ -1695,7 +1699,7 @@ class BoardScreenState extends State<BoardScreen>
       setState(() => _hoverInfo = null);
       return;
     }
-    final color = _shownDiceColor;
+    final color = _activeColor;
     setState(() {
       _hoverInfo = 'Dé ${color.name} · valeur $_shownDice';
     });
@@ -1776,7 +1780,7 @@ class BoardScreenState extends State<BoardScreen>
                       showCanvas: _showCanvas,
                       playerCount: _playerCount,
                       diceValue: _shownDice,
-                      diceColor: _shownDiceColor,
+                      activeColor: _activeColor,
                       currentPlayerColor: _controller.currentColor,
                       paused: _paused,
                       canRollDice: _canRollNow,
@@ -1824,7 +1828,7 @@ class BoardScreenState extends State<BoardScreen>
                       setState(() {
                         _manualPlayer = c;
                         // Immediately switch the controller's current player
-                        // so the central dice picks up the new color.
+                        // so the blinking Yard moves to the new color.
                         final idx = _controller.turnOrder.indexOf(c);
                         if (idx >= 0) {
                           _controller.currentPlayerIdx = idx;
@@ -3084,10 +3088,11 @@ class BoardView extends StatelessWidget {
   /// dernière valeur sortie jusqu'au lancer suivant.
   final int diceValue;
 
-  /// Couleur du dé central. Ce n'est PAS toujours [currentPlayerColor] :
-  /// pendant qu'un pion compte ses cases, le dé garde la couleur de ce
-  /// pion et ne passe au joueur suivant qu'à son ARRIVÉE.
-  final PlayerColor diceColor;
+  /// Couleur du siège ACTIF — celle du dé central ET du Yard qui
+  /// clignote. Ce n'est PAS toujours [currentPlayerColor] : pendant qu'un
+  /// pion compte ses cases, les deux indicateurs restent sur la couleur de
+  /// ce pion et ne passent au joueur suivant qu'à son ARRIVÉE.
+  final PlayerColor activeColor;
   final PlayerColor currentPlayerColor;
   /// Plateau gelé : voile « Pause » par-dessus, et les pions cessent même
   /// leur animation d'attente — sinon le plateau respire encore et la pause
@@ -3130,7 +3135,7 @@ class BoardView extends StatelessWidget {
     required this.players,
     required this.game,
     required this.diceValue,
-    required this.diceColor,
+    required this.activeColor,
     required this.currentPlayerColor,
     this.paused = false,
     required this.canRollDice,
@@ -3172,17 +3177,6 @@ class BoardView extends StatelessWidget {
   // need to remember where the container is anchored on screen — which is
   // the cell center for every position (base / ring / home column).
   static const double _pawnVisibleCenterFrac = 0.5;
-
-  // Center of each player's dice, in global cell coordinates. Each dice
-  // occupies the 2x2 cell square diagonally inward from the base's outer
-  // corner: red 32/33/47/48, green 41/42/56/57, blue 167/168/182/183,
-  // yellow 176/177/191/192.
-  static const Map<PlayerColor, Offset> _diceCenter = {
-    PlayerColor.red:    Offset(3.0,  3.0),
-    PlayerColor.green:  Offset(12.0, 3.0),
-    PlayerColor.blue:   Offset(3.0,  12.0),
-    PlayerColor.yellow: Offset(12.0, 12.0),
-  };
 
   // Center (in cell units) of each player's name label, placed in the
   // bottom row of its base. Targets: red 77/78, green 86/87, blue 212/213,
@@ -3339,7 +3333,7 @@ class BoardView extends StatelessWidget {
                 top: (c.biggest.height - diceSize) / 2,
                 width: diceSize,
                 height: diceSize,
-                child: const _DiceFace(value: 1, playerColor: null),
+                child: const _DiceFace(value: 1),
               ),
             ],
           );
@@ -3366,6 +3360,26 @@ class BoardView extends StatelessWidget {
               child: CustomPaint(painter: BoardPainter()),
             ),
 
+            // Le Yard du siège actif CLIGNOTE, en écho à la couleur du dé
+            // central : les deux disent à qui de jouer — humain comme
+            // ordinateur. Posé sous les étiquettes et les pions pour ne
+            // voler aucun clic ni recouvrir personne.
+            () {
+              final corner = _baseCorner[activeColor]!;
+              return Positioned(
+                left: corner.dx * cell,
+                top:  corner.dy * cell,
+                width: 6 * cell,
+                height: 6 * cell,
+                child: YardBlink(
+                  playerColor: activeColor,
+                  color: _colorOf(activeColor),
+                  paused: paused,
+                  strokeWidth: (cell * 0.14).clamp(2.0, 6.0),
+                ),
+              );
+            }(),
+
             // Player name labels — sitting in the bottom row of each base.
             for (final p in players)
               () {
@@ -3390,7 +3404,7 @@ class BoardView extends StatelessWidget {
                 );
               }(),
 
-            // Single central dice in the current player's color. Clickable
+            // Single central dice in the active player's color. Clickable
             // during the rolling phase.
             () {
               final size = cell * 1.6;
@@ -3412,7 +3426,7 @@ class BoardView extends StatelessWidget {
                     onTap: clickable ? onRollDice : null,
                     child: _DiceFace(
                       value: diceValue,
-                      playerColor: diceColor,
+                      playerColor: activeColor,
                     ),
                   ),
                 ),
@@ -4520,10 +4534,110 @@ class _MiniDiceButton extends StatelessWidget {
 /// Dice at rest, rendered from a colored face PNG keyed by [playerColor] and
 /// [value]. When [playerColor] is null we use the generic white dice (used by
 /// the 5/6-player center slot).
+/// Halo CLIGNOTANT posé sur le Yard (la base) du siège dont c'est le tour.
+///
+/// Il double la couleur du dé central : les deux indiquent à qui de jouer,
+/// que le siège soit tenu par un humain ou par l'ordinateur. Il pulse en
+/// continu dans la couleur du joueur, et se FIGE pendant la pause : un
+/// plateau gelé ne doit plus respirer du tout.
+class YardBlink extends StatefulWidget {
+  /// Couleur logique du siège — exposée pour que les tests puissent
+  /// vérifier QUEL Yard clignote sans lire des pixels.
+  final PlayerColor playerColor;
+
+  /// Couleur peinte (celle du plateau pour ce siège).
+  final Color color;
+
+  /// Plateau en pause : la pulsation s'arrête net et reprend où elle en
+  /// était, comme tout le reste du jeu.
+  final bool paused;
+
+  /// Épaisseur du liseré, déjà mise à l'échelle de la case par l'appelant.
+  final double strokeWidth;
+
+  const YardBlink({
+    super.key,
+    required this.playerColor,
+    required this.color,
+    required this.paused,
+    required this.strokeWidth,
+  });
+
+  @override
+  State<YardBlink> createState() => YardBlinkState();
+}
+
+class YardBlinkState extends State<YardBlink>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+
+  /// Visible dans les tests : la pulsation bat-elle en ce moment ?
+  bool get animating => _pulse.isAnimating;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      // Un battement par seconde environ : assez vif pour attirer l'œil,
+      // assez lent pour ne pas fatiguer sur toute une partie.
+      duration: const Duration(milliseconds: 550),
+    );
+    if (!widget.paused) _pulse.repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(YardBlink oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.paused && _pulse.isAnimating) {
+      _pulse.stop(); // gelé sur sa luminosité du moment
+    } else if (!widget.paused && !_pulse.isAnimating) {
+      _pulse.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Jamais dans le chemin des clics : le Yard reste entièrement cliquable
+    // (pions en base, étiquette du joueur…).
+    return IgnorePointer(
+      child: FadeTransition(
+        opacity: CurvedAnimation(
+          parent: _pulse,
+          curve: Curves.easeInOut,
+        ).drive(Tween(begin: 0.15, end: 0.95)),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(widget.strokeWidth * 2),
+            border: Border.all(
+              color: widget.color,
+              width: widget.strokeWidth,
+            ),
+            // Teinte CONTENUE dans le Yard. Un boxShadow débordait en voile
+            // blanchâtre sur les cases de l'anneau voisines — les pions y
+            // devenaient laiteux. Le halo reste chez lui.
+            color: widget.color.withValues(alpha: 0.20),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _DiceFace extends StatelessWidget {
   final int value;
+
+  /// Couleur du joueur dont c'est le tour : le dé la reprend à chaque
+  /// passage de main. `null` = dé blanc neutre (plateaux 5/6 joueurs, où
+  /// l'interaction n'est pas encore câblée).
   final PlayerColor? playerColor;
-  const _DiceFace({required this.value, required this.playerColor});
+  const _DiceFace({required this.value, this.playerColor});
 
   String get _assetPath {
     final colorName = playerColor?.name ?? 'white';

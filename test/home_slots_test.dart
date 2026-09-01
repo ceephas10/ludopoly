@@ -6,7 +6,6 @@
 // Tout est vérifiable ici : `homeSlotCenter` est une fonction pure, en
 // unités de case, sans le moindre widget.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludopoly/main.dart';
 
