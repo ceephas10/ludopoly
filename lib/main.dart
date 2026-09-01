@@ -1836,6 +1836,10 @@ class BoardScreenState extends State<BoardScreen>
                           if (_controller.upgrades.captorOf(p) != null)
                             p: _controller.upgrades.captorOf(p)!,
                       },
+                      deferredHands: {
+                        for (final p in _activePlayers)
+                          p.color: _controller.upgrades.handOf(p.color),
+                      },
                       showRing: _showRing,
                       showGrid: _showGrid,
                       showCanvas: _showCanvas,
@@ -3177,6 +3181,84 @@ class _GameModeCard extends StatelessWidget {
   }
 }
 
+/// Un des 4 emplacements de cartes différées d'une base.
+///
+/// Vide, c'est un liseré discret qui montre la place disponible ; occupé,
+/// c'est une carte violette — la couleur NEUTRE des cases Chance, celle
+/// qui n'appartient à aucun joueur. Le nom complet vient à l'infobulle.
+/// L'emplacement ne prend aucun clic : c'est le panneau « Vos cartes
+/// chance » qui sert à les jouer, cible comprise.
+class _DeferredCardSlot extends StatelessWidget {
+  final ChanceCard? card;
+  final double cell;
+  const _DeferredCardSlot({required this.card, required this.cell});
+
+  /// Couleur neutre des cartes chance — la même que celle des cases « ? ».
+  static const Color _chance = Color(0xFF8E44AD);
+
+  static IconData _iconFor(ChanceCard c) => switch (c.action) {
+        CardAction.setDice => Icons.casino,
+        CardAction.setState => c.pawnState == CardPawnState.invulnerable
+            ? Icons.shield
+            : Icons.ac_unit,
+        CardAction.noExit => Icons.u_turn_left,
+        CardAction.captureToBox => Icons.inventory_2,
+        CardAction.skipTurn => Icons.block,
+        _ => Icons.style,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(cell * 0.12);
+    final c = card;
+    if (c == null) {
+      return IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            border: Border.all(
+              color: _chance.withValues(alpha: 0.35),
+              width: math.max(1.0, cell * 0.03),
+            ),
+          ),
+        ),
+      );
+    }
+    // Une carte-dé porte sa valeur en clair : c'est ce qui la distingue
+    // des cinq autres.
+    final isDice = c.action == CardAction.setDice;
+    return Tooltip(
+      message: c.nameFr,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          color: _chance,
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.85),
+            width: math.max(1.0, cell * 0.03),
+          ),
+        ),
+        child: Center(
+          child: isDice
+              ? Text(
+                  '${c.value}',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: (cell * 0.46).clamp(8.0, 26.0),
+                  ),
+                )
+              : Icon(
+                  _iconFor(c),
+                  color: Colors.white,
+                  size: (cell * 0.46).clamp(8.0, 26.0),
+                ),
+        ),
+      ),
+    );
+  }
+}
+
 /// La main de cartes différées du joueur courant : au plus 4 cartes, une
 /// seule jouable par tour. Une carte « CHOSEN » demande d'abord de
 /// désigner sa cible ; les autres partent d'un clic.
@@ -3503,6 +3585,11 @@ class BoardView extends StatelessWidget {
   /// différée « le pion capturé va dans VOTRE boîte »). Ils s'affichent
   /// dans la base de leur geôlier, à leur couleur d'origine.
   final Map<Pawn, PlayerColor> prisonerOf;
+
+  /// Les cartes différées de chaque couleur, rangées dans SA base. La
+  /// spec prévoit 4 emplacements ; ils sont dessinés vides tant que le
+  /// joueur n'a rien tiré.
+  final Map<PlayerColor, List<ChanceCard>> deferredHands;
   const BoardView({
     super.key,
     required this.players,
@@ -3531,6 +3618,7 @@ class BoardView extends StatelessWidget {
     this.showVortexCells = false,
     this.showChanceCells = false,
     this.prisonerOf = const {},
+    this.deferredHands = const {},
   });
 
   // Top-left grid cell of each colored base (the board is a 15x15 grid).
@@ -3546,6 +3634,23 @@ class BoardView extends StatelessWidget {
   // 4 pawn slots inside a base. Y is computed dynamically so the pawn bbox
   // is stuck to the top of the (enlarged) white inner area with a 3px margin.
   static const List<double> _spotsX = [1.5, 2.5, 3.5, 4.5];
+
+  /// Hauteur (en cases, depuis le coin de la base) de la rangée des 4
+  /// emplacements de cartes différées. Elle se loge dans la bande libre
+  /// entre les pions — rangés en haut, vers 1,1 — et l'étiquette du
+  /// joueur, posée en bas vers 5,5.
+  static const double _cardRowY = 3.3;
+
+  /// Centre de l'emplacement de carte [slot] (0..3) dans la base de
+  /// [color], en unités de case. Fonction pure : les tests la vérifient
+  /// sans monter le moindre widget.
+  static Offset cardSlotCenter(PlayerColor color, int slot) {
+    final corner = _baseCorner[color]!;
+    return Offset(
+      corner.dx + _spotsX[slot.clamp(0, 3)],
+      corner.dy + _cardRowY,
+    );
+  }
 
   // ---- Pawn-image visible bounds inside its bbox -------------------------
   // The content-bbox-based scaling in `_PawnAnimatedGif` already aligns the
@@ -3785,6 +3890,29 @@ class BoardView extends StatelessWidget {
                   ),
                 );
               }(),
+
+            // Les 4 emplacements de cartes différées, rangés dans la base
+            // de chaque joueur. Ils n'apparaissent qu'avec les cases
+            // Chance : sans elles, aucune carte ne peut être tirée.
+            if (showChanceCells)
+              for (final p in players)
+                for (int slot = 0; slot < LudoUpgrades.handLimit; slot++)
+                  () {
+                    final hand = deferredHands[p.color] ?? const <ChanceCard>[];
+                    final center = cardSlotCenter(p.color, slot);
+                    final w = cell * 0.86;
+                    final h = cell * 1.15;
+                    return Positioned(
+                      left: center.dx * cell - w / 2,
+                      top: center.dy * cell - h / 2,
+                      width: w,
+                      height: h,
+                      child: _DeferredCardSlot(
+                        card: slot < hand.length ? hand[slot] : null,
+                        cell: cell,
+                      ),
+                    );
+                  }(),
 
             // Single central dice in the active player's color. Clickable
             // during the rolling phase.

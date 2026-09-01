@@ -174,4 +174,124 @@ void main() {
       await shutdownApp(t);
     });
   });
+
+  group('🗃️ Les 4 emplacements de cartes dans les bases', () {
+    test('ils sont rangés dans la base, sans toucher pions ni étiquette',
+        () {
+      for (final color in PlayerColor.values) {
+        final places = {
+          for (int slot = 0; slot < 4; slot++)
+            BoardView.cardSlotCenter(color, slot),
+        };
+        expect(places.length, 4,
+            reason: '${color.name} : 4 emplacements distincts');
+
+        for (int slot = 0; slot < 4; slot++) {
+          final p = BoardView.cardSlotCenter(color, slot);
+          // Coin de la base : (0,0) (9,0) (0,9) (9,9) selon la couleur.
+          final cx = color == PlayerColor.green || color == PlayerColor.yellow
+              ? 9.0
+              : 0.0;
+          final cy = color == PlayerColor.blue || color == PlayerColor.yellow
+              ? 9.0
+              : 0.0;
+          final dx = p.dx - cx;
+          final dy = p.dy - cy;
+          // Dans l'aire blanche intérieure (0,5 → 5,5 depuis le coin).
+          expect(dx, inInclusiveRange(0.5, 5.5),
+              reason: '${color.name}#$slot déborde de la base');
+          expect(dy, inInclusiveRange(0.5, 5.5));
+          // Sous les pions (rangés vers 1,1) et au-dessus de l'étiquette
+          // du joueur (posée vers 5,5).
+          expect(dy, greaterThan(2.0),
+              reason: '${color.name}#$slot chevaucherait les pions');
+          expect(dy, lessThan(4.8),
+              reason: '${color.name}#$slot chevaucherait l\'étiquette');
+        }
+      }
+    });
+
+    test('les 4 sont alignés et régulièrement espacés', () {
+      for (final color in PlayerColor.values) {
+        final ys = {
+          for (int slot = 0; slot < 4; slot++)
+            BoardView.cardSlotCenter(color, slot).dy,
+        };
+        expect(ys.length, 1, reason: '${color.name} : une seule rangée');
+        final xs = [
+          for (int slot = 0; slot < 4; slot++)
+            BoardView.cardSlotCenter(color, slot).dx,
+        ]..sort();
+        for (int i = 1; i < xs.length; i++) {
+          expect(xs[i] - xs[i - 1], closeTo(1.0, 1e-9),
+              reason: '${color.name} : espacement irrégulier $xs');
+        }
+      }
+    });
+
+    testWidgets('4 emplacements par couleur, vides puis remplis', (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+
+      // Une carte en main, mais les cases Chance encore éteintes : aucun
+      // emplacement ne se dessine sur le plateau.
+      final dice6 = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_6');
+      c.upgrades.addToHand(PlayerColor.red, dice6);
+      await t.pump(const Duration(milliseconds: 300));
+      expect(find.byTooltip(dice6.nameFr), findsNothing,
+          reason: 'pas de cases Chance, pas de cartes sur le plateau');
+
+      state.setChanceEnabled(true);
+      await t.pump(const Duration(milliseconds: 300));
+
+      final board = t.widget<BoardView>(find.byType(BoardView));
+      expect(board.deferredHands.keys.length, 4,
+          reason: 'les 4 couleurs ont leur rangée');
+      expect(board.deferredHands[PlayerColor.red], [dice6]);
+      for (final color in PlayerColor.values.where((x) => x != PlayerColor.red)) {
+        expect(board.deferredHands[color], isEmpty,
+            reason: '${color.name} n\'a rien tiré');
+      }
+      expect(find.byTooltip(dice6.nameFr), findsOneWidget,
+          reason: 'la carte posée dans la base porte son nom');
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('une carte tirée EN PARTIE apparaît dans la base du joueur',
+        (t) async {
+      // Le vrai chemin, de bout en bout : le pion tombe sur une case
+      // Chance, le tirage donne une différée, elle se range en main — et
+      // elle doit se voir dans la base, sans autre intervention.
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      final me = c.currentColor;
+
+      ChanceCard? drawn;
+      for (int attempt = 0; attempt < 40 && drawn == null; attempt++) {
+        // On replace le pion à 3 pas de la case Chance et on relance.
+        final p = c.state.pawnsByColor[me]![0];
+        p.location = PawnLocation.ring;
+        p.position = GameController.startIdx(me) + 3;
+        c.currentPlayerIdx = c.turnOrder.indexOf(me);
+        c.phase = TurnPhase.rolling;
+        state.rollManualForTest(3);
+        await t.pump(const Duration(milliseconds: 700));
+        await t.pump(const Duration(seconds: 2));
+        final hand = c.upgrades.handOf(me);
+        if (hand.isNotEmpty) drawn = hand.first;
+      }
+
+      expect(drawn, isNotNull,
+          reason: 'une chance sur deux : une différée doit finir par tomber');
+      await t.pump(const Duration(milliseconds: 300));
+      expect(find.byTooltip(drawn!.nameFr), findsOneWidget,
+          reason: 'la carte tirée en partie doit se voir dans la base');
+
+      await shutdownApp(t);
+    });
+  });
 }
