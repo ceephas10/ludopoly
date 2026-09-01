@@ -336,20 +336,24 @@ void main() {
       expect(blue.position, 5);
     });
 
-    test('l\'invulnérabilité EXPIRE après 2 tours complets du propriétaire',
+    test('l\'invulnérabilité couvre 2 tours du propriétaire, puis EXPIRE',
         () {
+      // « Pendant 2 tours », effet immédiat : le tour du tirage et le
+      // suivant. Il faut qu'elle protège TOUT DE SUITE — c'est pendant
+      // que les adversaires jouent, juste après, que le pion risque de
+      // se faire manger.
       final c = newGame();
       final blue = c.state.pawnsByColor[PlayerColor.blue]![0];
       putOnRing(c, blue, 5);
       c.applyImmediateCard(card('IMM_PAWN_INVULNERABLE'), blue);
-      expect(c.upgrades.isInvulnerable(blue), isTrue);
+      expect(c.upgrades.isInvulnerable(blue), isTrue,
+          reason: 'protégé dès le tirage');
       c.upgrades.onTurnCompleted(PlayerColor.blue);
-      expect(c.upgrades.isInvulnerable(blue), isTrue, reason: 'tour 1');
-      c.upgrades.onTurnCompleted(PlayerColor.blue);
-      expect(c.upgrades.isInvulnerable(blue), isTrue, reason: 'tour 2');
+      expect(c.upgrades.isInvulnerable(blue), isTrue,
+          reason: '2e tour, encore protégé');
       c.upgrades.onTurnCompleted(PlayerColor.blue);
       expect(c.upgrades.isInvulnerable(blue), isFalse,
-          reason: 'expirée après 2 tours complets');
+          reason: 'expirée au 3e tour : 2 tours, pas plus');
     });
 
     test('re-tirer la carte REMPLACE la durée : ça repart pour 2 tours',
@@ -359,13 +363,14 @@ void main() {
       putOnRing(c, blue, 5);
       c.applyImmediateCard(card('IMM_PAWN_INVULNERABLE'), blue);
       c.upgrades.onTurnCompleted(PlayerColor.blue);
-      c.upgrades.onTurnCompleted(PlayerColor.blue);
       // Sur le point d'expirer — nouvelle carte : la durée repart.
       c.applyImmediateCard(card('IMM_PAWN_INVULNERABLE'), blue);
       c.upgrades.onTurnCompleted(PlayerColor.blue);
-      c.upgrades.onTurnCompleted(PlayerColor.blue);
       expect(c.upgrades.isInvulnerable(blue), isTrue,
           reason: 'la nouvelle durée compte depuis le re-tirage');
+      c.upgrades.onTurnCompleted(PlayerColor.blue);
+      expect(c.upgrades.isInvulnerable(blue), isFalse,
+          reason: 'et elle ne dure pas plus de 2 tours non plus');
     });
 
     test('un pion FIGÉ n\'est plus jouable, puis se libère', () {
@@ -376,9 +381,8 @@ void main() {
       arm(c, 3);
       expect(c.movablePawns(), isEmpty,
           reason: 'le seul pion en jeu est figé, et 3 ne sort pas de base');
-      // Le tour vient de passer faute de coup (roll → _nextPlayer), ce qui
-      // compte déjà un tour bleu terminé. Encore deux : l'état expire.
-      c.upgrades.onTurnCompleted(PlayerColor.blue);
+      // Le lancer sans coup jouable a déjà passé la main : un tour bleu
+      // est compté. Encore un, et l'état expire.
       c.upgrades.onTurnCompleted(PlayerColor.blue);
       c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.blue);
       arm(c, 3);
@@ -456,7 +460,9 @@ void main() {
   });
 
   group('🎰 La case Chance en partie réelle', () {
-    test('atterrir dessus tire une carte, l\'annonce, et l\'applique', () {
+    test('atterrir dessus tire une carte et l\'annonce', () {
+      // Le tirage est à pile ou face : immédiate appliquée sur-le-champ,
+      // ou différée rangée en main. Les deux DOIVENT être annoncées.
       final c = newGame();
       c.upgrades
         ..chanceEnabled = true
@@ -467,7 +473,8 @@ void main() {
       c.movePawn(p);
       final notices = c.upgrades.takeNotices();
       expect(notices, isNotEmpty);
-      expect(notices.first, contains('Carte chance'));
+      expect(notices.first,
+          anyOf(contains('Carte chance'), contains('Carte différée')));
     });
 
     test('le vortex précède la capture : atterrir sur le trou noir capture '
@@ -501,6 +508,387 @@ void main() {
       expect(c.upgrades.doneTurns(PlayerColor.blue), 0);
       expect(c.upgrades.vortexEnabled, isTrue,
           reason: 'les interrupteurs de l\'utilisateur survivent au reset');
+    });
+  });
+
+  // =======================================================================
+  //  LES CARTES DIFFÉRÉES
+  // =======================================================================
+
+  group('🎴 Le talon différé et la main', () {
+    test('chaque joueur a SON talon, complet, et il tourne pareil', () {
+      final u = LudoUpgrades()..rng = math.Random(11);
+      final blue = [
+        for (int i = 0; i < kDeferredCards.length; i++)
+          u.drawDeferred(PlayerColor.blue).id,
+      ];
+      expect(blue.toSet().length, kDeferredCards.length,
+          reason: 'une carte par instruction, chacune une seule fois');
+      // Le talon du rouge est indépendant : il n'a rien consommé.
+      final red = [
+        for (int i = 0; i < kDeferredCards.length; i++)
+          u.drawDeferred(PlayerColor.red).id,
+      ];
+      expect(red.toSet().length, kDeferredCards.length);
+      // Épuisé, le talon bleu est RETOURNÉ, pas remélangé.
+      final blue2 = [
+        for (int i = 0; i < kDeferredCards.length; i++)
+          u.drawDeferred(PlayerColor.blue).id,
+      ];
+      expect(blue2, blue.reversed.toList());
+    });
+
+    test('sur une case Chance : UNE CHANCE SUR DEUX immédiate / différée',
+        () {
+      final u = LudoUpgrades()..rng = math.Random(2024);
+      int deferred = 0;
+      const draws = 2000;
+      for (int i = 0; i < draws; i++) {
+        if (u.drawOnChance(PlayerColor.blue).kind == CardKind.deferred) {
+          deferred++;
+        }
+      }
+      // Une pièce honnête sur 2000 tirages : l'écart type vaut ~22, donc
+      // 900..1100 laisse une marge de 4 σ — le test ne peut pas clignoter,
+      // mais il attraperait un tirage franchement biaisé.
+      expect(deferred, inInclusiveRange(900, 1100),
+          reason: '$deferred différées sur $draws tirages');
+    });
+
+    test('le talon contient bien les 6 cartes-dés, de 1 à 6', () {
+      final dice = kDeferredCards
+          .where((c) => c.action == CardAction.setDice)
+          .map((c) => c.value)
+          .toList()
+        ..sort();
+      expect(dice, [1, 2, 3, 4, 5, 6]);
+    });
+
+    test('la main tient 4 cartes, pas une de plus', () {
+      final u = LudoUpgrades()..rng = math.Random(5);
+      for (int i = 0; i < LudoUpgrades.handLimit; i++) {
+        expect(u.addToHand(PlayerColor.blue, kDeferredCards[i]), isTrue);
+      }
+      expect(u.handOf(PlayerColor.blue).length, 4);
+      expect(u.handIsFull(PlayerColor.blue), isTrue);
+      expect(u.addToHand(PlayerColor.blue, kDeferredCards[5]), isFalse,
+          reason: 'la 5e carte n\'a pas de place');
+      expect(u.handOf(PlayerColor.blue).length, 4);
+    });
+
+    test('une case Chance donne parfois une différée : elle va EN MAIN, '
+        'sans rien appliquer', () {
+      // rng(1) : le premier drawOnChance tombe sur une différée.
+      final c = newGame();
+      c.upgrades
+        ..chanceEnabled = true
+        ..rng = math.Random(1);
+      var landed = 0;
+      // On rejoue l'arrivée sur la case Chance jusqu'à tomber sur une
+      // différée : le tirage est à pile ou face, il vient vite.
+      while (c.upgrades.handOf(PlayerColor.blue).isEmpty && landed < 40) {
+        final p = c.state.pawnsByColor[PlayerColor.blue]![0];
+        putOnRing(c, p, 2);
+        c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.blue);
+        arm(c, 4); // 2 + 4 = 6 → case Chance
+        c.movePawn(p);
+        c.upgrades.takeNotices();
+        landed++;
+      }
+      expect(c.upgrades.handOf(PlayerColor.blue), isNotEmpty,
+          reason: 'une chance sur deux : la différée doit finir par tomber');
+      expect(c.upgrades.handOf(PlayerColor.blue).first.kind,
+          CardKind.deferred);
+    });
+  });
+
+  group('🎴 Jouer une carte différée', () {
+    /// Met [card] dans la main de [c] et lui donne la main.
+    ChanceCard give(GameController g, PlayerColor c, String id) {
+      final card = kDeferredCards.singleWhere((x) => x.id == id);
+      g.upgrades.addToHand(c, card);
+      g.currentPlayerIdx = g.turnOrder.indexOf(c);
+      g.phase = TurnPhase.rolling;
+      return card;
+    }
+
+    test('« Avant » ne se joue qu\'avant le lancer, « Après » qu\'après',
+        () {
+      final c = newGame();
+      final avant = give(c, PlayerColor.blue, 'DEF_DICE_4');
+      final apres = give(c, PlayerColor.blue, 'DEF_CAPTURE_TO_MY_BOX');
+
+      expect(c.canPlayDeferred(PlayerColor.blue, avant), isTrue);
+      expect(c.canPlayDeferred(PlayerColor.blue, apres), isFalse,
+          reason: 'une carte « Après » attend le lancer');
+
+      c.roll(6); // phase moving (une sortie est possible)
+      expect(c.phase, TurnPhase.moving);
+      expect(c.canPlayDeferred(PlayerColor.blue, avant), isFalse,
+          reason: 'trop tard pour une carte « Avant »');
+      expect(c.canPlayDeferred(PlayerColor.blue, apres), isTrue);
+    });
+
+    test('on ne joue qu\'UNE carte différée par tour', () {
+      final c = newGame();
+      final a = give(c, PlayerColor.blue, 'DEF_DICE_4');
+      final b = give(c, PlayerColor.blue, 'DEF_DICE_2');
+
+      expect(c.playDeferredCard(PlayerColor.blue, a), 4);
+      expect(c.canPlayDeferred(PlayerColor.blue, b), isFalse,
+          reason: 'une seule carte à la fois');
+      // Tour suivant : on peut rejouer.
+      c.upgrades.onTurnCompleted(PlayerColor.blue);
+      expect(c.canPlayDeferred(PlayerColor.blue, b), isTrue);
+    });
+
+    test('la carte quitte la main une fois jouée', () {
+      final c = newGame();
+      final card = give(c, PlayerColor.blue, 'DEF_DICE_5');
+      expect(c.upgrades.handOf(PlayerColor.blue), contains(card));
+      expect(c.playDeferredCard(PlayerColor.blue, card), 5);
+      expect(c.upgrades.handOf(PlayerColor.blue), isEmpty);
+    });
+
+    test('carte-dé : elle remplace le lancer par SA valeur', () {
+      for (int v = 1; v <= 6; v++) {
+        final c = newGame();
+        final card = give(c, PlayerColor.blue, 'DEF_DICE_$v');
+        expect(c.playDeferredCard(PlayerColor.blue, card), v);
+      }
+    });
+
+    test('un joueur ne peut pas jouer la carte d\'un autre', () {
+      final c = newGame();
+      final card = give(c, PlayerColor.blue, 'DEF_DICE_3');
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
+      expect(c.canPlayDeferred(PlayerColor.blue, card), isFalse,
+          reason: 'ce n\'est pas au bleu de jouer');
+    });
+
+    test('« Votre pion invulnérable » vise VOS pions, pas ceux des autres',
+        () {
+      final c = newGame();
+      final card = give(c, PlayerColor.blue, 'DEF_PAWN_INVULNERABLE');
+      final mine = c.state.pawnsByColor[PlayerColor.blue]![0];
+      final theirs = c.state.pawnsByColor[PlayerColor.red]![0];
+
+      final targets = c.deferredPawnTargets(PlayerColor.blue, card);
+      expect(targets, contains(mine));
+      expect(targets, isNot(contains(theirs)));
+
+      // Une cible illégale ne fait RIEN : la carte reste en main.
+      expect(
+          c.playDeferredCard(PlayerColor.blue, card, targetPawn: theirs),
+          isNull);
+      expect(c.upgrades.handOf(PlayerColor.blue), contains(card));
+
+      c.playDeferredCard(PlayerColor.blue, card, targetPawn: mine);
+      expect(c.upgrades.isInvulnerable(mine), isTrue);
+    });
+
+    test('« Pion adverse figé » vise les ADVERSAIRES, et le fige vraiment',
+        () {
+      final c = newGame();
+      final card = give(c, PlayerColor.blue, 'DEF_OPPONENT_FROZEN');
+      final foe = c.state.pawnsByColor[PlayerColor.red]![0];
+      putOnRing(c, foe, 10);
+
+      final targets = c.deferredPawnTargets(PlayerColor.blue, card);
+      expect(targets, contains(foe));
+      expect(targets,
+          isNot(contains(c.state.pawnsByColor[PlayerColor.blue]![0])));
+
+      c.playDeferredCard(PlayerColor.blue, card, targetPawn: foe);
+      expect(c.upgrades.isFrozen(foe), isTrue);
+
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
+      arm(c, 3);
+      expect(c.movablePawns(), isNot(contains(foe)),
+          reason: 'un pion figé ne se joue pas');
+    });
+  });
+
+  group('🔁 « Le pion adverse refait le tour »', () {
+    test('le pion désigné passe devant sa sortie et repart pour un tour',
+        () {
+      final c = newGame();
+      final card =
+          kDeferredCards.singleWhere((x) => x.id == 'DEF_OPPONENT_NO_EXIT');
+      c.upgrades.addToHand(PlayerColor.blue, card);
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.blue);
+      c.phase = TurnPhase.rolling;
+
+      final foe = c.state.pawnsByColor[PlayerColor.red]![0];
+      putOnRing(c, foe, 48);
+      c.playDeferredCard(PlayerColor.blue, card, targetPawn: foe);
+      expect(c.upgrades.mustLap(foe), isTrue);
+
+      // Rouge joue : 48 + 3 = 51 → il devrait entrer dans son couloir.
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
+      arm(c, 3);
+      expect(c.movablePawns(), contains(foe));
+      c.movePawn(foe);
+      expect(foe.location, PawnLocation.ring,
+          reason: 'il ne prend PAS sa sortie');
+      expect((foe.position - GameController.startIdx(PlayerColor.red) + 52) %
+          52, 51);
+      expect(c.upgrades.mustLap(foe), isFalse,
+          reason: 'la marque est consommée : il rentrera au tour prochain');
+    });
+
+    test('la marque consommée, le pion rentre normalement', () {
+      final c = newGame();
+      final foe = c.state.pawnsByColor[PlayerColor.red]![0];
+      putOnRing(c, foe, 48);
+      c.upgrades.markMustLap(foe);
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
+      arm(c, 3);
+      c.movePawn(foe);
+      // Deuxième tour : il repart de 51, il lui faut 51 pas… on le
+      // replace juste devant sa sortie pour vérifier l'entrée.
+      putOnRing(c, foe, 48);
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
+      arm(c, 3);
+      c.movePawn(foe);
+      expect(foe.location, PawnLocation.homeColumn,
+          reason: 'plus de marque : la sortie fonctionne');
+    });
+  });
+
+  group('📦 « Le pion capturé va dans VOTRE boîte »', () {
+    test('la victime est retenue, et son 6 la ramène chez elle', () {
+      final c = newGame();
+      final card = kDeferredCards
+          .singleWhere((x) => x.id == 'DEF_CAPTURE_TO_MY_BOX');
+      final blue = c.state.pawnsByColor[PlayerColor.blue]![0];
+      final red = c.state.pawnsByColor[PlayerColor.red]![0];
+      putOnRing(c, blue, 5);
+      red.location = PawnLocation.ring;
+      red.position = 8 + 2; // cellule 10, non sûre
+
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.blue);
+      arm(c, 5); // 5 + 5 = 10 → capture
+      c.upgrades.addToHand(PlayerColor.blue, card);
+      // « Après » : la carte se joue le dé en main, avant de bouger.
+      expect(c.playDeferredCard(PlayerColor.blue, card), isNull);
+      expect(c.upgrades.captureToBoxArmed(PlayerColor.blue), isTrue);
+
+      c.movePawn(blue);
+      expect(red.location, PawnLocation.base, reason: 'capturé');
+      expect(c.upgrades.captorOf(red), PlayerColor.blue,
+          reason: 'retenu dans la boîte du bleu');
+
+      // Le 6 du rouge ne le fait pas SORTIR : il rentre chez lui d'abord.
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
+      arm(c, 6);
+      expect(c.movablePawns(), contains(red));
+      c.movePawn(red);
+      expect(red.location, PawnLocation.base,
+          reason: 'il regagne sa boîte, il ne part pas sur l\'anneau');
+      expect(c.upgrades.isPrisoner(red), isFalse, reason: 'libéré');
+    });
+
+    test('sans la carte, une capture ordinaire ne retient personne', () {
+      final c = newGame();
+      final blue = c.state.pawnsByColor[PlayerColor.blue]![0];
+      final red = c.state.pawnsByColor[PlayerColor.red]![0];
+      putOnRing(c, blue, 5);
+      red.location = PawnLocation.ring;
+      red.position = 10;
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.blue);
+      arm(c, 5);
+      c.movePawn(blue);
+      expect(red.location, PawnLocation.base);
+      expect(c.upgrades.isPrisoner(red), isFalse);
+    });
+  });
+
+  group('⏭️ « Ne joue pas pendant 2 tours »', () {
+    test('le joueur désigné est sauté deux fois, puis revient', () {
+      final c = newGame();
+      final card =
+          kDeferredCards.singleWhere((x) => x.id == 'DEF_SKIP_CHOSEN');
+      c.upgrades.addToHand(PlayerColor.blue, card);
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.blue);
+      c.phase = TurnPhase.rolling;
+
+      final targets = c.deferredPlayerTargets(PlayerColor.blue, card);
+      expect(targets, isNot(contains(PlayerColor.blue)),
+          reason: 'on ne se punit pas soi-même');
+      c.playDeferredCard(PlayerColor.blue, card,
+          targetPlayer: PlayerColor.red);
+      expect(c.upgrades.skipsLeft(PlayerColor.red), 2);
+
+      // L'ordre est bleu → rouge → vert → jaune. Rouge est sauté deux fois.
+      c.skipTurn();
+      expect(c.currentColor, PlayerColor.green,
+          reason: 'rouge est sauté (1/2)');
+      c.skipTurn(); // vert → jaune
+      c.skipTurn(); // jaune → bleu
+      c.skipTurn(); // bleu → rouge sauté (2/2) → vert
+      expect(c.currentColor, PlayerColor.green,
+          reason: 'rouge est sauté (2/2)');
+      expect(c.upgrades.skipsLeft(PlayerColor.red), 0);
+
+      c.skipTurn(); // vert → jaune
+      c.skipTurn(); // jaune → bleu
+      c.skipTurn(); // bleu → rouge, qui rejoue enfin
+      expect(c.currentColor, PlayerColor.red);
+    });
+
+    test('« le joueur à votre droite » = celui qui joue juste avant vous',
+        () {
+      final c = newGame();
+      // Ordre : bleu → rouge → vert → jaune.
+      expect(c.rightNeighbourOf(PlayerColor.red), PlayerColor.blue);
+      expect(c.rightNeighbourOf(PlayerColor.blue), PlayerColor.yellow);
+
+      final card =
+          kDeferredCards.singleWhere((x) => x.id == 'DEF_SKIP_RIGHT');
+      c.upgrades.addToHand(PlayerColor.green, card);
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.green);
+      c.phase = TurnPhase.rolling;
+      c.playDeferredCard(PlayerColor.green, card);
+      expect(c.upgrades.skipsLeft(PlayerColor.red), 2,
+          reason: 'le voisin de droite du vert est le rouge');
+    });
+
+    test('sans aucune carte de saut, l\'ordre du tour est INCHANGÉ', () {
+      final c = newGame();
+      final seen = <PlayerColor>[];
+      for (int i = 0; i < 8; i++) {
+        c.skipTurn();
+        seen.add(c.currentColor);
+      }
+      expect(seen, [
+        PlayerColor.red, PlayerColor.green, PlayerColor.yellow,
+        PlayerColor.blue,
+        PlayerColor.red, PlayerColor.green, PlayerColor.yellow,
+        PlayerColor.blue,
+      ]);
+    });
+  });
+
+  group('🔌 Les cartes différées ne troublent rien quand rien n\'est joué',
+      () {
+    test('main vide au départ, pour tout le monde', () {
+      final c = newGame();
+      for (final color in PlayerColor.values) {
+        expect(c.upgrades.handOf(color), isEmpty);
+      }
+    });
+
+    test('reset() vide aussi les mains et les prisonniers', () {
+      final c = newGame();
+      c.upgrades.addToHand(PlayerColor.blue, kDeferredCards.first);
+      final red = c.state.pawnsByColor[PlayerColor.red]![0];
+      c.upgrades.imprison(red, PlayerColor.blue);
+      c.upgrades.setSkipTurns(PlayerColor.green, 2);
+      c.reset();
+      expect(c.upgrades.handOf(PlayerColor.blue), isEmpty);
+      expect(c.upgrades.isPrisoner(red), isFalse);
+      expect(c.upgrades.skipsLeft(PlayerColor.green), 0);
     });
   });
 }

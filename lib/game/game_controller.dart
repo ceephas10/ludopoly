@@ -388,6 +388,10 @@ class GameController {
         return !wouldSelfStack(p, v);
       case PawnLocation.ring:
         final taken = _stepsTaken(p);
+        // Branchement Améliorations : un pion DÉSIGNÉ « refait le tour »
+        // passe devant sa sortie sans la prendre — il n'a donc plus de
+        // compte exact à respecter tant que la marque n'est pas consommée.
+        if (upgrades.mustLap(p)) return true;
         // SEULE exclusion d'un pion déjà en jeu : dépasser la maison. Le
         // compte doit être exact pour rentrer, c'est une règle du Ludo.
         //
@@ -479,6 +483,20 @@ class GameController {
 
     switch (p.location) {
       case PawnLocation.base:
+        // Branchement Améliorations : un pion PRISONNIER (rangé dans la
+        // boîte d'un adversaire par une carte différée) ne sort pas — son
+        // 6 le ramène d'abord dans SA propre boîte départ.
+        if (upgrades.isPrisoner(p)) {
+          upgrades.freePrisoner(p);
+          upgrades.addNotice(
+              'Le pion ${p.id + 1} de ${_fr[p.color]} regagne sa boîte '
+              'départ.');
+          lastMovedThisTurn = p;
+          // Le 6 donne un tour supplémentaire, comme toute sortie.
+          diceValue = 0;
+          phase = TurnPhase.rolling;
+          return;
+        }
         // Exit on 6 → start cell.
         p.location = PawnLocation.ring;
         p.position = _startIdx[p.color]!;
@@ -486,6 +504,16 @@ class GameController {
       case PawnLocation.ring:
         final taken = _stepsTaken(p);
         final newSteps = taken + diceValue;
+        // Branchement Améliorations : le pion désigné passe sa sortie et
+        // repart pour un tour complet. La marque est consommée ici.
+        if (upgrades.mustLap(p) && newSteps > lastRingStep) {
+          p.position = (_startIdx[p.color]! + newSteps) % ringSize;
+          upgrades.clearLap(p);
+          upgrades.addNotice(
+              'Le pion ${p.id + 1} de ${_fr[p.color]} passe devant sa '
+              'sortie : il doit refaire le tour.');
+          break;
+        }
         if (newSteps <= lastRingStep) {
           p.position = (_startIdx[p.color]! + newSteps) % ringSize;
         } else if (newSteps == totalStepsToHome) {
@@ -529,6 +557,15 @@ class GameController {
           if (other.location == PawnLocation.ring &&
               other.position == p.position) {
             _returnPawnToBase(other);
+            // Branchement Améliorations : carte « le pion capturé va dans
+            // VOTRE boîte » armée juste avant ce coup.
+            if (upgrades.consumeCaptureToBox(p.color)) {
+              upgrades.imprison(other, p.color);
+              upgrades.addNotice(
+                  'Le pion ${other.id + 1} de ${_fr[other.color]} est '
+                  'retenu dans la boîte de ${_fr[p.color]} — il lui faudra '
+                  'un 6 pour rentrer chez lui.');
+            }
             captured = true;
           }
         }
@@ -1041,12 +1078,30 @@ class GameController {
     // vient de jouer reprend simplement la main sur SON tour, et les autres
     // mènent le leur de leur côté. C'est tout l'objet du mode.
     if (fastMode) return;
-    for (int i = 0; i < turnOrder.length; i++) {
-      currentPlayerIdx = (currentPlayerIdx + 1) % turnOrder.length;
-      final c = currentColor;
-      if (!hasFinished(c)) return;
-      final partner = _partners[c];
-      if (teamMode && partner != null && !_allPawnsHome(partner)) return;
+    // Branchement Améliorations : une couleur qui « ne joue pas pendant 2
+    // tours » consomme un tour sauté et l'on cherche la suivante. Sans
+    // aucune carte de ce type en jeu, `consumeSkip` rend toujours `false`
+    // et la boucle interne se comporte EXACTEMENT comme avant.
+    for (int attempt = 0; attempt < turnOrder.length * 3; attempt++) {
+      bool skipped = false;
+      for (int i = 0; i < turnOrder.length; i++) {
+        currentPlayerIdx = (currentPlayerIdx + 1) % turnOrder.length;
+        final c = currentColor;
+        if (!hasFinished(c)) {
+          if (!upgrades.consumeSkip(c)) return;
+          upgrades.addNotice('${_fr[c]} passe son tour.');
+          skipped = true;
+          break;
+        }
+        final partner = _partners[c];
+        if (teamMode && partner != null && !_allPawnsHome(partner)) {
+          if (!upgrades.consumeSkip(c)) return;
+          upgrades.addNotice('${_fr[c]} passe son tour.');
+          skipped = true;
+          break;
+        }
+      }
+      if (!skipped) return; // tout le monde a terminé : rien à chercher
     }
   }
 
@@ -1119,10 +1174,141 @@ class GameController {
     if (!upgrades.chanceEnabled) return;
     if (p.location != PawnLocation.ring) return;
     if (!SpecialCells.chanceCells.contains(p.position)) return;
-    final card = upgrades.drawImmediate();
+    // Une chance sur deux : carte immédiate ou carte différée (Annexe B).
+    final card = upgrades.drawOnChance(p.color);
+    if (card.kind == CardKind.deferred) {
+      if (upgrades.addToHand(p.color, card)) {
+        upgrades.addNotice('Carte différée pour ${_fr[p.color]} : '
+            '« ${card.nameFr} » — à jouer à votre tour.');
+      } else {
+        // Il n'y a de la place que pour 4 cartes différées.
+        upgrades.addNotice('Carte différée pour ${_fr[p.color]} : '
+            '« ${card.nameFr} » — main pleine, la carte est perdue.');
+      }
+      return;
+    }
     upgrades.addNotice(
         'Carte chance pour ${_fr[p.color]} : « ${card.nameFr} »');
     applyImmediateCard(card, p);
+  }
+
+  /// Le joueur « à votre droite ». Le tour passe à votre gauche, donc le
+  /// voisin de droite est celui qui vient de jouer — le PRÉCÉDENT dans
+  /// l'ordre du tour.
+  PlayerColor rightNeighbourOf(PlayerColor c) {
+    final i = turnOrder.indexOf(c);
+    if (i < 0) return c;
+    return turnOrder[(i - 1 + turnOrder.length) % turnOrder.length];
+  }
+
+  /// [c] peut-il jouer [card] maintenant ? Une carte « Avant » se joue
+  /// avant le lancer, une carte « Après » après ; et l'on ne joue qu'UNE
+  /// carte différée par tour.
+  bool canPlayDeferred(PlayerColor c, ChanceCard card) {
+    if (phase == TurnPhase.gameOver) return false;
+    if (currentColor != c) return false;
+    if (upgrades.hasPlayedThisTurn(c)) return false;
+    if (!upgrades.handOf(c).contains(card)) return false;
+    return switch (card.timing) {
+      ChanceTiming.beforeRoll => phase == TurnPhase.rolling,
+      ChanceTiming.afterRoll => phase == TurnPhase.moving,
+      ChanceTiming.onChance => false, // ne se joue pas à la main
+    };
+  }
+
+  /// Les pions que [c] peut désigner pour [card] (cartes « CHOSEN »).
+  /// Vide pour les cartes qui ne visent pas un pion.
+  List<Pawn> deferredPawnTargets(PlayerColor c, ChanceCard card) {
+    if (card.entity != CardEntity.pawn ||
+        card.selection != CardSelection.chosen) {
+      return const [];
+    }
+    final wantsOwn = card.scope == CardScope.self;
+    return [
+      for (final entry in state.pawnsByColor.entries)
+        if (wantsOwn ? entry.key == c : !_sameTeam(entry.key, c))
+          for (final p in entry.value)
+            // Un pion arrivé au centre ne subit plus rien.
+            if (p.location != PawnLocation.home)
+              // « Refaire le tour » ne veut rien dire pour un pion encore
+              // en base ou déjà dans son couloir.
+              if (card.action != CardAction.noExit ||
+                  p.location == PawnLocation.ring)
+                p,
+    ];
+  }
+
+  /// Les joueurs que [c] peut désigner pour [card] (cartes « CHOSEN »).
+  List<PlayerColor> deferredPlayerTargets(PlayerColor c, ChanceCard card) {
+    if (card.entity != CardEntity.player ||
+        card.selection != CardSelection.chosen) {
+      return const [];
+    }
+    return [
+      for (final other in turnOrder)
+        if (!_sameTeam(other, c) && !hasFinished(other)) other,
+    ];
+  }
+
+  /// Joue la carte différée [card] au nom de [c].
+  ///
+  /// Renvoie la valeur de dé imposée par une carte-dé, ou `null` pour
+  /// toute autre carte. L'appelant (l'interface) se charge alors de
+  /// lancer le tour avec cette valeur. Ne fait rien — et renvoie `null` —
+  /// si la carte n'est pas jouable maintenant.
+  int? playDeferredCard(
+    PlayerColor c,
+    ChanceCard card, {
+    Pawn? targetPawn,
+    PlayerColor? targetPlayer,
+  }) {
+    if (!canPlayDeferred(c, card)) return null;
+    if (card.needsTarget &&
+        card.entity == CardEntity.pawn &&
+        (targetPawn == null ||
+            !deferredPawnTargets(c, card).contains(targetPawn))) {
+      return null;
+    }
+    if (card.needsTarget &&
+        card.entity == CardEntity.player &&
+        (targetPlayer == null ||
+            !deferredPlayerTargets(c, card).contains(targetPlayer))) {
+      return null;
+    }
+
+    int? forcedDice;
+    switch (card.action) {
+      case CardAction.setState:
+        upgrades.setPawnState(targetPawn!, card.pawnState!);
+        break;
+      case CardAction.noExit:
+        upgrades.markMustLap(targetPawn!);
+        break;
+      case CardAction.setDice:
+        forcedDice = card.value;
+        break;
+      case CardAction.captureToBox:
+        upgrades.armCaptureToBox(c);
+        break;
+      case CardAction.skipTurn:
+        final victim = targetPlayer ?? rightNeighbourOf(c);
+        upgrades.setSkipTurns(victim, card.value);
+        break;
+      // Les autres actions n'existent que sur les cartes immédiates.
+      case CardAction.move:
+      case CardAction.teleport:
+      case CardAction.captureAhead:
+      case CardAction.captureBehind:
+      case CardAction.releaseAll:
+      case CardAction.returnToBase:
+      case CardAction.modifyDice:
+        return null;
+    }
+
+    upgrades.removeFromHand(c, card);
+    upgrades.markPlayed(c);
+    upgrades.addNotice('${_fr[c]} joue « ${card.nameFr} »');
+    return forcedDice;
   }
 
   /// Applique une carte immédiate sur [p]. Public : les tests s'en servent
@@ -1167,6 +1353,13 @@ class GameController {
         break;
       case CardAction.modifyDice:
         upgrades.setDiceMode(p.color, card.diceMode!);
+        break;
+      // Actions réservées aux cartes DIFFÉRÉES : elles passent par
+      // [playDeferredCard], jamais par une case Chance.
+      case CardAction.setDice:
+      case CardAction.noExit:
+      case CardAction.captureToBox:
+      case CardAction.skipTurn:
         break;
     }
   }

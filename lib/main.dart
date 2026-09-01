@@ -15,6 +15,7 @@ import 'game/game_controller.dart';
 import 'game/game_state.dart';
 import 'game/pawn.dart';
 import 'game/player_color.dart';
+import 'game/upgrades.dart';
 export 'game/player_color.dart';
 
 void main() => runApp(const LudoPolyApp());
@@ -359,6 +360,27 @@ class BoardScreenState extends State<BoardScreen>
 
   void setChanceEnabled(bool on) =>
       setState(() => _controller.upgrades.chanceEnabled = on);
+
+  /// Joue une carte différée pour le joueur courant. Une carte-dé remplace
+  /// le lancer : on enchaîne alors sur le tour normal avec sa valeur, ce
+  /// qui fait passer le coup par le moteur comme n'importe quel lancer.
+  @visibleForTesting
+  void playDeferredCard(ChanceCard card,
+      {Pawn? targetPawn, PlayerColor? targetPlayer}) {
+    if (_paused) return;
+    final me = _controller.currentColor;
+    if (_lockedFor(me)) return;
+    final forced = _controller.playDeferredCard(me, card,
+        targetPawn: targetPawn, targetPlayer: targetPlayer);
+    setState(() {
+      final notices = _controller.upgrades.takeNotices();
+      for (final n in notices) {
+        debugPrint('[amélioration] $n');
+      }
+      if (notices.isNotEmpty) _autoNotice = notices.join('\n');
+    });
+    if (forced != null) _roll(forced);
+  }
 
   /// Le verrou qui s'applique à [c].
   bool _lockedFor(PlayerColor c) =>
@@ -1809,6 +1831,11 @@ class BoardScreenState extends State<BoardScreen>
                       game: _game,
                       showVortexCells: _controller.upgrades.vortexEnabled,
                       showChanceCells: _controller.upgrades.chanceEnabled,
+                      prisonerOf: {
+                        for (final p in _game.allPawns)
+                          if (_controller.upgrades.captorOf(p) != null)
+                            p: _controller.upgrades.captorOf(p)!,
+                      },
                       showRing: _showRing,
                       showGrid: _showGrid,
                       showCanvas: _showCanvas,
@@ -1920,6 +1947,15 @@ class BoardScreenState extends State<BoardScreen>
                     onToggleVortex: setVortexEnabled,
                     chanceEnabled: _controller.upgrades.chanceEnabled,
                     onToggleChance: setChanceEnabled,
+                    deferredHand:
+                        _controller.upgrades.handOf(_controller.currentColor),
+                    canPlayDeferred: (c) => _controller.canPlayDeferred(
+                        _controller.currentColor, c),
+                    deferredPawnTargets: (c) => _controller
+                        .deferredPawnTargets(_controller.currentColor, c),
+                    deferredPlayerTargets: (c) => _controller
+                        .deferredPlayerTargets(_controller.currentColor, c),
+                    onPlayDeferred: playDeferredCard,
                     aiTurbo: _aiTurbo,
                     onToggleAiTurbo: (v) {
                       setState(() => _aiTurbo = v);
@@ -2072,6 +2108,15 @@ class _ControlPanel extends StatelessWidget {
   final bool chanceEnabled;
   final ValueChanged<bool> onToggleChance;
 
+  /// Les cartes différées que le joueur courant tient en main, et de quoi
+  /// en jouer une.
+  final List<ChanceCard> deferredHand;
+  final bool Function(ChanceCard) canPlayDeferred;
+  final List<Pawn> Function(ChanceCard) deferredPawnTargets;
+  final List<PlayerColor> Function(ChanceCard) deferredPlayerTargets;
+  final void Function(ChanceCard, {Pawn? targetPawn, PlayerColor? targetPlayer})
+      onPlayDeferred;
+
   /// Mode Accélérateur : l'ordinateur joue deux fois plus vite.
   final bool aiTurbo;
   final ValueChanged<bool> onToggleAiTurbo;
@@ -2137,6 +2182,11 @@ class _ControlPanel extends StatelessWidget {
     required this.onToggleVortex,
     required this.chanceEnabled,
     required this.onToggleChance,
+    required this.deferredHand,
+    required this.canPlayDeferred,
+    required this.deferredPawnTargets,
+    required this.deferredPlayerTargets,
+    required this.onPlayDeferred,
     required this.aiTurbo,
     required this.onToggleAiTurbo,
     required this.aiDifficulty,
@@ -2296,6 +2346,23 @@ class _ControlPanel extends StatelessWidget {
                     ),
                   ),
                 ] else ...[
+                  // ---- Améliorations : la main de cartes différées du
+                  //      joueur courant. N'apparaît que si les cases
+                  //      Chance sont allumées ET qu'il tient des cartes.
+                  if (chanceEnabled && deferredHand.isNotEmpty) ...[
+                    _SectionCard(
+                      title: 'Vos cartes chance',
+                      child: _DeferredHandCard(
+                        hand: deferredHand,
+                        owner: currentPlayer.color,
+                        canPlay: canPlayDeferred,
+                        pawnTargets: deferredPawnTargets,
+                        playerTargets: deferredPlayerTargets,
+                        onPlay: onPlayDeferred,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
 
                 // ---- Setup card (left, half width) + nomenclature
                 //      thumbnail (right, half width, hover-zoom) ----
@@ -3110,6 +3177,141 @@ class _GameModeCard extends StatelessWidget {
   }
 }
 
+/// La main de cartes différées du joueur courant : au plus 4 cartes, une
+/// seule jouable par tour. Une carte « CHOSEN » demande d'abord de
+/// désigner sa cible ; les autres partent d'un clic.
+class _DeferredHandCard extends StatefulWidget {
+  final List<ChanceCard> hand;
+  final PlayerColor owner;
+  final bool Function(ChanceCard) canPlay;
+  final List<Pawn> Function(ChanceCard) pawnTargets;
+  final List<PlayerColor> Function(ChanceCard) playerTargets;
+  final void Function(ChanceCard, {Pawn? targetPawn, PlayerColor? targetPlayer})
+      onPlay;
+
+  const _DeferredHandCard({
+    required this.hand,
+    required this.owner,
+    required this.canPlay,
+    required this.pawnTargets,
+    required this.playerTargets,
+    required this.onPlay,
+  });
+
+  @override
+  State<_DeferredHandCard> createState() => _DeferredHandCardState();
+}
+
+class _DeferredHandCardState extends State<_DeferredHandCard> {
+  /// Cible choisie pour chaque carte qui en réclame une.
+  final Map<String, Pawn> _pawnChoice = {};
+  final Map<String, PlayerColor> _playerChoice = {};
+
+  static String _fr(PlayerColor c) => switch (c) {
+        PlayerColor.blue => 'bleu',
+        PlayerColor.red => 'rouge',
+        PlayerColor.green => 'vert',
+        PlayerColor.yellow => 'jaune',
+      };
+
+  static String _pawnLabel(Pawn p) =>
+      'pion ${p.id + 1} de ${_fr(p.color)}';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final card in widget.hand) () {
+          final playable = widget.canPlay(card);
+          final pawns = widget.pawnTargets(card);
+          final players = widget.playerTargets(card);
+          final needsPawn = pawns.isNotEmpty;
+          final needsPlayer = players.isNotEmpty;
+          final pawn = _pawnChoice[card.id];
+          final player = _playerChoice[card.id];
+          // Une carte à cible ne part qu'une fois la cible désignée.
+          final ready = playable &&
+              (!needsPawn || pawn != null) &&
+              (!needsPlayer || player != null);
+
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.style,
+                        size: 16,
+                        color: playable ? cs.primary : cs.onSurfaceVariant),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(card.nameFr,
+                          style: theme.textTheme.bodySmall),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.tonal(
+                      onPressed: ready
+                          ? () => widget.onPlay(card,
+                              targetPawn: pawn, targetPlayer: player)
+                          : null,
+                      child: const Text('Jouer'),
+                    ),
+                  ],
+                ),
+                if (needsPawn)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 24, top: 4),
+                    child: DropdownButton<Pawn>(
+                      isExpanded: true,
+                      value: pawns.contains(pawn) ? pawn : null,
+                      hint: const Text('Choisir un pion'),
+                      items: [
+                        for (final p in pawns)
+                          DropdownMenuItem(
+                              value: p, child: Text(_pawnLabel(p))),
+                      ],
+                      onChanged: (p) => setState(() {
+                        if (p != null) _pawnChoice[card.id] = p;
+                      }),
+                    ),
+                  ),
+                if (needsPlayer)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 24, top: 4),
+                    child: DropdownButton<PlayerColor>(
+                      isExpanded: true,
+                      value: players.contains(player) ? player : null,
+                      hint: const Text('Choisir un joueur'),
+                      items: [
+                        for (final c in players)
+                          DropdownMenuItem(value: c, child: Text(_fr(c))),
+                      ],
+                      onChanged: (c) => setState(() {
+                        if (c != null) _playerChoice[card.id] = c;
+                      }),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        }(),
+        Text(
+          'Main de ${_fr(widget.owner)} — ${widget.hand.length}/'
+          '${LudoUpgrades.handLimit} cartes. Une seule carte par tour ; '
+          'les cartes « Avant » se jouent avant le lancer, les « Après » '
+          'après.',
+          style: theme.textTheme.bodySmall?.copyWith(color: cs.outline),
+        ),
+      ],
+    );
+  }
+}
+
 /// Les Améliorations LudoPoly, dans l'onglet Règles du jeu : deux
 /// interrupteurs indépendants, basculables en pleine partie.
 class _UpgradesCard extends StatelessWidget {
@@ -3296,6 +3498,11 @@ class BoardView extends StatelessWidget {
   /// plateau. Éteints par défaut — le plateau de base ne change pas.
   final bool showVortexCells;
   final bool showChanceCells;
+
+  /// Pions RETENUS dans la boîte départ d'une autre couleur (carte
+  /// différée « le pion capturé va dans VOTRE boîte »). Ils s'affichent
+  /// dans la base de leur geôlier, à leur couleur d'origine.
+  final Map<Pawn, PlayerColor> prisonerOf;
   const BoardView({
     super.key,
     required this.players,
@@ -3323,6 +3530,7 @@ class BoardView extends StatelessWidget {
     this.playerCount = 4,
     this.showVortexCells = false,
     this.showChanceCells = false,
+    this.prisonerOf = const {},
   });
 
   // Top-left grid cell of each colored base (the board is a 15x15 grid).
@@ -3389,7 +3597,9 @@ class BoardView extends StatelessWidget {
     final loc = step?.location ?? overrideLoc?.location ?? p.location;
     final pos = step?.position ?? overrideLoc?.position ?? p.position;
     final cellCenter = switch (loc) {
-      PawnLocation.base       => _baseSlotCenter(p.color, pos, cell),
+      // Un pion prisonnier attend dans la boîte de son geôlier.
+      PawnLocation.base       =>
+          _baseSlotCenter(prisonerOf[p] ?? p.color, pos, cell),
       PawnLocation.ring       => _ringCellCenter(pos, cell),
       PawnLocation.homeColumn => _homeColumnCenter(p.color, pos, cell),
       // Un pion arrivé se range à SA place sur l'hypoténuse. L'index est
@@ -3636,7 +3846,11 @@ class BoardView extends StatelessWidget {
                 final pos = step?.position ?? overrideLoc?.position ?? p.position;
                 switch (loc) {
                   case PawnLocation.base:
-                    return 'base_${p.color.name}_$pos';
+                    // Un prisonnier occupe un créneau de la boîte de son
+                    // geôlier : il doit se GROUPER avec le pion qui s'y
+                    // trouve déjà, sinon les deux se superposent.
+                    final box = prisonerOf[p] ?? p.color;
+                    return 'base_${box.name}_$pos';
                   case PawnLocation.ring:
                     return 'ring_$pos';
                   case PawnLocation.homeColumn:
