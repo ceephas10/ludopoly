@@ -11,6 +11,7 @@ import 'ai_difficulty.dart';
 import 'game_state.dart';
 import 'pawn.dart';
 import 'player_color.dart';
+import 'upgrades.dart';
 
 enum TurnPhase {
   /// The current player needs to roll the dice (or have it set).
@@ -373,6 +374,9 @@ class GameController {
   /// home (the "help partner" rule kicks in only after you've finished).
   bool _canMoveAs(Pawn p, int v, PlayerColor playingFor) {
     if (v <= 0) return false;
+    // Branchement Améliorations : un pion FIGÉ par une carte chance ne
+    // bouge pas (inerte quand les Améliorations sont éteintes).
+    if (upgrades.isFrozen(p)) return false;
     if (!_sameTeam(p.color, playingFor)) return false;
     // Helping the partner: only allowed once [playingFor]'s own pions
     // are all at home.
@@ -506,6 +510,12 @@ class GameController {
         return; // never happens (filtered by _canMove)
     }
 
+    // Branchement Améliorations : le pion vient d'atterrir — un Vortex de
+    // SA couleur peut l'aspirer ailleurs AVANT la résolution de capture,
+    // qui s'applique alors à la case d'arrivée réelle. Inerte quand les
+    // Améliorations sont éteintes.
+    _applyVortexOnLanding(p);
+
     // Capture: opposing-team pawn(s) on the same non-safe ring cell go
     // back to base. In team mode, partner pawns on the cell are NEVER
     // captured.
@@ -513,6 +523,9 @@ class GameController {
       for (final color in state.pawnsByColor.keys) {
         if (_sameTeam(color, p.color)) continue;
         for (final other in state.pawnsByColor[color]!) {
+          // Branchement Améliorations : un pion INVULNÉRABLE ne se fait
+          // pas capturer — les deux pions cohabitent sur la case.
+          if (upgrades.isInvulnerable(other)) continue;
           if (other.location == PawnLocation.ring &&
               other.position == p.position) {
             _returnPawnToBase(other);
@@ -521,6 +534,10 @@ class GameController {
         }
       }
     }
+
+    // Branchement Améliorations : atterrir sur une case Chance tire une
+    // carte immédiate et l'applique. Inerte quand éteint.
+    _applyChanceOnLanding(p);
 
     lastMovedThisTurn = p;
 
@@ -583,6 +600,8 @@ class GameController {
     winner = null;
     ranking.clear();
     clearHistory();
+    // Branchement Améliorations : nouvelle partie, talon et effets à zéro.
+    upgrades.resetForNewGame();
   }
 
   // --- IA locale (mode "contre ordinateur") ---------------------------------
@@ -1011,6 +1030,9 @@ class GameController {
   /// joueur classé garde la main tant que son partenaire n'a pas fini —
   /// c'est la règle "aide ton partenaire".
   void _nextPlayer() {
+    // Branchement Améliorations : la couleur courante REND la main — son
+    // compteur de tours terminés avance (durées des cartes « 2 tours »).
+    upgrades.onTurnCompleted(currentColor);
     diceValue = 0;
     consecutiveSixes = 0;
     lastMovedThisTurn = null;
@@ -1025,6 +1047,202 @@ class GameController {
       if (!hasFinished(c)) return;
       final partner = _partners[c];
       if (teamMode && partner != null && !_allPawnsHome(partner)) return;
+    }
+  }
+
+  // --- Améliorations LudoPoly : cases Vortex + cases Chance -----------------
+  //
+  // Tout ce qui suit est ADDITIF. Éteint (défaut), rien ne change au Ludo
+  // de base — c'est verrouillé par test/upgrades_test.dart. La géométrie et
+  // l'état vivent dans lib/game/upgrades.dart ; ici il n'y a que
+  // l'application des effets sur la partie.
+
+  /// État des Améliorations (interrupteurs, talon, effets en cours).
+  final LudoUpgrades upgrades = LudoUpgrades();
+
+  static const Map<PlayerColor, String> _fr = {
+    PlayerColor.blue: 'bleu',
+    PlayerColor.red: 'rouge',
+    PlayerColor.green: 'vert',
+    PlayerColor.yellow: 'jaune',
+  };
+
+  /// Tire la valeur du dé pour [c], en respectant un éventuel modificateur
+  /// de carte chance (demi-dé, double-dé, deux dés). Sans modificateur,
+  /// c'est EXACTEMENT [pickDiceValue] — le dé de base reste strictement
+  /// uniforme.
+  int pickDiceValueFor(PlayerColor c, [math.Random? rng]) {
+    final r = rng ?? _rng;
+    switch (upgrades.activeDiceMode(c)) {
+      case null:
+        return pickDiceValue(r);
+      case CardDiceMode.limit:
+        return r.nextInt(3) + 1;
+      case CardDiceMode.double:
+        return (r.nextInt(6) + 1) * 2;
+      case CardDiceMode.twoDice:
+        return (r.nextInt(6) + 1) + (r.nextInt(6) + 1);
+    }
+  }
+
+  /// Vortex — appliqué à l'atterrissage d'un coup de dé, jamais à un
+  /// déplacement de carte. Chaque vortex n'agit QUE pour sa couleur.
+  void _applyVortexOnLanding(Pawn p) {
+    if (!upgrades.vortexEnabled) return;
+    // Le BON : posé sur sa propre case de départ, le pion est aspiré vers
+    // la case de départ de l'adversaire en diagonale (+26 pas d'un coup).
+    if (p.location == PawnLocation.ring &&
+        p.position == SpecialCells.goodVortexCell(p.color)) {
+      p.position = SpecialCells.goodVortexTarget(p.color);
+      upgrades.addNotice(
+          'Vortex ${_fr[p.color]} : le pion ${p.id + 1} est aspiré vers la '
+          'case de départ de ${_fr[SpecialCells.diagonalOf[p.color]!]} !');
+      return;
+    }
+    // Le MAUVAIS : posé sur la première case de SON couloir final, le pion
+    // est renvoyé sur l'anneau, à l'entrée de la dernière ligne droite de
+    // la diagonale — la moitié du plateau à refaire.
+    if (p.location == PawnLocation.homeColumn && p.position == 0) {
+      p.location = PawnLocation.ring;
+      p.position = SpecialCells.badVortexTarget(p.color);
+      upgrades.addNotice(
+          'Trou noir ${_fr[p.color]} : le pion ${p.id + 1} est renvoyé à '
+          'l\'entrée de la ligne droite de '
+          '${_fr[SpecialCells.diagonalOf[p.color]!]}…');
+    }
+  }
+
+  /// Case Chance — appliquée à l'atterrissage d'un coup de dé sur l'une
+  /// des 4 cases neutres : tire la carte du dessus du talon immédiat et
+  /// l'applique au pion tombé sur la case.
+  void _applyChanceOnLanding(Pawn p) {
+    if (!upgrades.chanceEnabled) return;
+    if (p.location != PawnLocation.ring) return;
+    if (!SpecialCells.chanceCells.contains(p.position)) return;
+    final card = upgrades.drawImmediate();
+    upgrades.addNotice(
+        'Carte chance pour ${_fr[p.color]} : « ${card.nameFr} »');
+    applyImmediateCard(card, p);
+  }
+
+  /// Applique une carte immédiate sur [p]. Public : les tests s'en servent
+  /// carte par carte, et la phase 2 (cartes différées) le réutilisera.
+  ///
+  /// Les effets de carte ne donnent JAMAIS de tour bonus — seuls le 6, la
+  /// capture au dé et l'arrivée au dé en donnent, comme avant.
+  void applyImmediateCard(ChanceCard card, Pawn p) {
+    switch (card.action) {
+      case CardAction.move:
+        _cardMove(p, card.value);
+        break;
+      case CardAction.teleport:
+        // « Juste devant la sortie » : le 50e pas, la bouche du couloir.
+        if (p.location == PawnLocation.ring) {
+          p.position = (_startIdx[p.color]! + lastRingStep) % ringSize;
+          _cardCaptureEnemiesAt(p);
+        }
+        break;
+      case CardAction.returnToBase:
+        _returnPawnToBase(p);
+        break;
+      case CardAction.releaseAll:
+        // Sortie groupée : les pions restés en base rejoignent la case de
+        // départ (l'empilement de sa propre couleur est légal). Le vortex
+        // ne se déclenche pas sur une sortie de carte.
+        for (final mate in state.pawnsByColor[p.color]!) {
+          if (mate.location == PawnLocation.base) {
+            mate.location = PawnLocation.ring;
+            mate.position = _startIdx[p.color]!;
+          }
+        }
+        break;
+      case CardAction.captureAhead:
+        _cardChase(p, forward: true);
+        break;
+      case CardAction.captureBehind:
+        _cardChase(p, forward: false);
+        break;
+      case CardAction.setState:
+        upgrades.setPawnState(p, card.pawnState!);
+        break;
+      case CardAction.modifyDice:
+        upgrades.setDiceMode(p.color, card.diceMode!);
+        break;
+    }
+  }
+
+  /// Avance ([delta] > 0) ou recule ([delta] < 0) un pion d'anneau, avec
+  /// capture à l'arrivée. Le recul s'arrête à la case de départ (pas 0) —
+  /// un pion ne recule jamais « avant » son entrée, sinon le compte de
+  /// pas repartirait de l'autre bout de l'anneau et le recul deviendrait
+  /// un bond en avant. L'avance qui dépasserait la maison ne bouge pas
+  /// (le compte doit être exact, comme au dé).
+  void _cardMove(Pawn p, int delta) {
+    if (p.location != PawnLocation.ring) return;
+    final taken = _stepsTaken(p);
+    final target = taken + delta;
+    if (delta < 0) {
+      final clamped = math.max(0, target);
+      p.position = (_startIdx[p.color]! + clamped) % ringSize;
+      _cardCaptureEnemiesAt(p);
+      return;
+    }
+    if (target > totalStepsToHome) return;
+    if (target == totalStepsToHome) {
+      p.location = PawnLocation.home;
+      p.position = 0;
+    } else if (target > lastRingStep) {
+      p.location = PawnLocation.homeColumn;
+      p.position = target - lastRingStep - 1;
+    } else {
+      p.position = (_startIdx[p.color]! + target) % ringSize;
+      _cardCaptureEnemiesAt(p);
+    }
+  }
+
+  /// « Avancez/Reculez sur le premier pion adverse et capturez-le » : le
+  /// pion saute sur la case du premier adverse CAPTURABLE (hors cases
+  /// sûres, hors invulnérables, hors coéquipiers) trouvé sur son chemin —
+  /// à venir (jusqu'à sa bouche de couloir) ou parcouru (jusqu'à son
+  /// départ). Aucune cible : la carte ne fait rien.
+  void _cardChase(Pawn p, {required bool forward}) {
+    if (p.location != PawnLocation.ring) return;
+    final taken = _stepsTaken(p);
+    final steps = forward
+        ? [for (int s = taken + 1; s <= lastRingStep; s++) s]
+        : [for (int s = taken - 1; s >= 0; s--) s];
+    for (final s in steps) {
+      final cell = (_startIdx[p.color]! + s) % ringSize;
+      if (_safeCells.contains(cell)) continue;
+      final hasVictim = state.pawnsByColor.entries.any((e) =>
+          !_sameTeam(e.key, p.color) &&
+          e.value.any((foe) =>
+              foe.location == PawnLocation.ring &&
+              foe.position == cell &&
+              !upgrades.isInvulnerable(foe)));
+      if (hasVictim) {
+        p.position = cell;
+        _cardCaptureEnemiesAt(p);
+        return;
+      }
+    }
+  }
+
+  /// Capture par CARTE à la case du pion [p] : mêmes règles que la capture
+  /// au dé (cases sûres intouchables, coéquipiers épargnés, invulnérables
+  /// épargnés) — mais sans tour bonus.
+  void _cardCaptureEnemiesAt(Pawn p) {
+    if (p.location != PawnLocation.ring) return;
+    if (_safeCells.contains(p.position)) return;
+    for (final entry in state.pawnsByColor.entries) {
+      if (_sameTeam(entry.key, p.color)) continue;
+      for (final other in entry.value) {
+        if (upgrades.isInvulnerable(other)) continue;
+        if (other.location == PawnLocation.ring &&
+            other.position == p.position) {
+          _returnPawnToBase(other);
+        }
+      }
     }
   }
 }

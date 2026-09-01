@@ -349,6 +349,17 @@ class BoardScreenState extends State<BoardScreen>
     }
   }
 
+  /// Améliorations LudoPoly — interrupteurs des cases Vortex et Chance.
+  /// Basculables en pleine partie : les cases se dessinent (ou s'effacent)
+  /// immédiatement, et les effets ne s'appliquent qu'aux atterrissages
+  /// suivants. Les effets DÉJÀ posés (invulnérable, dé modifié…) vont au
+  /// bout de leur durée même si l'on éteint.
+  void setVortexEnabled(bool on) =>
+      setState(() => _controller.upgrades.vortexEnabled = on);
+
+  void setChanceEnabled(bool on) =>
+      setState(() => _controller.upgrades.chanceEnabled = on);
+
   /// Le verrou qui s'applique à [c].
   bool _lockedFor(PlayerColor c) =>
       _ruleFastMode ? _busySeats.contains(c) : _animating;
@@ -585,6 +596,16 @@ class BoardScreenState extends State<BoardScreen>
   /// partie contre l'ordinateur sans toucher au panneau — et accessoirement
   /// de partager une configuration par lien.
   void _applyAiSeatsFromUrl() {
+    // `?upgrades=1` allume Vortex + Chance dès le chargement — même canal
+    // de test que `?ai=` : le pane du navigateur ne transmet pas toujours
+    // les clics à l'app canvaskit.
+    final upg = Uri.base.queryParameters['upgrades'];
+    if (upg == '1' || upg == 'true') {
+      _controller.upgrades
+        ..vortexEnabled = true
+        ..chanceEnabled = true;
+      debugPrint('[amélioration] Vortex + Chance activés depuis l\'URL');
+    }
     // `?home=all` range les 16 pions au centre : c'est le seul moyen de
     // REGARDER le placement dans les triangles sans jouer quatre parties.
     if (Uri.base.queryParameters['home'] == 'all') {
@@ -903,15 +924,15 @@ class BoardScreenState extends State<BoardScreen>
       if (_lockedFor(me)) return;
       if (_controller.seatOf(me).phase != TurnPhase.rolling) return;
       setState(() {
-        _controller.runAsSeat(
-            me, () => _controller.roll(_controller.pickDiceValue(_secureRng)));
+        _controller.runAsSeat(me,
+            () => _controller.roll(_controller.pickDiceValueFor(me, _secureRng)));
       });
       return;
     }
     if (_animating) return; // verrou : une commande à la fois
     if (_isAiTurn) return;  // c'est à l'ordinateur de lancer, pas à nous
     if (_controller.phase != TurnPhase.rolling) return;
-    _roll(_controller.pickDiceValue(_secureRng));
+    _roll(_controller.pickDiceValueFor(_controller.currentColor, _secureRng));
     _scheduleAiTurn();
   }
 
@@ -1037,8 +1058,8 @@ class BoardScreenState extends State<BoardScreen>
         final seat = _controller.seatOf(c);
         if (seat.phase == TurnPhase.rolling) {
           setState(() {
-            _controller.runAsSeat(
-                c, () => _controller.roll(_controller.pickDiceValue(_secureRng)));
+            _controller.runAsSeat(c,
+                () => _controller.roll(_controller.pickDiceValueFor(c, _secureRng)));
           });
           final rolled = _controller.seatOf(c).diceValue;
           debugPrint('[rapide] ${c.name} lance : $rolled');
@@ -1162,7 +1183,8 @@ class BoardScreenState extends State<BoardScreen>
           return;
         }
         final who = _controller.currentColor.name;
-        final v = _controller.pickDiceValue(_secureRng);
+        final v =
+            _controller.pickDiceValueFor(_controller.currentColor, _secureRng);
         _roll(v);
         debugPrint('[ai] $who lance : $v'
             '${_controller.phase == TurnPhase.moving ? '' : ' — aucun coup, la main passe'}');
@@ -1263,6 +1285,16 @@ class BoardScreenState extends State<BoardScreen>
       // décidé capture / tour supplémentaire / classement quand le pion
       // commence à glisser.
       _controller.runAsSeat(actor, () => _controller.movePawn(p));
+      // Améliorations : le moteur a pu tirer une carte chance ou déclencher
+      // un vortex pendant ce coup. On affiche l'annonce dans le panneau et
+      // on la trace en console pour vérification en conditions réelles.
+      final upgradeNotices = _controller.upgrades.takeNotices();
+      for (final n in upgradeNotices) {
+        debugPrint('[amélioration] $n');
+      }
+      if (upgradeNotices.isNotEmpty) {
+        _autoNotice = upgradeNotices.join('\n');
+      }
       // Pions capturés : on garde leur ancienne position visible pendant le trajet.
       capturedNow.addAll(_game.allPawns.where((pp) =>
           pp != p &&
@@ -1775,6 +1807,8 @@ class BoardScreenState extends State<BoardScreen>
                     child: BoardView(
                       players: _activePlayers,
                       game: _game,
+                      showVortexCells: _controller.upgrades.vortexEnabled,
+                      showChanceCells: _controller.upgrades.chanceEnabled,
                       showRing: _showRing,
                       showGrid: _showGrid,
                       showCanvas: _showCanvas,
@@ -1882,6 +1916,10 @@ class BoardScreenState extends State<BoardScreen>
                     onSetPaused: setPaused,
                     fastMode: _ruleFastMode,
                     onToggleFastMode: setFastMode,
+                    vortexEnabled: _controller.upgrades.vortexEnabled,
+                    onToggleVortex: setVortexEnabled,
+                    chanceEnabled: _controller.upgrades.chanceEnabled,
+                    onToggleChance: setChanceEnabled,
                     aiTurbo: _aiTurbo,
                     onToggleAiTurbo: (v) {
                       setState(() => _aiTurbo = v);
@@ -2028,6 +2066,12 @@ class _ControlPanel extends StatelessWidget {
   final bool fastMode;
   final ValueChanged<bool> onToggleFastMode;
 
+  /// Améliorations LudoPoly : cases Vortex et cases Chance.
+  final bool vortexEnabled;
+  final ValueChanged<bool> onToggleVortex;
+  final bool chanceEnabled;
+  final ValueChanged<bool> onToggleChance;
+
   /// Mode Accélérateur : l'ordinateur joue deux fois plus vite.
   final bool aiTurbo;
   final ValueChanged<bool> onToggleAiTurbo;
@@ -2089,6 +2133,10 @@ class _ControlPanel extends StatelessWidget {
     required this.onSetPaused,
     required this.fastMode,
     required this.onToggleFastMode,
+    required this.vortexEnabled,
+    required this.onToggleVortex,
+    required this.chanceEnabled,
+    required this.onToggleChance,
     required this.aiTurbo,
     required this.onToggleAiTurbo,
     required this.aiDifficulty,
@@ -2218,6 +2266,16 @@ class _ControlPanel extends StatelessWidget {
                     child: _GameModeCard(
                       fastMode: fastMode,
                       onToggleFastMode: onToggleFastMode,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _SectionCard(
+                    title: 'Améliorations LudoPoly',
+                    child: _UpgradesCard(
+                      vortexEnabled: vortexEnabled,
+                      onToggleVortex: onToggleVortex,
+                      chanceEnabled: chanceEnabled,
+                      onToggleChance: onToggleChance,
                     ),
                   ),
                 ] else ...[
@@ -3035,6 +3093,92 @@ class _GameModeCard extends StatelessWidget {
   }
 }
 
+/// Les Améliorations LudoPoly, dans l'onglet Règles du jeu : deux
+/// interrupteurs indépendants, basculables en pleine partie.
+class _UpgradesCard extends StatelessWidget {
+  final bool vortexEnabled;
+  final ValueChanged<bool> onToggleVortex;
+  final bool chanceEnabled;
+  final ValueChanged<bool> onToggleChance;
+
+  const _UpgradesCard({
+    required this.vortexEnabled,
+    required this.onToggleVortex,
+    required this.chanceEnabled,
+    required this.onToggleChance,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    Widget row({
+      required IconData icon,
+      required String title,
+      required String sub,
+      required bool value,
+      required ValueChanged<bool> onChanged,
+    }) =>
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Row(
+            children: [
+              Icon(icon,
+                  size: 16, color: value ? cs.primary : cs.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: theme.textTheme.bodyMedium),
+                    Text(sub,
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: cs.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Switch(value: value, onChanged: onChanged),
+            ],
+          ),
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        row(
+          icon: Icons.cyclone,
+          title: 'Cases Vortex / Trou noir',
+          sub: 'La bonne : votre case de départ vous aspire vers celle de '
+              'l\'adversaire en diagonale (+26 cases). La mauvaise : la '
+              '1re case de votre dernière ligne droite vous renvoie à '
+              'l\'entrée de la sienne. Chacune est à votre couleur — vous '
+              'seul l\'utilisez.',
+          value: vortexEnabled,
+          onChanged: onToggleVortex,
+        ),
+        row(
+          icon: Icons.help_center,
+          title: 'Cases Chance',
+          sub: '4 cases violettes, 2 cases avant chaque étoile. S\'y poser '
+              'tire une carte du talon (mélangé au départ, retourné à '
+              'l\'épuisement) : bonus ou mauvais tour, appliqué sur-le-champ '
+              'au pion tombé dessus.',
+          value: chanceEnabled,
+          onChanged: onToggleChance,
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Les cartes différées (conservées en main et jouées à votre tour) '
+          'arrivent dans une prochaine version.',
+          style: theme.textTheme.bodySmall?.copyWith(color: cs.outline),
+        ),
+      ],
+    );
+  }
+}
+
 class _SectionCard extends StatelessWidget {
   final String title;
   final Widget child;
@@ -3130,6 +3274,11 @@ class BoardView extends StatelessWidget {
   final Map<Pawn, PawnStep> captureOverride;
   /// Active explosion FX painted on top of the board (capture markers).
   final List<ExplosionFx> explosions;
+
+  /// Améliorations LudoPoly : dessiner les cases Vortex / Chance sur le
+  /// plateau. Éteints par défaut — le plateau de base ne change pas.
+  final bool showVortexCells;
+  final bool showChanceCells;
   const BoardView({
     super.key,
     required this.players,
@@ -3155,6 +3304,8 @@ class BoardView extends StatelessWidget {
     this.showGrid = false,
     this.showCanvas = false,
     this.playerCount = 4,
+    this.showVortexCells = false,
+    this.showChanceCells = false,
   });
 
   // Top-left grid cell of each colored base (the board is a 15x15 grid).
@@ -3356,8 +3507,12 @@ class BoardView extends StatelessWidget {
         return Stack(
           children: [
             // Vector-drawn board: stays crisp at any size (no raster scaling).
-            const Positioned.fill(
-              child: CustomPaint(painter: BoardPainter()),
+            Positioned.fill(
+              child: CustomPaint(
+                  painter: BoardPainter(
+                showVortex: showVortexCells,
+                showChance: showChanceCells,
+              )),
             ),
 
             // Le Yard du siège actif CLIGNOTE, en écho à la couleur du dé

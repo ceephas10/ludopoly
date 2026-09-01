@@ -7,8 +7,16 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
+import 'board_path.dart' show ring;
+import 'upgrades.dart' show SpecialCells;
+
 class BoardPainter extends CustomPainter {
-  const BoardPainter();
+  /// Améliorations LudoPoly : quand un interrupteur est allumé, les cases
+  /// correspondantes se dessinent par-dessus le plateau de base. Éteints
+  /// (défaut), le plateau est EXACTEMENT celui d'avant.
+  final bool showVortex;
+  final bool showChance;
+  const BoardPainter({this.showVortex = false, this.showChance = false});
 
   // Palette tuned to feel like the original Ludo King board.
   static const Color _red    = Color(0xFFE94B4B);
@@ -17,6 +25,10 @@ class BoardPainter extends CustomPainter {
   static const Color _yellow = Color(0xFFFFCE2E);
   static const Color _gridLine = Color(0xFFAAAAAA);
   static const Color _bg     = Color(0xFF1A2541);
+
+  /// Couleur NEUTRE des cases Chance — la spec demande une couleur qui
+  /// n'appartient à aucun joueur : un violet absent de la palette.
+  static const Color _chance = Color(0xFF8E44AD);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -111,6 +123,86 @@ class BoardPainter extends CustomPainter {
     for (final s in stars) {
       _drawStar(canvas, s[0], s[1], cell);
     }
+
+    // 9) Améliorations LudoPoly (uniquement quand activées).
+    if (showChance) {
+      // Les 4 cases Chance, neutres : fond violet + « ? » blanc.
+      for (final idx in SpecialCells.chanceCells) {
+        final c = ring[idx].pos;
+        final r = Rect.fromCenter(
+            center: Offset(c.dx * cell, c.dy * cell),
+            width: cell * 0.92,
+            height: cell * 0.92);
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(r, Radius.circular(cell * 0.14)),
+            Paint()..color = _chance);
+        _drawGlyph(canvas, '?', c.dx * cell, c.dy * cell, cell * 0.62,
+            Colors.white);
+      }
+    }
+    if (showVortex) {
+      // Vortex BONS : une spirale blanche sur chaque case de départ.
+      for (final color in SpecialCells.startOf.keys) {
+        final c = ring[SpecialCells.goodVortexCell(color)].pos;
+        _drawSpiral(canvas, c.dx * cell, c.dy * cell, cell, Colors.white);
+      }
+      // Vortex MAUVAIS : une spirale sombre sur la 1re case du couloir de
+      // chaque couleur (l'entrée de la dernière ligne droite).
+      const badCells = [
+        [1.5, 7.5],   // rouge
+        [7.5, 1.5],   // vert
+        [13.5, 7.5],  // jaune
+        [7.5, 13.5],  // bleu
+      ];
+      for (final b in badCells) {
+        _drawSpiral(canvas, b[0] * cell, b[1] * cell, cell,
+            const Color(0xE6202020));
+      }
+    }
+  }
+
+  /// Petite spirale d'Archimède (statique — le rendu animé, s'il arrive un
+  /// jour, sera un asset du Studio Animations).
+  void _drawSpiral(Canvas canvas, double cx, double cy, double cell,
+      Color color) {
+    final p = Path();
+    const turns = 2.2;
+    final maxR = cell * 0.34;
+    for (double t = 0; t <= 1.0; t += 0.02) {
+      final angle = t * turns * 2 * math.pi;
+      final r = maxR * t;
+      final x = cx + r * math.cos(angle);
+      final y = cy + r * math.sin(angle);
+      if (t == 0) {
+        p.moveTo(x, y);
+      } else {
+        p.lineTo(x, y);
+      }
+    }
+    canvas.drawPath(
+        p,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeWidth = math.max(1.5, cell * 0.10));
+  }
+
+  /// Un caractère centré sur une case (statique).
+  void _drawGlyph(Canvas canvas, String glyph, double cx, double cy,
+      double fontSize, Color color) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: glyph,
+        style: TextStyle(
+          color: color,
+          fontSize: fontSize,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, Offset(cx - tp.width / 2, cy - tp.height / 2));
   }
 
   void _drawTri(Canvas c, Paint fill, Offset a, Offset b, Offset center, Color color) {
@@ -148,7 +240,8 @@ class BoardPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant BoardPainter old) => false;
+  bool shouldRepaint(covariant BoardPainter old) =>
+      old.showVortex != showVortex || old.showChance != showChance;
 }
 
 class _Start {

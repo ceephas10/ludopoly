@@ -101,11 +101,23 @@ void main() {
       expect(find.text('Rapide — sans attente de tour'), findsOneWidget);
       expect(state.controller.fastMode, isFalse, reason: 'éteint au départ');
 
-      await t.tap(find.byType(Switch).last);
+      // L'interrupteur de SA ligne — `Switch.last` visait le dernier de
+      // l'onglet, et la carte Améliorations en a ajouté deux après lui.
+      final fastSwitch = find.descendant(
+        of: find
+            .ancestor(
+                of: find.text('Rapide — sans attente de tour'),
+                matching: find.byType(Row))
+            .first,
+        matching: find.byType(Switch),
+      );
+
+      await t.ensureVisible(fastSwitch);
+      await t.tap(fastSwitch);
       await t.pump(const Duration(milliseconds: 400));
       expect(state.controller.fastMode, isTrue);
 
-      await t.tap(find.byType(Switch).last);
+      await t.tap(fastSwitch);
       await t.pump(const Duration(milliseconds: 400));
       expect(state.controller.fastMode, isFalse,
           reason: 'le bouton doit aussi DÉSACTIVER le mode');
