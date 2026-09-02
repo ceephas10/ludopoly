@@ -52,6 +52,7 @@
 // Une carte re-tirée REMPLACE l'effet en cours, la durée repart de zéro :
 // aucun cumul (règle « REPLACE_EXISTING » de l'Annexe A).
 
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'pawn.dart';
@@ -203,6 +204,64 @@ class ChanceCard {
         ChanceTiming.afterRoll => 'APRÈS',
         ChanceTiming.beforeOrAfterRoll => 'AVANT/APRÈS',
       };
+
+  /// La CATÉGORIE de l'Annexe A : ce sur quoi la carte agit.
+  String get categoryJson {
+    if (action == CardAction.modifyDice || action == CardAction.setDice) {
+      return 'DICE';
+    }
+    if (action == CardAction.skipTurn) return 'PLAYER';
+    if (action == CardAction.captureToBox) return 'CAPTURE';
+    return 'PAWN';
+  }
+
+  static String _enumJson(Object? v) {
+    if (v == null) return '';
+    final name = v.toString().split('.').last;
+    // camelCase → SCREAMING_SNAKE, comme dans l'Annexe A.
+    return name
+        .replaceAllMapped(
+            RegExp(r'([a-z0-9])([A-Z])'), (m) => '${m[1]}_${m[2]}')
+        .toUpperCase();
+  }
+
+  /// La carte au format du script JSON de l'Annexe A.
+  ///
+  /// C'est la même carte, vue comme une donnée : identifiant, statut, noms,
+  /// type, catégorie, moment, ciblage et effet. Les champs d'animation du
+  /// script n'y figurent pas — les émotions sont des assets à produire.
+  Map<String, Object?> toJson() => {
+        'id': id,
+        'STATUS': active ? 'ACTIVE' : 'INACTIVE',
+        'NAME_FR': nameFr,
+        'NAME_EN': nameEn,
+        'NAME_ES': nameEs,
+        'DESCRIPTION_FR': descriptionFr,
+        'type': kind == CardKind.immediate ? 'IMMEDIATE' : 'DEFERRED',
+        'category': categoryJson,
+        'timing': _enumJson(timing),
+        'quantity': quantity,
+        'target': {
+          'scope': _enumJson(scope),
+          'entity': _enumJson(entity),
+          if (selection != CardSelection.none)
+            'selection': selection == CardSelection.pawnOnChance
+                ? 'PAWN_ON_CHANCE'
+                : _enumJson(selection),
+        },
+        'effect': {
+          'action': _enumJson(action),
+          if (action == CardAction.move)
+            'direction': value < 0 ? 'BACKWARD' : 'FORWARD',
+          if (value != 0) 'value': value.abs(),
+          if (pawnState != null) 'state': _enumJson(pawnState),
+          if (diceMode != null) 'mode': _enumJson(diceMode),
+          if (pawnState != null || diceMode != null) 'duration': 2,
+        },
+      };
+
+  /// Le même JSON, mis en forme sur plusieurs lignes.
+  String toJsonString() => const JsonEncoder.withIndent('  ').convert(toJson());
 
   @override
   String toString() => id;

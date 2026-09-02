@@ -456,7 +456,7 @@ void main() {
       expect(find.byType(CardFace), findsOneWidget);
       expect(find.text(card.descriptionFr), findsOneWidget,
           reason: 'l\'instruction se lit sur la carte');
-      expect(find.text('Appliquer'), findsOneWidget);
+      expect(find.text('Jouer la carte'), findsOneWidget);
 
       await shutdownApp(t);
     });
@@ -474,7 +474,7 @@ void main() {
       state.openHandCard(0);
       await t.pump(const Duration(milliseconds: 300));
 
-      await t.tap(find.widgetWithText(FilledButton, 'Appliquer'));
+      await t.tap(find.widgetWithText(FilledButton, 'Jouer la carte'));
       await t.pump(const Duration(milliseconds: 400));
 
       expect(c.lastRoll, 4, reason: 'la carte-dé a remplacé le lancer');
@@ -562,6 +562,60 @@ void main() {
               'avant $before, après $after');
 
       await shutdownApp(t);
+    });
+  });
+
+  group('🗂️ Les cartes à la main, dans le centre de commandes', () {
+    testWidgets('le panneau propose les deux familles et applique la carte',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+
+      expect(find.text('Cartes chance'), findsOneWidget,
+          reason: 'le panneau vit à côté de « Jeu manuel »');
+      expect(find.text('Immédiates'), findsOneWidget);
+      expect(find.text('Différées'), findsOneWidget);
+
+      // Une IMMÉDIATE s'exécute séance tenante.
+      final home = kImmediateCards.singleWhere((x) => x.id == 'IMM_PAWN_HOME');
+      final me = state.manualPlayerForTest;
+      final p = c.state.pawnsByColor[me]![1];
+      p.location = PawnLocation.ring;
+      p.position = GameController.startIdx(me) + 10;
+      state.applyManualCard(home, me, 1);
+      await t.pump(const Duration(milliseconds: 300));
+      expect(p.location, PawnLocation.base,
+          reason: 'la carte a renvoyé le pion 2 dans sa boîte');
+
+      // Une DIFFÉRÉE entre dans la main du joueur visé.
+      final dice3 = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_3');
+      state.applyManualCard(dice3, PlayerColor.green, 0);
+      await t.pump(const Duration(milliseconds: 300));
+      expect(c.upgrades.handOf(PlayerColor.green), [dice3]);
+
+      await shutdownApp(t);
+    });
+
+    test('chaque carte rend son JSON au format de l\'Annexe A', () {
+      for (final card in [...kImmediateCards, ...kDeferredCards]) {
+        final j = card.toJson();
+        expect(j['id'], card.id);
+        expect(j['STATUS'], 'ACTIVE');
+        expect(j['NAME_FR'], card.nameFr);
+        expect(j['type'],
+            card.kind == CardKind.immediate ? 'IMMEDIATE' : 'DEFERRED');
+        expect(['PAWN', 'DICE', 'PLAYER', 'CAPTURE'], contains(j['category']));
+        expect(
+            ['ON_CHANCE', 'BEFORE_ROLL', 'AFTER_ROLL', 'BEFORE_OR_AFTER_ROLL'],
+            contains(j['timing']));
+        final target = j['target'] as Map;
+        expect(['SELF', 'OPPONENT', 'ANY'], contains(target['scope']));
+        expect(['PAWN', 'PLAYER'], contains(target['entity']));
+        // Et il se sérialise vraiment.
+        expect(card.toJsonString(), contains(card.id));
+      }
     });
   });
 }

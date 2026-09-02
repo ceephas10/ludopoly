@@ -271,6 +271,11 @@ class BoardScreenState extends State<BoardScreen>
   @visibleForTesting
   void rollManualForTest(int value) => _roll(value);
 
+  /// La couleur sélectionnée dans « Jeu manuel » — celle que visent aussi
+  /// les cartes appliquées à la main.
+  @visibleForTesting
+  PlayerColor get manualPlayerForTest => _manualPlayer;
+
   /// Toutes les minuteries du JEU. Elles sont gelées d'un bloc à la pause
   /// et repartent avec leur temps restant à la reprise.
   final Set<PausableTimer> _timers = {};
@@ -905,6 +910,41 @@ class BoardScreenState extends State<BoardScreen>
     setState(() => _handCard = null);
     playDeferredCard(open.card,
         targetPawn: targetPawn, targetPlayer: targetPlayer);
+  }
+
+  /// Applique une carte Chance CHOISIE À LA MAIN, comme le fait la carte
+  /// « Jeu manuel » pour le dé.
+  ///
+  /// Une carte IMMÉDIATE s'exécute séance tenante sur le pion [pawnId] de
+  /// [player] ; une carte DIFFÉRÉE se range dans sa main, où il pourra la
+  /// retourner et la jouer. Cet outil n'attend pas qu'une case Chance
+  /// tombe : c'est ce qui permet d'essayer les 24 cartes une par une.
+  @visibleForTesting
+  void applyManualCard(ChanceCard card, PlayerColor player, int pawnId) {
+    if (_paused) return;
+    final pawn = _controller.state.pawnsByColor[player]![pawnId.clamp(0, 3)];
+    setState(() {
+      if (card.kind == CardKind.immediate) {
+        _controller.upgrades.addNotice(
+            'Carte chance pour ${_frenchColor(player)} : « ${card.nameFr} »');
+        // Le moteur applique au nom de [player] : les cartes de dé et le
+        // saut de tour visent CELUI QUI JOUE.
+        _controller.runAsSeat(
+            player, () => _controller.applyImmediateCard(card, pawn));
+      } else if (!_controller.upgrades.addToHand(player, card)) {
+        _controller.upgrades.addNotice(
+            'Main de ${_frenchColor(player)} pleine : la carte est perdue.');
+      } else {
+        _controller.upgrades.addNotice(
+            'Carte différée pour ${_frenchColor(player)} : '
+            '« ${card.nameFr} » — à jouer à son tour.');
+      }
+      final notices = _controller.upgrades.takeNotices();
+      for (final n in notices) {
+        debugPrint('[amélioration] $n');
+      }
+      if (notices.isNotEmpty) _autoNotice = notices.join('\n');
+    });
   }
 
   /// L'ordinateur pose une carte différée s'il en tient une de bonne.
@@ -2191,6 +2231,7 @@ class BoardScreenState extends State<BoardScreen>
                         ..addAll(seats));
                       _scheduleAiTurn();
                     },
+                    onApplyManualCard: applyManualCard,
                     ranking: _controller.ranking,
                     busy: _animating,
                     playerCount: _playerCount,
@@ -2338,6 +2379,11 @@ class _ControlPanel extends StatelessWidget {
   final AiDifficulty aiDifficulty;
   final ValueChanged<AiDifficulty> onChangeAiDifficulty;
 
+  /// Applique une carte Chance à la main : la carte, le joueur visé, et
+  /// le pion visé pour les cartes immédiates.
+  final void Function(ChanceCard card, PlayerColor player, int pawnId)
+      onApplyManualCard;
+
   /// Ordre d'arrivée courant : 1er, 2e, 3e, 4e.
   final List<PlayerColor> ranking;
 
@@ -2404,6 +2450,7 @@ class _ControlPanel extends StatelessWidget {
     required this.onToggleAiTurbo,
     required this.aiDifficulty,
     required this.onChangeAiDifficulty,
+    required this.onApplyManualCard,
     required this.ranking,
     required this.busy,
   });
@@ -2692,6 +2739,18 @@ class _ControlPanel extends StatelessWidget {
                       Expanded(flex: 1, child: _normalCard(theme, cs)),
                       const SizedBox(width: 8),
                       Expanded(flex: 3, child: _manualCard(theme, cs)),
+                      const SizedBox(width: 8),
+                      // ---- Les cartes Chance, à la main ----
+                      Expanded(
+                        flex: 3,
+                        child: _SectionCard(
+                          title: 'Cartes chance',
+                          child: _ManualCardsCard(
+                            player: manualPlayer,
+                            onApply: onApplyManualCard,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -3500,6 +3559,138 @@ class _CardRevealState extends State<_CardReveal>
   }
 }
 
+/// Les 24 cartes Chance, à essayer à la main.
+///
+/// Le pendant de « Jeu manuel » pour les cartes : on choisit une famille,
+/// une carte, un pion, on lit son JSON — celui de l'Annexe A — et on
+/// l'applique au joueur sélectionné dans « Jeu manuel ». Une immédiate
+/// s'exécute sur-le-champ, une différée entre dans la main du joueur.
+class _ManualCardsCard extends StatefulWidget {
+  final PlayerColor player;
+  final void Function(ChanceCard card, PlayerColor player, int pawnId) onApply;
+
+  const _ManualCardsCard({required this.player, required this.onApply});
+
+  @override
+  State<_ManualCardsCard> createState() => _ManualCardsCardState();
+}
+
+class _ManualCardsCardState extends State<_ManualCardsCard> {
+  CardKind _kind = CardKind.immediate;
+  ChanceCard? _card;
+  int _pawnId = 0;
+  bool _showJson = false;
+
+  List<ChanceCard> get _deck =>
+      _kind == CardKind.immediate ? kImmediateCards : kDeferredCards;
+
+  ChanceCard get _selected => _card ?? _deck.first;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final card = _selected;
+    final immediate = card.kind == CardKind.immediate;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SegmentedButton<CardKind>(
+          segments: const [
+            ButtonSegment(
+                value: CardKind.immediate, label: Text('Immédiates')),
+            ButtonSegment(
+                value: CardKind.deferred, label: Text('Différées')),
+          ],
+          selected: {_kind},
+          showSelectedIcon: false,
+          onSelectionChanged: (v) => setState(() {
+            _kind = v.first;
+            _card = null;
+          }),
+        ),
+        const SizedBox(height: 8),
+        DropdownButton<ChanceCard>(
+          isExpanded: true,
+          value: card,
+          items: [
+            for (final c in _deck)
+              DropdownMenuItem(
+                value: c,
+                child: Text('${c.timingLabelFr} · ${c.nameFr}',
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall),
+              ),
+          ],
+          onChanged: (c) => setState(() => _card = c),
+        ),
+        Text(card.descriptionFr,
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: cs.onSurfaceVariant)),
+        // Une carte immédiate s'applique à UN pion : lequel ?
+        if (immediate) ...[
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Text('Pion',
+                  style: theme.textTheme.labelSmall
+                      ?.copyWith(color: cs.onSurfaceVariant)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(value: 0, label: Text('1')),
+                    ButtonSegment(value: 1, label: Text('2')),
+                    ButtonSegment(value: 2, label: Text('3')),
+                    ButtonSegment(value: 3, label: Text('4')),
+                  ],
+                  selected: {_pawnId},
+                  showSelectedIcon: false,
+                  onSelectionChanged: (v) =>
+                      setState(() => _pawnId = v.first),
+                ),
+              ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.tonal(
+                onPressed: () =>
+                    widget.onApply(card, widget.player, _pawnId),
+                child: Text(immediate ? 'Appliquer' : 'Donner'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: () => setState(() => _showJson = !_showJson),
+              child: Text(_showJson ? 'Masquer JSON' : 'Voir JSON'),
+            ),
+          ],
+        ),
+        if (_showJson)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(top: 6),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: SelectableText(
+              card.toJsonString(),
+              style: const TextStyle(
+                  fontFamily: 'monospace', fontSize: 10, height: 1.35),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 /// La carte que le joueur vient de RETOURNER dans sa base.
 ///
 /// Tant qu'il n'y a pas touché, il ne voit que le dos ; ici il lit
@@ -3688,7 +3879,7 @@ class _HandCardOverlayState extends State<_HandCardOverlay> {
                                         targetPawn: _pawn,
                                         targetPlayer: _player)
                                     : null,
-                                child: const Text('Appliquer'),
+                                child: const Text('Jouer la carte'),
                               ),
                             ),
                           ],
