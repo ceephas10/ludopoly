@@ -1129,7 +1129,12 @@ class GameController {
       case CardDiceMode.double:
         return (r.nextInt(6) + 1) * 2;
       case CardDiceMode.twoDice:
-        return (r.nextInt(6) + 1) + (r.nextInt(6) + 1);
+        // Deux dés bien réels : on garde leurs deux faces pour les
+        // MONTRER, et le moteur ne travaille que sur leur somme.
+        final a = r.nextInt(6) + 1;
+        final b = r.nextInt(6) + 1;
+        upgrades.lastTwoDice = (a: a, b: b);
+        return a + b;
     }
   }
 
@@ -1191,7 +1196,65 @@ class GameController {
     }
     upgrades.addNotice(
         'Carte chance pour ${_fr[p.color]} : « ${card.nameFr} »');
+    // Une immédiate qui réclame une cible ne part pas toute seule : le
+    // joueur — ou l'ordinateur — désigne d'abord SON pion. Elle reste en
+    // attente jusque-là.
+    if (card.needsTarget && card.entity == CardEntity.pawn) {
+      upgrades.notePendingChoice(card, p);
+      return;
+    }
     applyImmediateCard(card, p);
+  }
+
+  /// Les pions que [card] peut viser, la carte ayant été déclenchée par
+  /// [onPawn]. Vide si elle ne demande aucun choix.
+  List<Pawn> immediateTargets(ChanceCard card, Pawn onPawn) {
+    if (!card.needsTarget || card.entity != CardEntity.pawn) return const [];
+    final wantsOwn = card.scope == CardScope.self;
+    return [
+      for (final entry in state.pawnsByColor.entries)
+        if (wantsOwn
+            ? entry.key == onPawn.color
+            : !_sameTeam(entry.key, onPawn.color))
+          for (final p in entry.value)
+            // Un pion arrivé au centre ne subit plus rien.
+            if (p.location != PawnLocation.home)
+              // Un pion INVULNÉRABLE ne se laisse pas viser par un
+              // adversaire — ni capturer, ni contrôler.
+              if (wantsOwn || !upgrades.isInvulnerable(p)) p,
+    ];
+  }
+
+  /// Applique la carte en attente au pion [chosen]. Sans choix valable,
+  /// elle retombe sur le pion qui l'a déclenchée : l'effet a toujours lieu.
+  void resolvePendingImmediate({Pawn? chosen}) {
+    final pending = upgrades.takePendingChoice();
+    if (pending == null) return;
+    final targets = immediateTargets(pending.card, pending.onPawn);
+    final target =
+        (chosen != null && targets.contains(chosen)) ? chosen : pending.onPawn;
+    applyImmediateCard(pending.card, target);
+    upgrades.addNotice(
+        '${_fr[target.color]} : le pion ${target.id + 1} est désigné.');
+  }
+
+  /// Le pion qu'un ORDINATEUR désignerait pour la carte en attente : le
+  /// plus avancé, donc le plus précieux à protéger.
+  Pawn? pickAiImmediateTarget() {
+    final pending = upgrades.pendingChoice;
+    if (pending == null) return null;
+    final targets = immediateTargets(pending.card, pending.onPawn);
+    if (targets.isEmpty) return null;
+    Pawn best = targets.first;
+    int bestSteps = -1;
+    for (final p in targets) {
+      final st = p.location == PawnLocation.ring ? _stepsTaken(p) : -1;
+      if (st > bestSteps) {
+        bestSteps = st;
+        best = p;
+      }
+    }
+    return best;
   }
 
   /// Le joueur « à votre droite ». Le tour passe à votre gauche, donc le
@@ -1234,12 +1297,15 @@ class GameController {
           for (final p in entry.value)
             // Un pion arrivé au centre ne subit plus rien.
             if (p.location != PawnLocation.home)
-              // Carte 15 : « empêcher de SORTIR » ne vise qu'un pion encore
-              // dans sa boîte de départ — viser un pion déjà sorti n'aurait
-              // aucun sens.
-              if (card.action != CardAction.noExit ||
-                  p.location == PawnLocation.base)
-                p,
+              // Un pion INVULNÉRABLE ne peut être ni capturé ni CONTRÔLÉ
+              // par un adversaire : il ne figure pas dans ses cibles.
+              if (wantsOwn || !upgrades.isInvulnerable(p))
+                // Carte 15 : « empêcher de SORTIR » ne vise qu'un pion
+                // encore dans sa boîte de départ — viser un pion déjà
+                // sorti n'aurait aucun sens.
+                if (card.action != CardAction.noExit ||
+                    p.location == PawnLocation.base)
+                  p,
     ];
   }
 

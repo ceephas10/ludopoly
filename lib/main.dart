@@ -866,6 +866,25 @@ class BoardScreenState extends State<BoardScreen>
     if (pending != null) _scheduleAutoMove(pending);
   }
 
+  /// La carte IMMÉDIATE qui attend qu'on lui désigne un pion. Elle s'ouvre
+  /// avec la liste des pions visés, et n'agit qu'une fois le choix fait.
+  ({ChanceCard card, Pawn onPawn})? _pendingChoice;
+
+  /// La carte en attente de cible, pour les tests.
+  @visibleForTesting
+  ChanceCard? get pendingChoiceCard => _pendingChoice?.card;
+
+  /// Applique la carte en attente au pion désigné.
+  @visibleForTesting
+  void resolvePendingChoice(Pawn? chosen) {
+    if (_pendingChoice == null) return;
+    setState(() {
+      _pendingChoice = null;
+      _controller.resolvePendingImmediate(chosen: chosen);
+      _flushUpgradeNotices();
+    });
+  }
+
   /// La carte de la main qu'on vient de RETOURNER pour la lire, avec son
   /// propriétaire. `null` = aucune carte ouverte à la main.
   ({ChanceCard card, PlayerColor by})? _handCard;
@@ -873,6 +892,20 @@ class BoardScreenState extends State<BoardScreen>
   /// La carte ouverte à la main, pour les tests.
   @visibleForTesting
   ChanceCard? get openedHandCard => _handCard?.card;
+
+  /// Les deux dés à montrer, ou `null` pour un dé unique.
+  ///
+  /// La carte « Deux dés » vaut deux tours, et pendant ces deux tours le
+  /// joueur lance VRAIMENT deux dés : le centre doit les montrer tous les
+  /// deux. Avant son premier lancer sous ce mode, on affiche deux faces
+  /// neutres plutôt que rien.
+  ({int a, int b})? get _twoDiceShown {
+    if (_controller.upgrades.activeDiceMode(_activeColor) !=
+        CardDiceMode.twoDice) {
+      return null;
+    }
+    return _controller.upgrades.lastTwoDice ?? (a: 1, b: 1);
+  }
 
   /// La couleur dont les cartes de base sont cliquables : celle qui a la
   /// main, et seulement si un HUMAIN la tient. Une carte qu'on n'a pas le
@@ -982,10 +1015,47 @@ class BoardScreenState extends State<BoardScreen>
     return true;
   }
 
-  /// Si le moteur vient de tirer une carte Chance, elle s'ouvre.
+  /// Suite d'un tirage sur une case Chance.
+  ///
+  /// Une carte IMMÉDIATE s'ouvre : elle agit tout de suite, le joueur doit
+  /// voir ce qui vient de lui arriver. Une carte DIFFÉRÉE, elle, ne montre
+  /// RIEN : elle rejoint la base face cachée et y attend qu'on la retourne.
+  ///
+  /// Et si l'immédiate réclame une cible, on la présente avec son choix de
+  /// pion au lieu de l'appliquer d'office.
   void _openDrawnCardIfAny() {
     final drawn = _controller.upgrades.takeLastDrawn();
-    if (drawn != null) _openCard(drawn);
+    final pending = _controller.upgrades.pendingChoice;
+    if (pending != null) {
+      final owner = pending.onPawn.color;
+      if (_isAiColor(owner)) {
+        // L'ordinateur désigne son pion lui-même, sans rien afficher.
+        final target = _controller.pickAiImmediateTarget();
+        setState(() {
+          _controller.resolvePendingImmediate(chosen: target);
+          _flushUpgradeNotices();
+        });
+        debugPrint('[ai] ${owner.name} désigne le pion '
+            '${(target?.id ?? pending.onPawn.id) + 1} pour '
+            '« ${pending.card.nameFr} »');
+        return;
+      }
+      setState(() => _pendingChoice = pending);
+      return;
+    }
+    if (drawn == null) return;
+    // Une différée ne se montre pas : elle va se ranger, point.
+    if (drawn.card.kind == CardKind.deferred) return;
+    _openCard(drawn);
+  }
+
+  /// Vide les annonces du moteur vers le panneau et la console.
+  void _flushUpgradeNotices() {
+    final notices = _controller.upgrades.takeNotices();
+    for (final n in notices) {
+      debugPrint('[amélioration] $n');
+    }
+    if (notices.isNotEmpty) _autoNotice = notices.join('\n');
   }
 
   /// La carte qui vient d'être tirée sur une case Chance et qui doit
@@ -2051,6 +2121,7 @@ class BoardScreenState extends State<BoardScreen>
                         for (final p in _activePlayers)
                           p.color: _controller.upgrades.handOf(p.color),
                       },
+                      twoDice: _twoDiceShown,
                       tappableCardSeat: _cardTapSeat,
                       onDeferredCardTap: _openHandCard,
                       showRing: _showRing,
@@ -2080,6 +2151,32 @@ class BoardScreenState extends State<BoardScreen>
                         // La carte tirée s'OUVRE par-dessus le plateau :
                         // elle part de son dos et se retourne sur sa vraie
                         // face. Un clic la referme plus tôt.
+                        // Une carte immédiate qui réclame une cible : le
+                        // joueur désigne SON pion avant qu'elle n'agisse.
+                        if (_pendingChoice != null)
+                          Positioned.fill(
+                            child: _HandCardOverlay(
+                              key: ValueKey(
+                                  'choice-${_pendingChoice!.card.id}'),
+                              card: _pendingChoice!.card,
+                              ownerLabel:
+                                  _frenchColor(_pendingChoice!.onPawn.color),
+                              size: boardSide,
+                              playable: true,
+                              pawnTargets: _controller.immediateTargets(
+                                  _pendingChoice!.card,
+                                  _pendingChoice!.onPawn),
+                              playerTargets: const [],
+                              phase: _controller.phase,
+                              // Refermer sans choisir applique la carte au
+                              // pion qui l'a déclenchée : l'effet a
+                              // toujours lieu, on ne peut pas l'esquiver.
+                              onClose: () => resolvePendingChoice(null),
+                              onPlay: ({targetPawn, targetPlayer}) =>
+                                  resolvePendingChoice(targetPawn),
+                              defaultPawn: _pendingChoice!.onPawn,
+                            ),
+                          ),
                         // La carte que le joueur vient de RETOURNER dans
                         // sa base : il lit l'instruction et l'applique.
                         if (_handCard != null)
@@ -3708,6 +3805,11 @@ class _HandCardOverlay extends StatefulWidget {
   final VoidCallback onClose;
   final void Function({Pawn? targetPawn, PlayerColor? targetPlayer}) onPlay;
 
+  /// Pion proposé d'office — celui qui a déclenché la carte. Le joueur
+  /// peut en désigner un autre, mais il n'a jamais un bouton mort devant
+  /// lui.
+  final Pawn? defaultPawn;
+
   const _HandCardOverlay({
     super.key,
     required this.card,
@@ -3719,6 +3821,7 @@ class _HandCardOverlay extends StatefulWidget {
     required this.phase,
     required this.onClose,
     required this.onPlay,
+    this.defaultPawn,
   });
 
   @override
@@ -3728,6 +3831,12 @@ class _HandCardOverlay extends StatefulWidget {
 class _HandCardOverlayState extends State<_HandCardOverlay> {
   Pawn? _pawn;
   PlayerColor? _player;
+
+  @override
+  void initState() {
+    super.initState();
+    _pawn = widget.defaultPawn;
+  }
 
   static String _fr(PlayerColor c) => switch (c) {
         PlayerColor.blue => 'bleu',
@@ -3866,9 +3975,12 @@ class _HandCardOverlayState extends State<_HandCardOverlay> {
                             Expanded(
                               child: TextButton(
                                 onPressed: widget.onClose,
-                                child: const Text('Reposer',
-                                    style:
-                                        TextStyle(color: Color(0xFFF3E3A3))),
+                                child: Text(
+                                    widget.defaultPawn == null
+                                        ? 'Reposer'
+                                        : 'Garder ce pion',
+                                    style: const TextStyle(
+                                        color: Color(0xFFF3E3A3))),
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -4267,6 +4379,12 @@ class BoardView extends StatelessWidget {
   /// jamais l'instruction. Il faut TOUCHER une carte pour la retourner.
   final Map<PlayerColor, List<ChanceCard>> deferredHands;
 
+  /// Les DEUX dés à montrer au centre, quand la carte « Deux dés » est
+  /// active pour le joueur au tour. `null` = un seul dé, comme d'habitude.
+  /// Le demi-dé et le double-dé restent un dé unique : eux ne changent que
+  /// les valeurs possibles.
+  final ({int a, int b})? twoDice;
+
   /// La couleur dont les cartes sont cliquables — celle qui a la main, si
   /// c'est un humain. Les cartes des autres restent closes : tant qu'on
   /// n'y a pas droit, on ne voit pas ce qui est caché.
@@ -4302,6 +4420,7 @@ class BoardView extends StatelessWidget {
     this.showVortexCells = false,
     this.showChanceCells = false,
     this.deferredHands = const {},
+    this.twoDice,
     this.tappableCardSeat,
     this.onDeferredCardTap,
   });
@@ -4632,12 +4751,17 @@ class BoardView extends StatelessWidget {
             // Single central dice in the active player's color. Clickable
             // during the rolling phase.
             () {
-              final size = cell * 1.6;
+              final pair = twoDice;
+              // Avec la carte « Deux dés », il y en a bien DEUX au centre,
+              // un peu plus petits pour tenir côte à côte. Le total joué
+              // est leur somme.
+              final size = pair == null ? cell * 1.6 : cell * 1.08;
+              final width = pair == null ? size : size * 2 + cell * 0.14;
               final clickable = canRollDice;
               return Positioned(
-                left: 7.5 * cell - size / 2,
+                left: 7.5 * cell - width / 2,
                 top:  7.5 * cell - size / 2,
-                width: size,
+                width: width,
                 height: size,
                 child: MouseRegion(
                   cursor: showDetails
@@ -4649,10 +4773,28 @@ class BoardView extends StatelessWidget {
                   onExit: (_) => onDiceHover?.call(false),
                   child: GestureDetector(
                     onTap: clickable ? onRollDice : null,
-                    child: _DiceFace(
-                      value: diceValue,
-                      playerColor: activeColor,
-                    ),
+                    child: pair == null
+                        ? _DiceFace(
+                            value: diceValue,
+                            playerColor: activeColor,
+                          )
+                        : Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              SizedBox(
+                                width: size,
+                                height: size,
+                                child: _DiceFace(
+                                    value: pair.a, playerColor: activeColor),
+                              ),
+                              SizedBox(
+                                width: size,
+                                height: size,
+                                child: _DiceFace(
+                                    value: pair.b, playerColor: activeColor),
+                              ),
+                            ],
+                          ),
                   ),
                 ),
               );

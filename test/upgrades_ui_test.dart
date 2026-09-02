@@ -2,6 +2,8 @@
 // de l'onglet « Règles du jeu », et l'annonce d'une carte chance tirée en
 // partie.
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludopoly/game/game_controller.dart';
@@ -365,6 +367,9 @@ void main() {
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
       final c = state.controller;
       state.setChanceEnabled(true);
+      // Graine 1 : le tirage donne une IMMÉDIATE sans cible à désigner —
+      // seules celles-là s'ouvrent d'elles-mêmes.
+      c.upgrades.rng = math.Random(1);
       final me = c.currentColor;
 
       final p = c.state.pawnsByColor[me]![0];
@@ -398,6 +403,7 @@ void main() {
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
       final c = state.controller;
       state.setChanceEnabled(true);
+      c.upgrades.rng = math.Random(1); // une immédiate sans cible
       final me = c.currentColor;
 
       final p = c.state.pawnsByColor[me]![0];
@@ -616,6 +622,195 @@ void main() {
         // Et il se sérialise vraiment.
         expect(card.toJsonString(), contains(card.id));
       }
+    });
+  });
+
+  group('🤫 Une carte DIFFÉRÉE ne se montre pas', () {
+    testWidgets('elle file dans la base sans rien révéler', (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      // Graine 0 : le tirage donne une DIFFÉRÉE.
+      c.upgrades.rng = math.Random(0);
+      final me = c.currentColor;
+
+      final p = c.state.pawnsByColor[me]![0];
+      p.location = PawnLocation.ring;
+      p.position = GameController.startIdx(me) + 3;
+
+      state.rollManualForTest(3);
+      await t.pump(const Duration(milliseconds: 700));
+      await t.pump(const Duration(seconds: 2));
+
+      expect(c.upgrades.handOf(me), hasLength(1),
+          reason: 'elle est bien allée dans la base');
+      expect(state.revealedCard, isNull,
+          reason: 'aucune carte ne s\'ouvre toute seule');
+      expect(find.byType(CardFace), findsNothing,
+          reason: 'sa face reste cachée : il faudra la toucher');
+      expect(find.byType(CardBack), findsOneWidget,
+          reason: 'on ne voit que son dos, dans la base');
+
+      await shutdownApp(t);
+    });
+  });
+
+  group('🛡️ « Pion invulnérable » : le joueur DÉSIGNE son pion', () {
+    testWidgets('la carte attend le choix, puis protège celui qu\'on nomme',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      // Graine 41 : le tirage donne « Pion invulnérable ».
+      c.upgrades.rng = math.Random(41);
+      final me = c.currentColor;
+
+      final lander = c.state.pawnsByColor[me]![0];
+      lander.location = PawnLocation.ring;
+      lander.position = GameController.startIdx(me) + 3;
+
+      state.rollManualForTest(3);
+      await t.pump(const Duration(milliseconds: 700));
+      await t.pump(const Duration(seconds: 2));
+
+      expect(state.pendingChoiceCard?.id, 'IMM_PAWN_INVULNERABLE',
+          reason: 'elle attend qu\'on lui désigne un pion');
+      expect(c.upgrades.isInvulnerable(lander), isFalse,
+          reason: 'rien n\'est appliqué tant que le choix n\'est pas fait');
+      expect(find.text('Choisir un pion'), findsNothing,
+          reason: 'le pion qui a déclenché est proposé d\'office');
+
+      // On désigne un AUTRE pion que celui qui a déclenché la carte.
+      final chosen = c.state.pawnsByColor[me]![2];
+      state.resolvePendingChoice(chosen);
+      await t.pump(const Duration(milliseconds: 300));
+
+      expect(c.upgrades.isInvulnerable(chosen), isTrue,
+          reason: 'c\'est le pion DÉSIGNÉ qui est protégé');
+      expect(c.upgrades.isInvulnerable(lander), isFalse,
+          reason: 'et pas celui qui a déclenché la carte');
+      expect(state.pendingChoiceCard, isNull);
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('refermer sans choisir protège le pion qui a déclenché',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      c.upgrades.rng = math.Random(41);
+      final me = c.currentColor;
+
+      final lander = c.state.pawnsByColor[me]![0];
+      lander.location = PawnLocation.ring;
+      lander.position = GameController.startIdx(me) + 3;
+      state.rollManualForTest(3);
+      await t.pump(const Duration(milliseconds: 700));
+      await t.pump(const Duration(seconds: 2));
+
+      state.resolvePendingChoice(null);
+      await t.pump(const Duration(milliseconds: 300));
+      expect(c.upgrades.isInvulnerable(lander), isTrue,
+          reason: 'l\'effet a toujours lieu, on ne peut pas l\'esquiver');
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('aucune fenêtre ne s\'ouvre pour un ORDINATEUR', (t) async {
+      // Il désigne son pion lui-même : le choix ne doit jamais interrompre
+      // sa boucle. Le pion RETENU est vérifié au moteur, sans minuterie.
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      c.upgrades.rng = math.Random(41);
+      final me = c.currentColor;
+      state.setAiSeats({me});
+
+      final lander = c.state.pawnsByColor[me]![0];
+      lander.location = PawnLocation.ring;
+      lander.position = GameController.startIdx(me) + 3;
+
+      state.rollManualForTest(3);
+      await t.pump(const Duration(milliseconds: 700));
+      await t.pump(const Duration(seconds: 2));
+
+      expect(state.pendingChoiceCard, isNull,
+          reason: 'aucune fenêtre ne s\'ouvre pour un ordinateur');
+      expect(c.upgrades.pendingChoice, isNull,
+          reason: 'et la carte a bien été résolue, pas laissée en plan');
+
+      await shutdownApp(t);
+    });
+  });
+
+  group('🎲 « Deux dés » : le centre en montre DEUX', () {
+    testWidgets('un seul dé d\'ordinaire, deux sous la carte', (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      final me = c.currentColor;
+
+      BoardView board() => t.widget<BoardView>(find.byType(BoardView));
+      expect(board().twoDice, isNull, reason: 'un seul dé au départ');
+
+      // La carte « Deux dés » : elle mord au tour SUIVANT.
+      c.applyImmediateCard(
+          kImmediateCards.singleWhere((x) => x.id == 'IMM_TWO_DICE'),
+          c.state.pawnsByColor[me]![0]);
+      await t.pump(const Duration(milliseconds: 200));
+      expect(board().twoDice, isNull,
+          reason: 'le tour du tirage garde un dé unique');
+
+      c.upgrades.onTurnCompleted(me);
+      state.setChanceEnabled(true); // redemande un rendu
+      await t.pump(const Duration(milliseconds: 200));
+      expect(board().twoDice, isNotNull,
+          reason: 'à partir du tour suivant, deux dés');
+
+      // Et un vrai lancer donne bien deux faces dont la somme est jouée.
+      final total = c.pickDiceValueFor(me);
+      final pair = c.upgrades.lastTwoDice!;
+      expect(pair.a + pair.b, total,
+          reason: 'la somme des deux dés est ce que le pion parcourt');
+      expect(pair.a, inInclusiveRange(1, 6));
+      expect(pair.b, inInclusiveRange(1, 6));
+
+      // Deux tours plus tard, le dé redevient unique.
+      c.upgrades.onTurnCompleted(me);
+      c.upgrades.onTurnCompleted(me);
+      state.setChanceEnabled(true);
+      await t.pump(const Duration(milliseconds: 200));
+      expect(board().twoDice, isNull, reason: 'après 2 tours, un seul dé');
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('le DEMI-dé reste un seul dé, de 1 à 3', (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      final me = c.currentColor;
+
+      c.applyImmediateCard(
+          kImmediateCards.singleWhere((x) => x.id == 'IMM_DICE_HALF'),
+          c.state.pawnsByColor[me]![0]);
+      c.upgrades.onTurnCompleted(me);
+      state.setChanceEnabled(true);
+      await t.pump(const Duration(milliseconds: 200));
+
+      expect(t.widget<BoardView>(find.byType(BoardView)).twoDice, isNull,
+          reason: 'le demi-dé n\'en ajoute pas un second');
+      final seen = <int>{for (int i = 0; i < 200; i++) c.pickDiceValueFor(me)};
+      expect(seen, {1, 2, 3});
+
+      await shutdownApp(t);
     });
   });
 }

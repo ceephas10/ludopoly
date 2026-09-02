@@ -334,12 +334,13 @@ const List<ChanceCard> kImmediateCards = [
     nameEn: 'Invulnerable pawn for 2 turns',
     nameEs: 'Ficha invulnerable por 2 turnos',
     descriptionFr:
-        'Pendant 2 tours, ce pion ne peut pas être capturé. L\'invulnérabilité disparaît ensuite d\'elle-même.',
+        'Choisissez le pion : pendant 2 tours, aucun adversaire ne peut le capturer ni le viser avec une carte. L\'invulnérabilité disparaît ensuite d\'elle-même.',
     kind: CardKind.immediate,
     timing: ChanceTiming.onChance,
     action: CardAction.setState,
     pawnState: CardPawnState.invulnerable,
     value: 2,
+    selection: CardSelection.chosen,
   ),
   ChanceCard(
     id: 'IMM_PAWN_FROZEN',
@@ -839,6 +840,11 @@ class LudoUpgrades {
   void setDiceMode(PlayerColor c, CardDiceMode mode) =>
       _diceMods[c] = _DiceMod(mode, _done[c]!);
 
+  /// Les deux dés du dernier lancer en mode « Deux dés ». Le moteur ne
+  /// manipule que leur SOMME ; ces deux valeurs ne servent qu'à montrer
+  /// les deux dés à l'écran.
+  ({int a, int b})? lastTwoDice;
+
   /// Mode actif pour [c], ou `null` si le dé est normal. « Pendant 2 tours
   /// à partir du tour SUIVANT » : actif pendant les 2 tours qui suivent
   /// celui du tirage.
@@ -934,7 +940,28 @@ class LudoUpgrades {
     final by = _lastDrawnBy;
     _lastDrawn = null;
     _lastDrawnBy = null;
+    // NE PAS toucher à `_pending` ici : une carte qui attend sa cible est
+    // lue par l'interface juste APRÈS celle-ci, et l'effacer la faisait
+    // s'appliquer d'office sans jamais demander le pion.
     return (c == null || by == null) ? null : (card: c, by: by);
+  }
+
+  // --- Une carte IMMÉDIATE qui attend qu'on lui désigne un pion ----------
+
+  ({ChanceCard card, Pawn onPawn})? _pending;
+
+  /// La carte tirée réclame une cible : le joueur — ou l'ordinateur —
+  /// doit désigner le pion avant qu'elle ne s'applique.
+  void notePendingChoice(ChanceCard card, Pawn onPawn) =>
+      _pending = (card: card, onPawn: onPawn);
+
+  ({ChanceCard card, Pawn onPawn})? get pendingChoice => _pending;
+
+  /// Rend la carte en attente et l'oublie.
+  ({ChanceCard card, Pawn onPawn})? takePendingChoice() {
+    final x = _pending;
+    _pending = null;
+    return x;
   }
 
   // --- Annonces pour l'interface ------------------------------------------
@@ -970,6 +997,7 @@ class LudoUpgrades {
     _captureRule.clear();
     _lastDrawn = null;
     _lastDrawnBy = null;
+    _pending = null;
     _skips.clear();
     _notices.clear();
     for (final c in PlayerColor.values) {

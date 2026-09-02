@@ -612,6 +612,82 @@ void main() {
     });
   });
 
+  group('🛡️ « Pion invulnérable » : la cible se DÉSIGNE', () {
+    /// Amène le pion 0 de [color] sur sa case Chance avec la graine 41,
+    /// qui donne « Pion invulnérable ».
+    GameController landOnInvulnerable(PlayerColor color) {
+      final c = newGame();
+      c.upgrades
+        ..chanceEnabled = true
+        ..rng = math.Random(41);
+      c.currentPlayerIdx = c.turnOrder.indexOf(color);
+      final p = c.state.pawnsByColor[color]![0];
+      putOnRing(c, p, 3);
+      arm(c, 3); // 3 + 3 = 6 pas → la case Chance
+      c.movePawn(p);
+      return c;
+    }
+
+    test('la carte ATTEND sa cible au lieu de s\'appliquer d\'office', () {
+      final c = landOnInvulnerable(PlayerColor.blue);
+      final lander = c.state.pawnsByColor[PlayerColor.blue]![0];
+      expect(c.upgrades.pendingChoice?.card.id, 'IMM_PAWN_INVULNERABLE');
+      expect(c.upgrades.isInvulnerable(lander), isFalse,
+          reason: 'rien n\'est posé tant que le pion n\'est pas désigné');
+    });
+
+    test('elle protège le pion DÉSIGNÉ, pas celui qui l\'a déclenchée', () {
+      final c = landOnInvulnerable(PlayerColor.blue);
+      final lander = c.state.pawnsByColor[PlayerColor.blue]![0];
+      final chosen = c.state.pawnsByColor[PlayerColor.blue]![2];
+      c.resolvePendingImmediate(chosen: chosen);
+      expect(c.upgrades.isInvulnerable(chosen), isTrue);
+      expect(c.upgrades.isInvulnerable(lander), isFalse);
+    });
+
+    test('sans choix, elle retombe sur le pion qui l\'a déclenchée', () {
+      final c = landOnInvulnerable(PlayerColor.blue);
+      final lander = c.state.pawnsByColor[PlayerColor.blue]![0];
+      c.resolvePendingImmediate();
+      expect(c.upgrades.isInvulnerable(lander), isTrue,
+          reason: 'l\'effet a toujours lieu');
+    });
+
+    test('un ORDINATEUR désigne son pion le plus avancé', () {
+      final c = landOnInvulnerable(PlayerColor.blue);
+      final best = c.state.pawnsByColor[PlayerColor.blue]![1];
+      putOnRing(c, best, 40); // bien plus avancé que celui qui a déclenché
+      final target = c.pickAiImmediateTarget();
+      expect(target, best, reason: 'c\'est le pion le plus précieux');
+      c.resolvePendingImmediate(chosen: target);
+      expect(c.upgrades.isInvulnerable(best), isTrue);
+    });
+
+    test('un pion INVULNÉRABLE ne peut plus être visé par un adversaire',
+        () {
+      final c = newGame();
+      final mine = c.state.pawnsByColor[PlayerColor.red]![0];
+      putOnRing(c, mine, 10);
+      c.upgrades.setPawnState(mine, CardPawnState.invulnerable);
+
+      final freeze =
+          kDeferredCards.singleWhere((x) => x.id == 'DEF_OPPONENT_FROZEN');
+      c.upgrades.addToHand(PlayerColor.blue, freeze);
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.blue);
+      c.phase = TurnPhase.rolling;
+
+      expect(c.deferredPawnTargets(PlayerColor.blue, freeze),
+          isNot(contains(mine)),
+          reason: 'ni capturé, ni contrôlé : il ne figure pas dans les '
+              'cibles adverses');
+      // Et le forcer ne marche pas non plus.
+      expect(
+          c.playDeferredCard(PlayerColor.blue, freeze, targetPawn: mine),
+          isNull);
+      expect(c.upgrades.isFrozen(mine), isFalse);
+    });
+  });
+
   group('🎲 Modificateurs de dé — « à partir du tour suivant »', () {
     test('demi-dé : 1..3 pendant les 2 tours suivants, puis dé normal', () {
       final c = newGame();
