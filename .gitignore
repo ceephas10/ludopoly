@@ -50,4 +50,10 @@ app.*.map.json
 
 # Junction to LudoPolyAnimations (assets produced by Studio).
 # Not tracked: the canonical source lives in the LudoPolyAnimations repo.
+# Two forms are needed: the directory, and the SYMLINK itself on macOS —
+# `AnimStock/` alone does not match a symlink named `AnimStock`.
 AnimStock/
+AnimStock
+
+# Fichiers de verrouillage Word/LibreOffice (« .~$nom.docx »).
+.~*
