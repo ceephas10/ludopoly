@@ -751,7 +751,7 @@ void main() {
       expect(seen, {1, 2, 3, 4, 5, 6}, reason: 'dé redevenu entier');
     });
 
-    test('double-dé : uniquement 2, 4, 6, 8, 10, 12', () {
+    test('double-dé : DEUX dés indépendants, somme de 2 à 12', () {
       final c = newGame();
       final rng = math.Random(7);
       // Le modificateur pèse sur CELUI QUI LANCE. On donne donc la main au
@@ -761,9 +761,10 @@ void main() {
           card('IMM_DICE_DOUBLE'), c.state.pawnsByColor[PlayerColor.red]![0]);
       c.upgrades.onTurnCompleted(PlayerColor.red);
       final seen = <int>{
-        for (int i = 0; i < 400; i++) c.pickDiceValueFor(PlayerColor.red, rng),
+        for (int i = 0; i < 600; i++) c.pickDiceValueFor(PlayerColor.red, rng),
       };
-      expect(seen, {2, 4, 6, 8, 10, 12});
+      expect(seen, {for (int v = 2; v <= 12; v++) v},
+          reason: '36 combinaisons, pas six');
     });
 
     test('deux dés : sommes de 2 à 12, et le moteur SAIT jouer un 12', () {
@@ -955,6 +956,9 @@ void main() {
       g.upgrades.addToHand(c, card);
       g.currentPlayerIdx = g.turnOrder.indexOf(c);
       g.phase = TurnPhase.rolling;
+      // Une carte-dé exige un coup jouable : sans pion sur l'anneau, seul
+      // un 6 servirait, et elle serait refusée à juste titre.
+      putOnRing(g, g.state.pawnsByColor[c]![0], 8);
       return card;
     }
 
@@ -1257,6 +1261,159 @@ void main() {
       expect(c.upgrades.handOf(PlayerColor.blue), isEmpty);
       expect(c.upgrades.cannotExit(red), isFalse);
       expect(c.upgrades.skipsLeft(PlayerColor.green), 0);
+    });
+  });
+
+  group('👥 On ne vise que les joueurs QUI JOUENT', () {
+    /// Une partie à deux : bleu contre vert. Rouge et jaune n'y sont pas.
+    GameController duel() => GameController(
+          turnOrder: const [PlayerColor.blue, PlayerColor.green],
+          state: GameState.initial(),
+        );
+
+    test('« empêcher de sortir » ne propose que les pions de l\'adversaire '
+        'PRÉSENT', () {
+      final c = duel();
+      final card =
+          kDeferredCards.singleWhere((x) => x.id == 'DEF_OPPONENT_NO_EXIT');
+      c.upgrades.addToHand(PlayerColor.blue, card);
+      c.currentPlayerIdx = 0;
+      c.phase = TurnPhase.rolling;
+
+      final targets = c.deferredPawnTargets(PlayerColor.blue, card);
+      expect(targets, isNotEmpty);
+      expect(targets.map((p) => p.color).toSet(), {PlayerColor.green},
+          reason: 'rouge et jaune ne jouent pas : ils n\'ont rien à faire '
+              'dans la liste');
+    });
+
+    test('« figer un pion adverse » suit la même règle', () {
+      final c = duel();
+      final card =
+          kDeferredCards.singleWhere((x) => x.id == 'DEF_OPPONENT_FROZEN');
+      c.upgrades.addToHand(PlayerColor.blue, card);
+      c.currentPlayerIdx = 0;
+      c.phase = TurnPhase.rolling;
+      for (final col in PlayerColor.values) {
+        putOnRing(c, c.state.pawnsByColor[col]![0], 10);
+      }
+      expect(
+          c.deferredPawnTargets(PlayerColor.blue, card)
+              .map((p) => p.color)
+              .toSet(),
+          {PlayerColor.green});
+    });
+
+    test('« faire sauter un tour » ne propose que les joueurs présents', () {
+      final c = duel();
+      final card =
+          kDeferredCards.singleWhere((x) => x.id == 'DEF_SKIP_CHOSEN');
+      c.upgrades.addToHand(PlayerColor.blue, card);
+      c.currentPlayerIdx = 0;
+      c.phase = TurnPhase.rolling;
+      expect(c.deferredPlayerTargets(PlayerColor.blue, card),
+          [PlayerColor.green]);
+    });
+
+    test('à quatre, tous les adversaires reviennent dans la liste', () {
+      final c = newGame();
+      final card =
+          kDeferredCards.singleWhere((x) => x.id == 'DEF_OPPONENT_NO_EXIT');
+      c.upgrades.addToHand(PlayerColor.blue, card);
+      c.currentPlayerIdx = 0;
+      c.phase = TurnPhase.rolling;
+      expect(
+          c.deferredPawnTargets(PlayerColor.blue, card)
+              .map((p) => p.color)
+              .toSet(),
+          {PlayerColor.red, PlayerColor.green, PlayerColor.yellow});
+    });
+  });
+
+  group('🍽️ On mange AVANT d\'être emporté par le vortex', () {
+    test('un adverse posé sur la case Vortex est capturé, puis on part',
+        () {
+      for (final good in [true, false]) {
+        final c = newGame();
+        c.upgrades.vortexEnabled = true;
+        final blue = c.state.pawnsByColor[PlayerColor.blue]![0];
+        final victim = c.state.pawnsByColor[PlayerColor.red]![0];
+        final step = good ? 1 : SpecialCells.lastStraightStep;
+        final cell = good
+            ? SpecialCells.goodVortexCell(PlayerColor.blue)
+            : SpecialCells.badVortexCell(PlayerColor.blue);
+
+        // L'adversaire attend PILE sur la case spéciale du bleu.
+        victim.location = PawnLocation.ring;
+        victim.position = cell;
+        putOnRing(c, blue, step - 1);
+        arm(c, 1);
+        c.movePawn(blue);
+
+        expect(victim.location, PawnLocation.base,
+            reason: '${good ? "la bonne" : "le trou noir"} : la case fait '
+                'son office, elle n\'annule pas la prise');
+        final target = good
+            ? SpecialCells.goodVortexTarget(PlayerColor.blue)
+            : SpecialCells.badVortexTarget(PlayerColor.blue);
+        expect(blue.position, target,
+            reason: 'et le pion est bien reparti ensuite');
+      }
+    });
+
+    test('un pion INVULNÉRABLE posé là n\'est pas mangé', () {
+      final c = newGame();
+      c.upgrades.vortexEnabled = true;
+      final blue = c.state.pawnsByColor[PlayerColor.blue]![0];
+      final victim = c.state.pawnsByColor[PlayerColor.red]![0];
+      victim.location = PawnLocation.ring;
+      victim.position = SpecialCells.goodVortexCell(PlayerColor.blue);
+      c.upgrades.setPawnState(victim, CardPawnState.invulnerable);
+      putOnRing(c, blue, 0);
+      arm(c, 1);
+      c.movePawn(blue);
+      expect(victim.location, PawnLocation.ring, reason: 'protégé');
+    });
+  });
+
+  group('🎲 Une carte-dé qui ne sert à rien est REFUSÉE', () {
+    test('un 5 avec tous les pions en boîte ne se joue pas', () {
+      final c = newGame();
+      final card = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_5');
+      c.upgrades.addToHand(PlayerColor.blue, card);
+      c.currentPlayerIdx = 0;
+      c.phase = TurnPhase.rolling;
+
+      expect(c.hasMoveWith(PlayerColor.blue, 5), isFalse);
+      expect(c.canPlayDeferred(PlayerColor.blue, card), isFalse,
+          reason: 'elle serait brûlée pour rien');
+      expect(c.playDeferredCard(PlayerColor.blue, card), isNull);
+      expect(c.upgrades.handOf(PlayerColor.blue), contains(card),
+          reason: 'et elle reste en main');
+    });
+
+    test('un 6 se joue toujours : il fait sortir un pion', () {
+      final c = newGame();
+      final card = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_6');
+      c.upgrades.addToHand(PlayerColor.blue, card);
+      c.currentPlayerIdx = 0;
+      c.phase = TurnPhase.rolling;
+      expect(c.canPlayDeferred(PlayerColor.blue, card), isTrue);
+      expect(c.playDeferredCard(PlayerColor.blue, card), 6);
+    });
+
+    test('avec un pion sur l\'anneau, toutes les valeurs se jouent', () {
+      for (int v = 1; v <= 6; v++) {
+        final c = newGame();
+        final card = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_$v');
+        c.upgrades.addToHand(PlayerColor.green, card);
+        c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.green);
+        c.phase = TurnPhase.rolling;
+        putOnRing(c, c.state.pawnsByColor[PlayerColor.green]![0], 8);
+        expect(c.playDeferredCard(PlayerColor.green, card), v,
+            reason: 'la carte de $v doit s\'appliquer, quelle que soit la '
+                'couleur');
+      }
     });
   });
 }

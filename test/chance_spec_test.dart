@@ -40,6 +40,9 @@ ChanceCard give(GameController c, PlayerColor color, String id) {
   c.upgrades.addToHand(color, card);
   c.currentPlayerIdx = c.turnOrder.indexOf(color);
   c.phase = TurnPhase.rolling;
+  // Une carte-dé est refusée si elle ne donne aucun coup jouable (§9) :
+  // on met donc un pion sur l'anneau pour que le coup existe.
+  putOnRing(c.state.pawnsByColor[color]![0], 8);
   return card;
 }
 
@@ -237,7 +240,10 @@ void main() {
     }
 
     diceCard('IMM_DICE_HALF', 'Demi-dé', {1, 2, 3});
-    diceCard('IMM_DICE_DOUBLE', 'Double-dé', {2, 4, 6, 8, 10, 12});
+    // Le double-dé, c'est DEUX dés indépendants : 36 combinaisons, somme
+    // de 2 à 12 — et non une face comptée deux fois.
+    diceCard('IMM_DICE_DOUBLE', 'Double-dé',
+        {for (int v = 2; v <= 12; v++) v});
     diceCard('IMM_TWO_DICE', 'Deux dés',
         {for (int v = 2; v <= 12; v++) v});
   });

@@ -521,38 +521,13 @@ class GameController {
         return; // never happens (filtered by _canMove)
     }
 
-    // Branchement Améliorations : le pion vient d'atterrir — un Vortex de
-    // SA couleur peut l'aspirer ailleurs AVANT la résolution de capture,
-    // qui s'applique alors à la case d'arrivée réelle. Inerte quand les
-    // Améliorations sont éteintes.
+    // Le pion MANGE D'ABORD sur la case où le dé l'a posé — vortex compris.
+    // S'il y trouvait un adversaire, il le capture, PUIS le vortex
+    // l'emporte : la case fait son office, elle n'annule pas la prise.
+    captured = _captureEnemiesAt(p) || captured;
     _applyVortexOnLanding(p);
-
-    // Capture: opposing-team pawn(s) on the same non-safe ring cell go
-    // back to base. In team mode, partner pawns on the cell are NEVER
-    // captured.
-    if (p.location == PawnLocation.ring && !_safeCells.contains(p.position)) {
-      for (final color in state.pawnsByColor.keys) {
-        if (_sameTeam(color, p.color)) continue;
-        for (final other in state.pawnsByColor[color]!) {
-          // Branchement Améliorations : un pion INVULNÉRABLE ne se fait
-          // pas capturer — les deux pions cohabitent sur la case.
-          if (upgrades.isInvulnerable(other)) continue;
-          if (other.location == PawnLocation.ring &&
-              other.position == p.position) {
-            _returnPawnToBase(other);
-            // Branchement Améliorations, carte 22 : la règle après capture
-            // était armée. La victime rentre dans SA propre boîte et devra
-            // faire 6 pour ressortir — on le dit explicitement.
-            if (upgrades.consumeCaptureRule(p.color)) {
-              upgrades.addNotice(
-                  'Le pion ${other.id + 1} de ${_fr[other.color]} regagne '
-                  'sa boîte de départ : il lui faudra un 6 pour ressortir.');
-            }
-            captured = true;
-          }
-        }
-      }
-    }
+    // Et il mange aussi à sa case d'ARRIVÉE, s'il a été déplacé.
+    captured = _captureEnemiesAt(p) || captured;
 
     // Branchement Améliorations : atterrir sur une case Chance tire une
     // carte immédiate et l'applique. Inerte quand éteint.
@@ -597,6 +572,36 @@ class GameController {
     } else {
       _nextPlayer();
     }
+  }
+
+  /// Capture les pions adverses présents sur la case de [p], selon les
+  /// règles habituelles : rien sur une case sûre, jamais un coéquipier,
+  /// jamais un pion invulnérable. Rend `true` si quelqu'un a été mangé.
+  bool _captureEnemiesAt(Pawn p) {
+    if (p.location != PawnLocation.ring) return false;
+    if (_safeCells.contains(p.position)) return false;
+    bool any = false;
+    for (final color in state.pawnsByColor.keys) {
+      if (_sameTeam(color, p.color)) continue;
+      for (final other in state.pawnsByColor[color]!) {
+        // Un pion INVULNÉRABLE ne se fait pas capturer : les deux pions
+        // cohabitent sur la case.
+        if (upgrades.isInvulnerable(other)) continue;
+        if (other.location == PawnLocation.ring &&
+            other.position == p.position) {
+          _returnPawnToBase(other);
+          // Carte 22 : la règle après capture était armée. La victime
+          // rentre dans SA propre boîte et devra faire 6 pour ressortir.
+          if (upgrades.consumeCaptureRule(p.color)) {
+            upgrades.addNotice(
+                'Le pion ${other.id + 1} de ${_fr[other.color]} regagne '
+                'sa boîte de départ : il lui faudra un 6 pour ressortir.');
+          }
+          any = true;
+        }
+      }
+    }
+    return any;
   }
 
   /// Force the next player (debug). Resets streak + dice.
@@ -1127,13 +1132,12 @@ class GameController {
       case CardDiceMode.limit:
         return r.nextInt(3) + 1;
       case CardDiceMode.double:
-        // Le DOUBLE-dé, c'est une face comptée deux fois : 4 donne 8. On
-        // montre donc DEUX dés portant la même face — c'est ce que « le
-        // double » veut dire, et c'est aussi la seule façon d'afficher 8,
-        // 10 ou 12 avec des faces qui s'arrêtent à 6.
-        final base = r.nextInt(6) + 1;
-        upgrades.lastTwoDice = (a: base, b: base);
-        return base * 2;
+        // DEUX dés bel et bien indépendants : 36 combinaisons, somme de 2
+        // à 12. Ils ne montrent donc pas la même face en même temps.
+        final a = r.nextInt(6) + 1;
+        final b = r.nextInt(6) + 1;
+        upgrades.lastTwoDice = (a: a, b: b);
+        return a + b;
       case CardDiceMode.twoDice:
         // Deux dés bien réels : on garde leurs deux faces pour les
         // MONTRER, et le moteur ne travaille que sur leur somme.
@@ -1212,6 +1216,20 @@ class GameController {
     applyImmediateCard(card, p);
   }
 
+  /// [c] a-t-il au moins un coup jouable avec un dé de [v] ? Même logique
+  /// que [movablePawns], mais pour une valeur donnée d'avance.
+  bool hasMoveWith(PlayerColor c, int v) {
+    if (state.pawnsByColor[c]!.any((p) => _canMoveAs(p, v, c))) return true;
+    if (teamMode && _allPawnsHome(c)) {
+      final partner = _partners[c];
+      if (partner != null) {
+        return state.pawnsByColor[partner]!
+            .any((p) => _canMoveAs(p, v, c));
+      }
+    }
+    return false;
+  }
+
   /// Les pions que [card] peut viser, la carte ayant été déclenchée par
   /// [onPawn]. Vide si elle ne demande aucun choix.
   List<Pawn> immediateTargets(ChanceCard card, Pawn onPawn) {
@@ -1219,9 +1237,11 @@ class GameController {
     final wantsOwn = card.scope == CardScope.self;
     return [
       for (final entry in state.pawnsByColor.entries)
-        if (wantsOwn
-            ? entry.key == onPawn.color
-            : !_sameTeam(entry.key, onPawn.color))
+        // Mêmes règles : jamais un joueur absent de la partie.
+        if (turnOrder.contains(entry.key))
+          if (wantsOwn
+              ? entry.key == onPawn.color
+              : !_sameTeam(entry.key, onPawn.color))
           for (final p in entry.value)
             // Un pion arrivé au centre ne subit plus rien.
             if (p.location != PawnLocation.home)
@@ -1292,6 +1312,13 @@ class GameController {
     if (currentColor != c) return false;
     if (upgrades.hasPlayedThisTurn(c)) return false;
     if (!upgrades.handOf(c).contains(card)) return false;
+    // §9 de la spec : « le programme doit toujours vérifier qu'une action
+    // est légalement possible avant de l'exécuter ». Une carte-dé qui ne
+    // donnerait AUCUN coup jouable serait brûlée pour rien — on la refuse
+    // et l'interface dit pourquoi.
+    if (card.action == CardAction.setDice && !hasMoveWith(c, card.value)) {
+      return false;
+    }
     // Le moteur EMPÊCHE de jouer une carte au mauvais moment : « une carte
     // AVANT ne peut pas être utilisée APRÈS », et réciproquement.
     return switch (phase) {
@@ -1311,7 +1338,10 @@ class GameController {
     final wantsOwn = card.scope == CardScope.self;
     return [
       for (final entry in state.pawnsByColor.entries)
-        if (wantsOwn ? entry.key == c : !_sameTeam(entry.key, c))
+        // Seules les couleurs EN JEU sont des cibles : dans une partie à
+        // deux, on ne propose pas les pions d'un joueur absent.
+        if (turnOrder.contains(entry.key))
+          if (wantsOwn ? entry.key == c : !_sameTeam(entry.key, c))
           for (final p in entry.value)
             // Un pion arrivé au centre ne subit plus rien.
             if (p.location != PawnLocation.home)

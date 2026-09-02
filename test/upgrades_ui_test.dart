@@ -133,6 +133,11 @@ void main() {
       final dice4 =
           kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_4');
       c.upgrades.addToHand(c.currentColor, dice4);
+      // Une carte-dé exige un coup jouable : sans pion sur l'anneau, un 4
+      // ne servirait à rien et la carte serait refusée à juste titre.
+      final out = c.state.pawnsByColor[c.currentColor]![0];
+      out.location = PawnLocation.ring;
+      out.position = GameController.startIdx(c.currentColor) + 8;
       await t.pump(const Duration(milliseconds: 300));
 
       expect(find.text('Vos cartes chance'), findsOneWidget);
@@ -480,6 +485,9 @@ void main() {
 
       final card = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_4');
       c.upgrades.addToHand(me, card);
+      final out = c.state.pawnsByColor[me]![0];
+      out.location = PawnLocation.ring;
+      out.position = GameController.startIdx(me) + 8;
       await t.pump(const Duration(milliseconds: 300));
       state.openHandCard(0);
       await t.pump(const Duration(milliseconds: 300));
@@ -798,8 +806,7 @@ void main() {
       await shutdownApp(t);
     });
 
-    testWidgets('le DOUBLE-dé montre aussi deux dés, la même face deux fois',
-        (t) async {
+    testWidgets('le DOUBLE-dé montre deux dés INDÉPENDANTS', (t) async {
       await bootApp(t);
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
       final c = state.controller;
@@ -819,17 +826,23 @@ void main() {
       expect(board().twoDice, isNotNull,
           reason: 'un 8, un 10 ou un 12 ne tient pas sur une seule face');
 
-      // Chaque lancer : deux fois LA MÊME face, et leur somme est jouée.
-      for (int i = 0; i < 50; i++) {
+      // Deux dés INDÉPENDANTS : 36 combinaisons, somme de 2 à 12, et les
+      // deux faces ne sont pas toujours égales.
+      final totals = <int>{};
+      var everDifferent = false;
+      for (int i = 0; i < 300; i++) {
         final total = c.pickDiceValueFor(me);
         final pair = c.upgrades.lastTwoDice!;
-        expect(pair.a, pair.b, reason: 'le double, c\'est deux fois pareil');
         expect(pair.a, inInclusiveRange(1, 6));
+        expect(pair.b, inInclusiveRange(1, 6));
         expect(pair.a + pair.b, total);
-        expect(total.isEven, isTrue);
+        if (pair.a != pair.b) everDifferent = true;
+        totals.add(total);
       }
+      expect(everDifferent, isTrue,
+          reason: 'les deux dés ne donnent pas toujours la même face');
+      expect(totals, {for (int v = 2; v <= 12; v++) v});
 
-      // Deux tours plus tard, le dé redevient unique.
       c.upgrades.onTurnCompleted(me);
       c.upgrades.onTurnCompleted(me);
       state.setChanceEnabled(true);

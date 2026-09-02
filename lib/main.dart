@@ -449,6 +449,12 @@ class BoardScreenState extends State<BoardScreen>
   /// n'est pas un parcours — un saut court suffit.
   static const Duration _baseExitDuration = Duration(milliseconds: 220);
 
+  /// Temps pendant lequel un pion RESTE VISIBLE sur la case spéciale qui
+  /// vient de l'emporter — vortex, trou noir ou carte. Sans cette pause on
+  /// ne voyait jamais qu'il y était passé : il semblait sauter d'un bout à
+  /// l'autre du plateau sans raison.
+  static const Duration _specialCellHold = Duration(milliseconds: 620);
+
   /// Temps d'affichage du dé AVANT qu'un coup automatique (un seul pion
   /// jouable) ne parte. Sans cette pause on ne voit jamais le chiffre.
   static const Duration _dicePause = Duration(milliseconds: 550);
@@ -919,6 +925,10 @@ class BoardScreenState extends State<BoardScreen>
     if (_isAiColor(seat)) return null;
     return seat;
   }
+
+  /// Le siège dont les cartes sont cliquables, pour les tests.
+  @visibleForTesting
+  PlayerColor? get cardTapSeatForTest => _cardTapSeat;
 
   /// Le joueur a touché la carte n° [slot] de sa base : elle se retourne.
   @visibleForTesting
@@ -1686,12 +1696,34 @@ class BoardScreenState extends State<BoardScreen>
         } else {
           _animating = false;
         }
-        _travelStep.remove(p);
-        _travelEndTimers.remove(p);
+        // Le pion a-t-il été DÉPLACÉ après son arrivée — par un vortex ou
+        // par une carte ? Si oui on le laisse un instant sur la case où le
+        // dé l'avait posé, pour qu'on VOIE qu'il y est arrivé avant d'être
+        // emporté. Sans cette pause, il semblait n'y être jamais passé.
+        final displaced = path.isNotEmpty &&
+            (p.location != path.last.location ||
+                p.position != path.last.position);
+        if (!displaced) {
+          _travelStep.remove(p);
+          _travelEndTimers.remove(p);
+        }
         // Le pion est arrivé : c'est MAINTENANT que le dé prend la couleur
         // du joueur suivant et que le clignotement passe à son Yard.
         _activeColorHold = null;
       });
+      // La pause de la case spéciale, puis le pion rejoint sa vraie place.
+      if (path.isNotEmpty &&
+          (p.location != path.last.location ||
+              p.position != path.last.position)) {
+        _travelEndTimers[p] =
+            _after(_pace(_specialCellHold, ai: aiMove), () {
+          if (!mounted) return;
+          setState(() {
+            _travelStep.remove(p);
+            _travelEndTimers.remove(p);
+          });
+        });
+      }
       // Le pion est arrivé sur sa case : si c'était une case Chance, la
       // carte s'OUVRE maintenant. L'ouvrir plus tôt cacherait le trajet.
       _openDrawnCardIfAny();
@@ -3913,6 +3945,10 @@ class _HandCardOverlayState extends State<_HandCardOverlay> {
       if (card.timing == ChanceTiming.afterRoll &&
           widget.phase == TurnPhase.rolling) {
         return 'Carte APRÈS : lance d\'abord ton dé.';
+      }
+      if (widget.card.action == CardAction.setDice) {
+        return 'Aucun coup possible avec un ${widget.card.value} : la '
+            'carte serait perdue pour rien.';
       }
       return 'Une seule carte différée par tour — celle-ci attendra.';
     }
