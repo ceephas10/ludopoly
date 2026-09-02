@@ -791,6 +791,47 @@ void main() {
       await shutdownApp(t);
     });
 
+    testWidgets('le DOUBLE-dé montre aussi deux dés, la même face deux fois',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      final me = c.currentColor;
+
+      BoardView board() => t.widget<BoardView>(find.byType(BoardView));
+      expect(board().twoDice, isNull);
+
+      c.applyImmediateCard(
+          kImmediateCards.singleWhere((x) => x.id == 'IMM_DICE_DOUBLE'),
+          c.state.pawnsByColor[me]![0]);
+      c.upgrades.onTurnCompleted(me);
+      state.setChanceEnabled(true); // redemande un rendu
+      await t.pump(const Duration(milliseconds: 200));
+
+      expect(board().twoDice, isNotNull,
+          reason: 'un 8, un 10 ou un 12 ne tient pas sur une seule face');
+
+      // Chaque lancer : deux fois LA MÊME face, et leur somme est jouée.
+      for (int i = 0; i < 50; i++) {
+        final total = c.pickDiceValueFor(me);
+        final pair = c.upgrades.lastTwoDice!;
+        expect(pair.a, pair.b, reason: 'le double, c\'est deux fois pareil');
+        expect(pair.a, inInclusiveRange(1, 6));
+        expect(pair.a + pair.b, total);
+        expect(total.isEven, isTrue);
+      }
+
+      // Deux tours plus tard, le dé redevient unique.
+      c.upgrades.onTurnCompleted(me);
+      c.upgrades.onTurnCompleted(me);
+      state.setChanceEnabled(true);
+      await t.pump(const Duration(milliseconds: 200));
+      expect(board().twoDice, isNull);
+
+      await shutdownApp(t);
+    });
+
     testWidgets('le DEMI-dé reste un seul dé, de 1 à 3', (t) async {
       await bootApp(t);
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));

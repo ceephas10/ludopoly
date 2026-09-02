@@ -1127,7 +1127,13 @@ class GameController {
       case CardDiceMode.limit:
         return r.nextInt(3) + 1;
       case CardDiceMode.double:
-        return (r.nextInt(6) + 1) * 2;
+        // Le DOUBLE-dé, c'est une face comptée deux fois : 4 donne 8. On
+        // montre donc DEUX dés portant la même face — c'est ce que « le
+        // double » veut dire, et c'est aussi la seule façon d'afficher 8,
+        // 10 ou 12 avec des faces qui s'arrêtent à 6.
+        final base = r.nextInt(6) + 1;
+        upgrades.lastTwoDice = (a: base, b: base);
+        return base * 2;
       case CardDiceMode.twoDice:
         // Deux dés bien réels : on garde leurs deux faces pour les
         // MONTRER, et le moteur ne travaille que sur leur somme.

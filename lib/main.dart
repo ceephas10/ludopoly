@@ -900,8 +900,11 @@ class BoardScreenState extends State<BoardScreen>
   /// deux. Avant son premier lancer sous ce mode, on affiche deux faces
   /// neutres plutôt que rien.
   ({int a, int b})? get _twoDiceShown {
-    if (_controller.upgrades.activeDiceMode(_activeColor) !=
-        CardDiceMode.twoDice) {
+    final mode = _controller.upgrades.activeDiceMode(_activeColor);
+    // DEUX cartes mettent deux dés au centre : « Deux dés », dont on joue
+    // la somme, et « Double-dé », qui compte deux fois la même face. Le
+    // DEMI-dé, lui, reste un dé unique : il ne change que les valeurs.
+    if (mode != CardDiceMode.twoDice && mode != CardDiceMode.double) {
       return null;
     }
     return _controller.upgrades.lastTwoDice ?? (a: 1, b: 1);
@@ -4379,9 +4382,9 @@ class BoardView extends StatelessWidget {
   /// jamais l'instruction. Il faut TOUCHER une carte pour la retourner.
   final Map<PlayerColor, List<ChanceCard>> deferredHands;
 
-  /// Les DEUX dés à montrer au centre, quand la carte « Deux dés » est
-  /// active pour le joueur au tour. `null` = un seul dé, comme d'habitude.
-  /// Le demi-dé et le double-dé restent un dé unique : eux ne changent que
+  /// Les DEUX dés à montrer au centre, quand « Deux dés » ou « Double-dé »
+  /// est actif pour le joueur au tour. `null` = un seul dé, comme
+  /// d'habitude. Le demi-dé, lui, reste un dé unique : il ne change que
   /// les valeurs possibles.
   final ({int a, int b})? twoDice;
 
