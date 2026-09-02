@@ -10,6 +10,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ludopoly/game/board_path.dart';
 import 'package:ludopoly/game/game_controller.dart';
 import 'package:ludopoly/game/game_state.dart';
 import 'package:ludopoly/game/pawn.dart';
@@ -43,43 +44,97 @@ void arm(GameController c, int v) {
 
 void main() {
   group('🕳️ Géométrie des cases spéciales', () {
-    test('UNE case Vortex par couleur, juste DEVANT sa case de départ', () {
-      final cells = <int>{};
+    test('DEUX cases par couleur : la bonne devant le départ, la mauvaise '
+        'au 44e pas', () {
+      final all = <int>{};
       for (final c in PlayerColor.values) {
-        final v = SpecialCells.vortexCell(c);
-        expect(v, (GameController.startIdx(c) + 1) % GameController.ringSize,
-            reason: '${c.name} : la case suit immédiatement le départ');
-        expect(v, isNot(GameController.startIdx(c)),
-            reason: 'ce n\'est PAS la case de départ elle-même');
-        cells.add(v);
+        final good = SpecialCells.goodVortexCell(c);
+        final bad = SpecialCells.badVortexCell(c);
+        expect(good, (GameController.startIdx(c) + 1) % GameController.ringSize,
+            reason: '${c.name} : la bonne suit immédiatement le départ');
+        expect(
+            bad,
+            (GameController.startIdx(c) + SpecialCells.lastStraightStep) %
+                GameController.ringSize,
+            reason: '${c.name} : la mauvaise est au 44e pas');
+        expect(good, isNot(bad));
+        expect(good, isNot(GameController.startIdx(c)),
+            reason: 'ni l\'une ni l\'autre n\'est la case de départ');
+        expect(bad, isNot(GameController.startIdx(c)));
+        all..add(good)..add(bad);
       }
-      expect(cells.length, 4, reason: 'une case par couleur, distinctes');
+      expect(all.length, 8, reason: '8 cases distinctes en tout');
       // Jamais sur une case sûre, jamais sur une case Chance.
-      for (final v in cells) {
+      for (final v in all) {
         expect(const {0, 13, 26, 39, 8, 21, 34, 47}.contains(v), isFalse);
         expect(SpecialCells.chanceCells.contains(v), isFalse);
       }
     });
 
-    test('la case porte DEUX cibles : le départ de la diagonale, et sa '
-        'dernière ligne droite', () {
+    test('les mauvaises tombent sur les cases 81 vert · 99 jaune · '
+        '143 bleu · 125 rouge de la grille 15×15', () {
+      // Les quatre repères donnés à la main. On les recalcule depuis la
+      // géométrie du plateau : c'est le verrou le plus dur de ce fichier.
+      int gridIndex(int ringIdx) {
+        final pos = ring[ringIdx].pos;
+        return (pos.dy - 0.5).round() * 15 + (pos.dx - 0.5).round();
+      }
+      expect(gridIndex(SpecialCells.badVortexCell(PlayerColor.green)), 81);
+      expect(gridIndex(SpecialCells.badVortexCell(PlayerColor.yellow)), 99);
+      expect(gridIndex(SpecialCells.badVortexCell(PlayerColor.blue)), 143);
+      expect(gridIndex(SpecialCells.badVortexCell(PlayerColor.red)), 125);
+    });
+
+    test('la dernière ligne droite est bien DROITE, et le virage vient '
+        'après', () {
+      // Le 44e pas ouvre 6 cases alignées ; le 50e tourne pour entrer dans
+      // le couloir. C'est ce qui fait du 44e « la première case de la
+      // dernière ligne droite ».
       for (final c in PlayerColor.values) {
-        final diag = SpecialCells.diagonalOf[c]!;
-        expect(SpecialCells.goodVortexTarget(c), GameController.startIdx(diag),
-            reason: 'la bonne forme mène au départ de ${diag.name}');
-        // La mauvaise mène à la case d'où la diagonale entre dans son
-        // couloir final — son 50e pas.
-        expect(
-            (SpecialCells.badVortexTarget(c) -
-                    GameController.startIdx(diag) +
-                    GameController.ringSize) %
-                GameController.ringSize,
-            GameController.lastRingStep);
-        expect(SpecialCells.goodVortexTarget(c),
-            isNot(SpecialCells.badVortexTarget(c)),
-            reason: 'les deux formes ne mènent pas au même endroit');
+        final start = GameController.startIdx(c);
+        final run = [
+          for (int s = SpecialCells.lastStraightStep;
+              s <= GameController.lastRingStep - 1;
+              s++)
+            ring[(start + s) % GameController.ringSize].pos,
+        ];
+        expect(run.length, 6, reason: '${c.name} : 6 cases droites');
+        final sameX = run.every((o) => o.dx == run.first.dx);
+        final sameY = run.every((o) => o.dy == run.first.dy);
+        expect(sameX || sameY, isTrue,
+            reason: '${c.name} : le segment doit être rectiligne, $run');
+        final before =
+            ring[(start + SpecialCells.lastStraightStep - 1) % 52].pos;
+        expect(sameX ? before.dx == run.first.dx : before.dy == run.first.dy,
+            isFalse,
+            reason: '${c.name} : la ligne droite commencerait plus tôt');
       }
     });
+
+    test('chaque case mène à SON homologue d\'en face : 26 pas gagnés ou '
+        'perdus', () {
+      for (final c in PlayerColor.values) {
+        final diag = SpecialCells.diagonalOf[c]!;
+        expect(SpecialCells.goodVortexTarget(c),
+            SpecialCells.goodVortexCell(diag));
+        expect(SpecialCells.badVortexTarget(c),
+            SpecialCells.badVortexCell(diag));
+
+        int stepsOf(int cell) =>
+            (cell - GameController.startIdx(c) + GameController.ringSize) %
+            GameController.ringSize;
+        // La bonne : de 1 pas à 27 → 26 gagnés.
+        expect(stepsOf(SpecialCells.goodVortexTarget(c)) - 1, 26,
+            reason: '${c.name} : la bonne fait gagner 26 pas');
+        // La mauvaise : de 44 pas à 18 → 26 perdus.
+        expect(
+            SpecialCells.lastStraightStep -
+                stepsOf(SpecialCells.badVortexTarget(c)),
+            26,
+            reason: '${c.name} : la mauvaise fait perdre 26 pas');
+      }
+    });
+
 
     test('les diagonales se répondent, à +26 pas', () {
       for (final c in PlayerColor.values) {
@@ -135,14 +190,17 @@ void main() {
       expect(c.upgrades.takeNotices(), isEmpty);
     });
 
-    test('se poser sur sa case Vortex ne téléporte PAS', () {
-      final c = newGame();
-      final p = c.state.pawnsByColor[PlayerColor.blue]![0];
-      putOnRing(c, p, 0);
-      arm(c, 1); // 0 + 1 → la case Vortex du bleu
-      c.movePawn(p);
-      expect(p.position, SpecialCells.vortexCell(PlayerColor.blue));
-      expect(c.upgrades.takeNotices(), isEmpty);
+    test('se poser sur l\'une ou l\'autre case ne téléporte PAS', () {
+      for (final step in [1, SpecialCells.lastStraightStep]) {
+        final c = newGame();
+        final p = c.state.pawnsByColor[PlayerColor.blue]![0];
+        putOnRing(c, p, step - 1);
+        arm(c, 1);
+        c.movePawn(p);
+        expect((p.position - GameController.startIdx(PlayerColor.blue) + 52) %
+            52, step);
+        expect(c.upgrades.takeNotices(), isEmpty);
+      }
     });
 
     test('entrer dans son couloir ne renvoie PAS en arrière', () {
@@ -156,96 +214,167 @@ void main() {
     });
   });
 
-  group('🌀 La case Vortex : une case, deux formes', () {
-    /// Prépare une partie où la case Vortex donnera la forme voulue.
-    /// `nextBool()` décide : vrai = la bonne, faux = le trou noir.
-    GameController gameWhereVortexIs({required bool good}) {
+  group('🌀 Les deux cases Vortex', () {
+    GameController vortexGame() {
       final c = newGame();
-      c.upgrades
-        ..vortexEnabled = true
-        // Deux graines choisies une fois pour toutes : celle-ci donne
-        // `true` au premier nextBool, celle-là `false`. Le tirage reste
-        // du vrai hasard en partie ; le test, lui, doit être reproductible.
-        ..rng = math.Random(good ? 1 : 3);
-      // Vérifie l'hypothèse de graine plutôt que de la supposer.
-      final probe = math.Random(good ? 1 : 3).nextBool();
-      expect(probe, good, reason: 'graine mal choisie pour ce test');
+      c.upgrades.vortexEnabled = true;
       return c;
     }
 
-    test('LA BONNE : le pion file sur le départ de la diagonale, '
+    /// Amène le pion 0 de [color] sur son [step]e pas par un vrai coup.
+    Pawn landOn(GameController c, PlayerColor color, int step) {
+      c.currentPlayerIdx = c.turnOrder.indexOf(color);
+      final p = c.state.pawnsByColor[color]![0];
+      putOnRing(c, p, step - 1);
+      arm(c, 1);
+      c.movePawn(p);
+      return p;
+    }
+
+    test('LA BONNE : le pion file sur la première case de la diagonale, '
         'pour les 4 couleurs', () {
       for (final color in PlayerColor.values) {
-        final c = gameWhereVortexIs(good: true);
-        c.currentPlayerIdx = c.turnOrder.indexOf(color);
-        final p = c.state.pawnsByColor[color]![0];
-        putOnRing(c, p, 0); // sur sa case de départ
-        arm(c, 1);          // un pas → la case Vortex
-        c.movePawn(p);
+        final c = vortexGame();
+        final p = landOn(c, color, 1);
         final diag = SpecialCells.diagonalOf[color]!;
         expect(p.location, PawnLocation.ring);
-        expect(p.position, GameController.startIdx(diag),
-            reason: '${color.name} doit filer chez ${diag.name}');
+        expect(p.position, SpecialCells.goodVortexCell(diag),
+            reason: '${color.name} doit filer sur la 1re case de '
+                '${diag.name}');
         expect(c.upgrades.takeNotices().single, contains('Vortex'));
       }
     });
 
-    test('LA MAUVAISE : le pion est envoyé sur la dernière ligne droite '
-        'de la diagonale, pour les 4 couleurs', () {
+    test('LA MAUVAISE : le pion revient sur la dernière ligne droite de la '
+        'diagonale, pour les 4 couleurs', () {
       for (final color in PlayerColor.values) {
-        final c = gameWhereVortexIs(good: false);
-        c.currentPlayerIdx = c.turnOrder.indexOf(color);
-        final p = c.state.pawnsByColor[color]![0];
-        putOnRing(c, p, 0);
-        arm(c, 1);
-        c.movePawn(p);
+        final c = vortexGame();
+        final p = landOn(c, color, SpecialCells.lastStraightStep);
+        final diag = SpecialCells.diagonalOf[color]!;
         expect(p.location, PawnLocation.ring);
-        expect(p.position, SpecialCells.badVortexTarget(color),
-            reason: '${color.name} : cible du trou noir');
+        expect(p.position, SpecialCells.badVortexCell(diag),
+            reason: '${color.name} doit revenir sur le trou noir de '
+                '${diag.name}');
         expect(c.upgrades.takeNotices().single, contains('Trou noir'));
       }
     });
 
-    test('les deux formes sortent l\'une comme l\'autre', () {
-      // La même case doit rendre tantôt l'une, tantôt l'autre : c'est ce
-      // que veut dire « deux formes dans cette même case ».
-      final seen = <int>{};
-      for (int seed = 0; seed < 30; seed++) {
-        final c = newGame();
-        c.upgrades
-          ..vortexEnabled = true
-          ..rng = math.Random(seed);
-        final p = c.state.pawnsByColor[PlayerColor.blue]![0];
-        putOnRing(c, p, 0);
+    test('26 pas gagnés par la bonne, 26 perdus par la mauvaise', () {
+      int stepsOf(Pawn p) =>
+          (p.position - GameController.startIdx(p.color) +
+              GameController.ringSize) %
+          GameController.ringSize;
+
+      final good = vortexGame();
+      expect(stepsOf(landOn(good, PlayerColor.blue, 1)) - 1, 26);
+
+      final bad = vortexGame();
+      expect(
+          SpecialCells.lastStraightStep -
+              stepsOf(landOn(bad, PlayerColor.blue,
+                  SpecialCells.lastStraightStep)),
+          26);
+    });
+
+    test('chaque case a SA règle : aucune ne fait le travail de l\'autre',
+        () {
+      final c = vortexGame();
+      // La bonne ne renvoie jamais en arrière.
+      final p1 = landOn(c, PlayerColor.blue, 1);
+      expect(p1.position, isNot(SpecialCells.badVortexCell(PlayerColor.green)));
+      c.upgrades.takeNotices();
+      // La mauvaise ne fait jamais gagner de terrain.
+      final c2 = vortexGame();
+      final p2 = landOn(c2, PlayerColor.blue, SpecialCells.lastStraightStep);
+      expect(p2.position,
+          isNot(SpecialCells.goodVortexCell(PlayerColor.green)));
+    });
+
+    test('arriver sur une case D\'EN FACE ne relance rien', () {
+      for (final step in [1, SpecialCells.lastStraightStep]) {
+        final c = vortexGame();
+        final p = landOn(c, PlayerColor.blue, step);
+        expect(c.upgrades.takeNotices().length, 1,
+            reason: 'un seul saut, pas de rebond');
+        // Le pion est posé sur une case du VERT : elle ne lui répond pas.
+        final steps = (p.position - GameController.startIdx(PlayerColor.green) +
+                52) %
+            52;
+        expect(steps, step, reason: 'c\'est bien la case homologue du vert');
+      }
+    });
+
+    test('L\'INVULNÉRABILITÉ ne protège PAS du vortex — 4 couleurs et '
+        'les deux cases', () {
+      // L'invulnérabilité empêche d'être CAPTURÉ par un adversaire ; elle
+      // n'empêche pas sa propre case de vous emporter.
+      for (final color in PlayerColor.values) {
+        for (final invulnerable in [false, true]) {
+          for (final step in [1, SpecialCells.lastStraightStep]) {
+            final c = vortexGame();
+            c.currentPlayerIdx = c.turnOrder.indexOf(color);
+            final p = c.state.pawnsByColor[color]![0];
+            putOnRing(c, p, step - 1);
+            if (invulnerable) {
+              c.upgrades.setPawnState(p, CardPawnState.invulnerable);
+              expect(c.upgrades.isInvulnerable(p), isTrue);
+            }
+            arm(c, 1);
+            c.movePawn(p);
+            final diag = SpecialCells.diagonalOf[color]!;
+            final want = step == 1
+                ? SpecialCells.goodVortexCell(diag)
+                : SpecialCells.badVortexCell(diag);
+            expect(p.location, PawnLocation.ring);
+            expect(p.position, want,
+                reason: '${color.name} '
+                    '${invulnerable ? "invulnérable" : "ordinaire"}, '
+                    'case ${step == 1 ? "bonne" : "trou noir"} : '
+                    'elle doit agir dans tous les cas');
+            c.upgrades.takeNotices();
+          }
+        }
+      }
+    });
+
+    test('une carte qui DÉPOSE le pion sur son trou noir le déclenche', () {
+      // « Tomber sur » la case ne veut pas dire « y arriver au dé » : une
+      // carte qui vous y dépose vous y dépose quand même.
+      final c = vortexGame();
+      final p = c.state.pawnsByColor[PlayerColor.blue]![0];
+      putOnRing(c, p, SpecialCells.lastStraightStep - 3);
+      c.applyImmediateCard(card('IMM_PAWN_FORWARD_3'), p);
+      expect(
+          p.position,
+          SpecialCells.badVortexCell(
+              SpecialCells.diagonalOf[PlayerColor.blue]!),
+          reason: 'la carte l\'a posé dessus : le trou noir répond');
+    });
+
+
+    test('les cases d\'une AUTRE couleur ne font rien', () {
+      // Rouge traverse les deux cases du bleu sans être touché.
+      for (final blueCell in [
+        SpecialCells.goodVortexCell(PlayerColor.blue),
+        SpecialCells.badVortexCell(PlayerColor.blue),
+      ]) {
+        final c = vortexGame();
+        c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
+        final p = c.state.pawnsByColor[PlayerColor.red]![0];
+        final steps =
+            (blueCell - GameController.startIdx(PlayerColor.red) + 52) % 52;
+        putOnRing(c, p, steps - 1);
         arm(c, 1);
         c.movePawn(p);
-        seen.add(p.position);
+        expect(p.position, blueCell, reason: 'rouge s\'y pose sans bouger');
+        expect(c.upgrades.takeNotices(), isEmpty);
       }
-      expect(seen, {
-        SpecialCells.goodVortexTarget(PlayerColor.blue),
-        SpecialCells.badVortexTarget(PlayerColor.blue),
-      });
     });
 
-    test('la case Vortex d\'une AUTRE couleur ne fait rien', () {
-      final c = newGame();
-      c.upgrades.vortexEnabled = true;
-      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
-      final p = c.state.pawnsByColor[PlayerColor.red]![0];
-      // La case Vortex du BLEU est la cellule 1, soit 40 pas de rouge.
-      putOnRing(c, p, 37);
-      arm(c, 3);
-      c.movePawn(p);
-      expect(p.position, SpecialCells.vortexCell(PlayerColor.blue),
-          reason: 'rouge s\'y pose sans être aspiré');
-      expect(c.upgrades.takeNotices(), isEmpty);
-    });
-
-    test('la case de DÉPART elle-même ne déclenche rien : sortir de base '
-        'reste une sortie ordinaire', () {
+    test('la case de DÉPART ne déclenche rien : sortir de base reste une '
+        'sortie ordinaire', () {
       for (final color in PlayerColor.values) {
-        final c = newGame();
-        c.upgrades.vortexEnabled = true;
+        final c = vortexGame();
         c.currentPlayerIdx = c.turnOrder.indexOf(color);
         final p = c.state.pawnsByColor[color]![0];
         arm(c, 6);
@@ -256,12 +385,9 @@ void main() {
       }
     });
 
-    test('entrer dans son couloir final ne déclenche plus rien', () {
-      // L'ancienne version posait un second vortex à l'entrée du couloir.
-      // Il n'y en a plus qu'UN, devant le départ.
+    test('entrer dans son couloir final ne déclenche rien', () {
       for (final color in PlayerColor.values) {
-        final c = newGame();
-        c.upgrades.vortexEnabled = true;
+        final c = vortexGame();
         c.currentPlayerIdx = c.turnOrder.indexOf(color);
         final p = c.state.pawnsByColor[color]![0];
         putOnRing(c, p, 48);
@@ -274,6 +400,7 @@ void main() {
       }
     });
   });
+
 
   group('🃏 Le talon des cartes immédiates', () {
     test('mélangé une fois, puis RETOURNÉ à l\'épuisement (pas remélangé)',
@@ -470,11 +597,14 @@ void main() {
       final blue = c.state.pawnsByColor[PlayerColor.blue]![0];
       putOnRing(c, blue, 10);
       c.applyImmediateCard(card('IMM_PAWN_FROZEN'), blue);
+      // Le tour du tirage est déjà dépensé : le gel prend au suivant.
+      c.upgrades.onTurnCompleted(PlayerColor.blue);
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.blue);
       arm(c, 3);
       expect(c.movablePawns(), isEmpty,
           reason: 'le seul pion en jeu est figé, et 3 ne sort pas de base');
-      // Le lancer sans coup jouable a déjà passé la main : un tour bleu
-      // est compté. Encore un, et l'état expire.
+      // Ce lancer sans coup jouable a passé la main : un 2e tour bleu est
+      // compté. Encore un, et l'état expire.
       c.upgrades.onTurnCompleted(PlayerColor.blue);
       c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.blue);
       arm(c, 3);
@@ -509,6 +639,9 @@ void main() {
     test('double-dé : uniquement 2, 4, 6, 8, 10, 12', () {
       final c = newGame();
       final rng = math.Random(7);
+      // Le modificateur pèse sur CELUI QUI LANCE. On donne donc la main au
+      // rouge avant de lui appliquer la carte.
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
       c.applyImmediateCard(
           card('IMM_DICE_DOUBLE'), c.state.pawnsByColor[PlayerColor.red]![0]);
       c.upgrades.onTurnCompleted(PlayerColor.red);
@@ -570,32 +703,24 @@ void main() {
     });
 
     test('le vortex précède la capture : c\'est à la case d\'ARRIVÉE que '
-        'l\'on mange', () {
-      // Peu importe la forme tirée, le pion adverse posé sur CHACUNE des
-      // deux cibles doit être capturé — jamais celui resté sur la case
-      // Vortex elle-même.
+        'l\'on mange, par l\'une comme par l\'autre', () {
       for (final good in [true, false]) {
         final c = newGame();
-        c.upgrades
-          ..vortexEnabled = true
-          ..rng = math.Random(good ? 1 : 3);
-        expect(math.Random(good ? 1 : 3).nextBool(), good,
-            reason: 'graine mal choisie');
+        c.upgrades.vortexEnabled = true;
         final blue = c.state.pawnsByColor[PlayerColor.blue]![0];
         final red = c.state.pawnsByColor[PlayerColor.red]![0];
+        final step = good ? 1 : SpecialCells.lastStraightStep;
         final target = good
             ? SpecialCells.goodVortexTarget(PlayerColor.blue)
             : SpecialCells.badVortexTarget(PlayerColor.blue);
         red.location = PawnLocation.ring;
         red.position = target;
-        putOnRing(c, blue, 0);
-        arm(c, 1); // → case Vortex → aspiré sur `target`
+        putOnRing(c, blue, step - 1);
+        arm(c, 1);
         c.movePawn(blue);
         expect(blue.position, target);
-        // Le départ du vert est une case SÛRE : on n'y mange personne.
-        final safe = const {0, 13, 26, 39, 8, 21, 34, 47}.contains(target);
-        expect(red.location, safe ? PawnLocation.ring : PawnLocation.base,
-            reason: 'capture attendue seulement hors case sûre');
+        expect(red.location, PawnLocation.base,
+            reason: 'capturé là où le vortex a déposé le pion');
       }
     });
 
@@ -670,13 +795,14 @@ void main() {
     });
 
     test('la main tient 4 cartes, pas une de plus', () {
+      expect(LudoUpgrades.handLimit, 4, reason: '4 places, comme la spec');
       final u = LudoUpgrades()..rng = math.Random(5);
       for (int i = 0; i < LudoUpgrades.handLimit; i++) {
         expect(u.addToHand(PlayerColor.blue, kDeferredCards[i]), isTrue);
       }
       expect(u.handOf(PlayerColor.blue).length, 4);
       expect(u.handIsFull(PlayerColor.blue), isTrue);
-      expect(u.addToHand(PlayerColor.blue, kDeferredCards[5]), isFalse,
+      expect(u.addToHand(PlayerColor.blue, kDeferredCards[4]), isFalse,
           reason: 'la 5e carte n\'a pas de place');
       expect(u.handOf(PlayerColor.blue).length, 4);
     });
@@ -814,9 +940,8 @@ void main() {
     });
   });
 
-  group('🔁 « Le pion adverse refait le tour »', () {
-    test('le pion désigné passe devant sa sortie et repart pour un tour',
-        () {
+  group('🚫 « Empêcher un pion adverse de sortir »', () {
+    test('le pion désigné ne sort pas, ses camarades si', () {
       final c = newGame();
       final card =
           kDeferredCards.singleWhere((x) => x.id == 'DEF_OPPONENT_NO_EXIT');
@@ -824,45 +949,68 @@ void main() {
       c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.blue);
       c.phase = TurnPhase.rolling;
 
-      final foe = c.state.pawnsByColor[PlayerColor.red]![0];
-      putOnRing(c, foe, 48);
-      c.playDeferredCard(PlayerColor.blue, card, targetPawn: foe);
-      expect(c.upgrades.mustLap(foe), isTrue);
+      final foes = c.state.pawnsByColor[PlayerColor.red]!;
+      c.playDeferredCard(PlayerColor.blue, card, targetPawn: foes[0]);
+      expect(c.upgrades.cannotExit(foes[0]), isTrue);
 
-      // Rouge joue : 48 + 3 = 51 → il devrait entrer dans son couloir.
       c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
-      arm(c, 3);
-      expect(c.movablePawns(), contains(foe));
-      c.movePawn(foe);
-      expect(foe.location, PawnLocation.ring,
-          reason: 'il ne prend PAS sa sortie');
-      expect((foe.position - GameController.startIdx(PlayerColor.red) + 52) %
-          52, 51);
-      expect(c.upgrades.mustLap(foe), isFalse,
-          reason: 'la marque est consommée : il rentrera au tour prochain');
+      arm(c, 6);
+      final movable = c.movablePawns();
+      expect(movable, isNot(contains(foes[0])),
+          reason: 'celui-là reste dans sa boîte');
+      expect(movable, containsAll([foes[1], foes[2], foes[3]]),
+          reason: 'la carte ne vise QUE le pion désigné');
     });
 
-    test('la marque consommée, le pion rentre normalement', () {
+    test('l\'occasion passée, la marque tombe : il sortira la fois d\'après',
+        () {
       final c = newGame();
       final foe = c.state.pawnsByColor[PlayerColor.red]![0];
-      putOnRing(c, foe, 48);
-      c.upgrades.markMustLap(foe);
+      c.upgrades.markNoExit(foe);
+
       c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
-      arm(c, 3);
-      c.movePawn(foe);
-      // Deuxième tour : il repart de 51, il lui faut 51 pas… on le
-      // replace juste devant sa sortie pour vérifier l'entrée.
-      putOnRing(c, foe, 48);
+      arm(c, 6);
+      expect(c.movablePawns(), isNot(contains(foe)));
+      c.movePawn(c.movablePawns().first);
+      c.skipTurn(); // le tour rouge se termine
+      expect(c.upgrades.cannotExit(foe), isFalse,
+          reason: 'l\'occasion s\'est présentée, elle est consommée');
+
       c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
-      arm(c, 3);
-      c.movePawn(foe);
-      expect(foe.location, PawnLocation.homeColumn,
-          reason: 'plus de marque : la sortie fonctionne');
+      arm(c, 6);
+      expect(c.movablePawns(), contains(foe), reason: 'il peut sortir');
+    });
+
+    test('sans 6, l\'occasion ne s\'est pas présentée : la marque TIENT',
+        () {
+      final c = newGame();
+      final foe = c.state.pawnsByColor[PlayerColor.red]![0];
+      c.upgrades.markNoExit(foe);
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
+      arm(c, 3); // aucun coup : la main passe
+      expect(c.upgrades.cannotExit(foe), isTrue,
+          reason: 'il n\'a jamais pu sortir, la carte n\'est pas dépensée');
+    });
+
+    test('un pion déjà sur l\'anneau n\'est pas une cible', () {
+      final c = newGame();
+      final card =
+          kDeferredCards.singleWhere((x) => x.id == 'DEF_OPPONENT_NO_EXIT');
+      c.upgrades.addToHand(PlayerColor.blue, card);
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.blue);
+      c.phase = TurnPhase.rolling;
+      final foe = c.state.pawnsByColor[PlayerColor.red]![0];
+      putOnRing(c, foe, 10);
+      expect(c.deferredPawnTargets(PlayerColor.blue, card),
+          isNot(contains(foe)),
+          reason: 'la carte empêche de SORTIR : viser un pion déjà sorti '
+              'n\'aurait aucun sens');
     });
   });
 
-  group('📦 « Le pion capturé va dans VOTRE boîte »', () {
-    test('la victime est retenue, et son 6 la ramène chez elle', () {
+  group('📦 La règle spéciale après capture', () {
+    test('la victime regagne la boîte de SON propriétaire, et lui faut un 6',
+        () {
       final c = newGame();
       final card = kDeferredCards
           .singleWhere((x) => x.id == 'DEF_CAPTURE_TO_MY_BOX');
@@ -870,31 +1018,28 @@ void main() {
       final red = c.state.pawnsByColor[PlayerColor.red]![0];
       putOnRing(c, blue, 5);
       red.location = PawnLocation.ring;
-      red.position = 8 + 2; // cellule 10, non sûre
+      red.position = 10;
 
       c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.blue);
-      arm(c, 5); // 5 + 5 = 10 → capture
+      arm(c, 5);
       c.upgrades.addToHand(PlayerColor.blue, card);
-      // « Après » : la carte se joue le dé en main, avant de bouger.
       expect(c.playDeferredCard(PlayerColor.blue, card), isNull);
-      expect(c.upgrades.captureToBoxArmed(PlayerColor.blue), isTrue);
+      expect(c.upgrades.captureRuleArmed(PlayerColor.blue), isTrue);
 
       c.movePawn(blue);
       expect(red.location, PawnLocation.base, reason: 'capturé');
-      expect(c.upgrades.captorOf(red), PlayerColor.blue,
-          reason: 'retenu dans la boîte du bleu');
+      expect(red.position, red.id, reason: 'dans SA propre boîte');
 
-      // Le 6 du rouge ne le fait pas SORTIR : il rentre chez lui d'abord.
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
+      arm(c, 3);
+      expect(c.movablePawns(), isNot(contains(red)),
+          reason: 'sans 6, il reste en boîte');
       c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.red);
       arm(c, 6);
-      expect(c.movablePawns(), contains(red));
-      c.movePawn(red);
-      expect(red.location, PawnLocation.base,
-          reason: 'il regagne sa boîte, il ne part pas sur l\'anneau');
-      expect(c.upgrades.isPrisoner(red), isFalse, reason: 'libéré');
+      expect(c.movablePawns(), contains(red), reason: 'le 6 le fait sortir');
     });
 
-    test('sans la carte, une capture ordinaire ne retient personne', () {
+    test('sans la carte, une capture ordinaire fait déjà cela', () {
       final c = newGame();
       final blue = c.state.pawnsByColor[PlayerColor.blue]![0];
       final red = c.state.pawnsByColor[PlayerColor.red]![0];
@@ -905,7 +1050,7 @@ void main() {
       arm(c, 5);
       c.movePawn(blue);
       expect(red.location, PawnLocation.base);
-      expect(c.upgrades.isPrisoner(red), isFalse);
+      expect(c.upgrades.captureRuleArmed(PlayerColor.blue), isFalse);
     });
   });
 
@@ -984,15 +1129,15 @@ void main() {
       }
     });
 
-    test('reset() vide aussi les mains et les prisonniers', () {
+    test('reset() vide aussi les mains et les marques', () {
       final c = newGame();
       c.upgrades.addToHand(PlayerColor.blue, kDeferredCards.first);
       final red = c.state.pawnsByColor[PlayerColor.red]![0];
-      c.upgrades.imprison(red, PlayerColor.blue);
+      c.upgrades.markNoExit(red);
       c.upgrades.setSkipTurns(PlayerColor.green, 2);
       c.reset();
       expect(c.upgrades.handOf(PlayerColor.blue), isEmpty);
-      expect(c.upgrades.isPrisoner(red), isFalse);
+      expect(c.upgrades.cannotExit(red), isFalse);
       expect(c.upgrades.skipsLeft(PlayerColor.green), 0);
     });
   });

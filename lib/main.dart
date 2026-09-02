@@ -11,6 +11,7 @@ import 'game/ai_difficulty.dart';
 import 'game/board_painter.dart';
 import 'game/board_painter_5p.dart';
 import 'game/board_path.dart';
+import 'game/card_art.dart';
 import 'game/game_controller.dart';
 import 'game/game_state.dart';
 import 'game/pawn.dart';
@@ -368,7 +369,7 @@ class BoardScreenState extends State<BoardScreen>
   void playDeferredCard(ChanceCard card,
       {Pawn? targetPawn, PlayerColor? targetPlayer}) {
     if (_paused) return;
-    final me = _controller.currentColor;
+    final me = _deferredSeat;
     if (_lockedFor(me)) return;
     final forced = _controller.playDeferredCard(me, card,
         targetPawn: targetPawn, targetPlayer: targetPlayer);
@@ -669,6 +670,7 @@ class BoardScreenState extends State<BoardScreen>
   @override
   void dispose() {
     _aiWatchdog?.cancel();
+    _revealTimer?.cancel();
     _cancelAnimations();
     super.dispose();
   }
@@ -830,6 +832,15 @@ class BoardScreenState extends State<BoardScreen>
       // jouables et d'où, pour vérifier que celui posé sur la flèche
       // d'entrée figure bien parmi les choix.
       if (value == 6) _logSixOptions(roller);
+      // Améliorations : le lancer lui-même peut produire des annonces —
+      // un joueur qui saute son tour, par exemple. Sans cette purge elles
+      // restaient en tampon et ressortaient plus tard, collées au coup
+      // d'un autre joueur.
+      final rollNotices = _controller.upgrades.takeNotices();
+      for (final n in rollNotices) {
+        debugPrint('[amélioration] $n');
+      }
+      if (rollNotices.isNotEmpty) _autoNotice = rollNotices.join('\n');
       // The ONLY rule, applied to every roll:
       // 1 pion movable → play it.
       if (_controller.phase == TurnPhase.moving) {
@@ -846,14 +857,170 @@ class BoardScreenState extends State<BoardScreen>
       _syncManualPlayer();
     });
     final pending = autoMove;
+    _openDrawnCardIfAny();
     if (pending != null) _scheduleAutoMove(pending);
   }
+
+  /// La carte de la main qu'on vient de RETOURNER pour la lire, avec son
+  /// propriétaire. `null` = aucune carte ouverte à la main.
+  ({ChanceCard card, PlayerColor by})? _handCard;
+
+  /// La carte ouverte à la main, pour les tests.
+  @visibleForTesting
+  ChanceCard? get openedHandCard => _handCard?.card;
+
+  /// La couleur dont les cartes de base sont cliquables : celle qui a la
+  /// main, et seulement si un HUMAIN la tient. Une carte qu'on n'a pas le
+  /// droit de jouer reste close.
+  PlayerColor? get _cardTapSeat {
+    if (!_controller.upgrades.chanceEnabled) return null;
+    final seat = _deferredSeat;
+    if (_isAiColor(seat)) return null;
+    return seat;
+  }
+
+  /// Le joueur a touché la carte n° [slot] de sa base : elle se retourne.
+  @visibleForTesting
+  void openHandCard(int slot) => _openHandCard(slot);
+
+  void _openHandCard(int slot) {
+    if (_paused) return;
+    final seat = _cardTapSeat;
+    if (seat == null) return;
+    final hand = _controller.upgrades.handOf(seat);
+    if (slot < 0 || slot >= hand.length) return;
+    setState(() => _handCard = (card: hand[slot], by: seat));
+  }
+
+  /// Referme la carte retournée sans la jouer.
+  @visibleForTesting
+  void closeHandCard() {
+    if (_handCard != null) setState(() => _handCard = null);
+  }
+
+  /// Joue la carte actuellement ouverte, avec la cible choisie.
+  void _playOpenedHandCard({Pawn? targetPawn, PlayerColor? targetPlayer}) {
+    final open = _handCard;
+    if (open == null) return;
+    setState(() => _handCard = null);
+    playDeferredCard(open.card,
+        targetPawn: targetPawn, targetPlayer: targetPlayer);
+  }
+
+  /// L'ordinateur pose une carte différée s'il en tient une de bonne.
+  ///
+  /// Rend `true` quand une carte a été jouée : le tour reprend alors son
+  /// cours par la voie normale — une carte-dé remplace le lancer, les
+  /// autres laissent le dé à lancer, et [_scheduleAiTurn] repasse.
+  bool _playAiDeferredIfAny() {
+    final me = _controller.currentColor;
+    if (!_controller.upgrades.chanceEnabled) return false;
+    final choice = _controller.pickAiDeferred(me);
+    if (choice == null) return false;
+    final forced = _controller.playDeferredCard(me, choice.card,
+        targetPawn: choice.targetPawn, targetPlayer: choice.targetPlayer);
+    setState(() {
+      final notices = _controller.upgrades.takeNotices();
+      for (final n in notices) {
+        debugPrint('[amélioration] $n');
+      }
+      if (notices.isNotEmpty) _autoNotice = notices.join('\n');
+    });
+    debugPrint('[ai] ${me.name} joue « ${choice.card.nameFr} »');
+    if (forced != null) {
+      _roll(forced);
+      if (_animating) return true;
+      if (_controller.phase == TurnPhase.moving) {
+        _aiTimer = _after(_pace(_aiMoveDelay, ai: true), _playAiMove);
+      } else {
+        _scheduleAiTurn();
+      }
+    } else {
+      // Carte sans dé : il reste à lancer, on repasse tout de suite.
+      _scheduleAiTurn();
+    }
+    return true;
+  }
+
+  /// Si le moteur vient de tirer une carte Chance, elle s'ouvre.
+  void _openDrawnCardIfAny() {
+    final drawn = _controller.upgrades.takeLastDrawn();
+    if (drawn != null) _openCard(drawn);
+  }
+
+  /// La carte qui vient d'être tirée sur une case Chance et qui doit
+  /// S'OUVRIR : le joueur voit son dos, puis elle se retourne sur sa vraie
+  /// face et son instruction. `null` = aucune carte à montrer.
+  ({ChanceCard card, PlayerColor by})? _revealed;
+
+  /// Minuterie qui referme la carte toute seule.
+  Timer? _revealTimer;
+
+  /// Combien de temps la carte reste ouverte. Assez pour lire
+  /// l'instruction sans avoir à cliquer.
+  static const Duration _revealHold = Duration(milliseconds: 3200);
+
+  /// Ouvre [drawn] au centre du plateau. Un clic la referme plus tôt.
+  void _openCard(({ChanceCard card, PlayerColor by}) drawn) {
+    _revealTimer?.cancel();
+    setState(() => _revealed = drawn);
+    _revealTimer = _after(_pace(_revealHold, ai: _isAiColor(drawn.by)),
+        () => closeCard());
+  }
+
+  /// Referme la carte ouverte, s'il y en a une.
+  @visibleForTesting
+  void closeCard() {
+    _revealTimer?.cancel();
+    _revealTimer = null;
+    if (_revealed != null) setState(() => _revealed = null);
+  }
+
+  /// La carte actuellement ouverte, pour les tests.
+  @visibleForTesting
+  ChanceCard? get revealedCard => _revealed?.card;
+
+  /// Le siège dont on montre — et joue — la main de cartes différées.
+  ///
+  /// En mode ordinaire c'est le joueur du tour. En mode Rapide,
+  /// `currentColor` ne désigne plus que « la dernière couleur à avoir
+  /// agi » : le panneau montrerait alors la main d'un ordinateur, et les
+  /// cartes de l'humain deviendraient injouables. On vise donc SON siège.
+  PlayerColor get _deferredSeat =>
+      _ruleFastMode ? (_humanSeat ?? _controller.currentColor)
+                    : _controller.currentColor;
+
+  /// [c] tient-il une carte différée jouable à cet instant précis ?
+  /// Faux dès que les cases Chance sont éteintes : sa main est vide.
+  bool _hasPlayableDeferred(PlayerColor c) => _controller.upgrades
+      .handOf(c)
+      .any((card) => _controller.canPlayDeferred(c, card));
 
   /// Laisse le dé affiché [_dicePause] avant de jouer le coup forcé. Le
   /// verrou est levé pendant l'attente : on voit le chiffre et le pion
   /// surligné, et aucune autre commande ne peut s'intercaler.
   void _scheduleAutoMove(Pawn p) {
     _autoMoveTimer?.cancel();
+    // Améliorations : un joueur HUMAIN qui tient une carte différée jouable
+    // À CET INSTANT doit pouvoir la jouer avant que le coup ne parte tout
+    // seul — c'est le « et parfois après le lancer » de la spec. Sans ça,
+    // une carte « Après » est injouable dès qu'un seul pion peut bouger :
+    // le coup automatique la devance de 550 ms.
+    //
+    // On lui rend simplement la main : le pion reste surligné et cliquable.
+    // L'ORDINATEUR n'est jamais retenu ici — il ne joue pas de cartes
+    // différées, et le retenir figerait sa boucle.
+    final actor = _controller.currentColor;
+    if (_controller.upgrades.chanceEnabled &&
+        !_isAiColor(actor) &&
+        _hasPlayableDeferred(actor)) {
+      setState(() {
+        _autoNotice = 'Un seul coup possible : le pion ${p.id + 1} de '
+            '${_frenchColor(p.color)}. Joue une carte chance si tu veux, '
+            'puis clique le pion.';
+      });
+      return;
+    }
     setState(() {
       _animating = true;
       // Le joueur doit SAVOIR pourquoi ça part sans lui : un seul coup
@@ -1205,6 +1372,10 @@ class BoardScreenState extends State<BoardScreen>
           return;
         }
         final who = _controller.currentColor.name;
+        // Un ordinateur joue ses cartes comme un joueur : s'il en tient une
+        // de bonne, il la pose AVANT de lancer. Sans cela sa main saturait
+        // et tout tirage différé suivant était perdu.
+        if (_playAiDeferredIfAny()) return;
         final v =
             _controller.pickDiceValueFor(_controller.currentColor, _secureRng);
         _roll(v);
@@ -1408,6 +1579,9 @@ class BoardScreenState extends State<BoardScreen>
         // du joueur suivant et que le clignotement passe à son Yard.
         _activeColorHold = null;
       });
+      // Le pion est arrivé sur sa case : si c'était une case Chance, la
+      // carte s'OUVRE maintenant. L'ouvrir plus tôt cacherait le trajet.
+      _openDrawnCardIfAny();
       // L'attaquant est arrivé et la pause est écoulée : les pions capturés
       // quittent MAINTENANT la case, en rembobinant leur parcours à
       // contre-sens jusqu'à leur flèche d'entrée puis dans leur base.
@@ -1826,20 +2000,19 @@ class BoardScreenState extends State<BoardScreen>
                   child: SizedBox(
                     width: boardSide,
                     height: boardSide,
-                    child: BoardView(
+                    child: Stack(
+                      children: [
+                        Positioned.fill(child: BoardView(
                       players: _activePlayers,
                       game: _game,
                       showVortexCells: _controller.upgrades.vortexEnabled,
                       showChanceCells: _controller.upgrades.chanceEnabled,
-                      prisonerOf: {
-                        for (final p in _game.allPawns)
-                          if (_controller.upgrades.captorOf(p) != null)
-                            p: _controller.upgrades.captorOf(p)!,
-                      },
                       deferredHands: {
                         for (final p in _activePlayers)
                           p.color: _controller.upgrades.handOf(p.color),
                       },
+                      tappableCardSeat: _cardTapSeat,
+                      onDeferredCardTap: _openHandCard,
                       showRing: _showRing,
                       showGrid: _showGrid,
                       showCanvas: _showCanvas,
@@ -1863,6 +2036,42 @@ class BoardScreenState extends State<BoardScreen>
                       travelStep: _travelStep,
                       captureOverride: _captureOverride,
                       explosions: _explosions,
+                        )),
+                        // La carte tirée s'OUVRE par-dessus le plateau :
+                        // elle part de son dos et se retourne sur sa vraie
+                        // face. Un clic la referme plus tôt.
+                        // La carte que le joueur vient de RETOURNER dans
+                        // sa base : il lit l'instruction et l'applique.
+                        if (_handCard != null)
+                          Positioned.fill(
+                            child: _HandCardOverlay(
+                              key: ValueKey('hand-${_handCard!.card.id}'),
+                              card: _handCard!.card,
+                              ownerLabel: _frenchColor(_handCard!.by),
+                              size: boardSide,
+                              playable: _controller.canPlayDeferred(
+                                  _handCard!.by, _handCard!.card),
+                              pawnTargets: _controller.deferredPawnTargets(
+                                  _handCard!.by, _handCard!.card),
+                              playerTargets: _controller.deferredPlayerTargets(
+                                  _handCard!.by, _handCard!.card),
+                              phase: _controller.phase,
+                              onClose: closeHandCard,
+                              onPlay: _playOpenedHandCard,
+                            ),
+                          ),
+                        if (_revealed != null)
+                          Positioned.fill(
+                            child: _CardReveal(
+                              key: ValueKey(
+                                  '${_revealed!.card.id}-${_revealed!.by.name}'),
+                              card: _revealed!.card,
+                              ownerLabel: _frenchColor(_revealed!.by),
+                              onDismiss: closeCard,
+                              size: boardSide,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ),
@@ -1952,13 +2161,13 @@ class BoardScreenState extends State<BoardScreen>
                     chanceEnabled: _controller.upgrades.chanceEnabled,
                     onToggleChance: setChanceEnabled,
                     deferredHand:
-                        _controller.upgrades.handOf(_controller.currentColor),
-                    canPlayDeferred: (c) => _controller.canPlayDeferred(
-                        _controller.currentColor, c),
-                    deferredPawnTargets: (c) => _controller
-                        .deferredPawnTargets(_controller.currentColor, c),
-                    deferredPlayerTargets: (c) => _controller
-                        .deferredPlayerTargets(_controller.currentColor, c),
+                        _controller.upgrades.handOf(_deferredSeat),
+                    canPlayDeferred: (c) =>
+                        _controller.canPlayDeferred(_deferredSeat, c),
+                    deferredPawnTargets: (c) =>
+                        _controller.deferredPawnTargets(_deferredSeat, c),
+                    deferredPlayerTargets: (c) =>
+                        _controller.deferredPlayerTargets(_deferredSeat, c),
                     onPlayDeferred: playDeferredCard,
                     aiTurbo: _aiTurbo,
                     onToggleAiTurbo: (v) {
@@ -3181,78 +3390,316 @@ class _GameModeCard extends StatelessWidget {
   }
 }
 
-/// Un des 4 emplacements de cartes différées d'une base.
+/// La carte tirée sur une case Chance, qui S'OUVRE au centre du plateau.
 ///
-/// Vide, c'est un liseré discret qui montre la place disponible ; occupé,
-/// c'est une carte violette — la couleur NEUTRE des cases Chance, celle
-/// qui n'appartient à aucun joueur. Le nom complet vient à l'infobulle.
-/// L'emplacement ne prend aucun clic : c'est le panneau « Vos cartes
-/// chance » qui sert à les jouer, cible comprise.
-class _DeferredCardSlot extends StatelessWidget {
-  final ChanceCard? card;
-  final double cell;
-  const _DeferredCardSlot({required this.card, required this.cell});
+/// Elle part de son DOS — le même que celui des cartes posées dans les
+/// bases — puis pivote sur elle-même pour montrer sa vraie face et son
+/// instruction. Un clic n'importe où la referme avant la fin.
+class _CardReveal extends StatefulWidget {
+  final ChanceCard card;
+  final String ownerLabel;
+  final VoidCallback onDismiss;
 
-  /// Couleur neutre des cartes chance — la même que celle des cases « ? ».
-  static const Color _chance = Color(0xFF8E44AD);
+  /// Côté du plateau : la carte s'y dimensionne.
+  final double size;
 
-  static IconData _iconFor(ChanceCard c) => switch (c.action) {
-        CardAction.setDice => Icons.casino,
-        CardAction.setState => c.pawnState == CardPawnState.invulnerable
-            ? Icons.shield
-            : Icons.ac_unit,
-        CardAction.noExit => Icons.u_turn_left,
-        CardAction.captureToBox => Icons.inventory_2,
-        CardAction.skipTurn => Icons.block,
-        _ => Icons.style,
-      };
+  const _CardReveal({
+    super.key,
+    required this.card,
+    required this.ownerLabel,
+    required this.onDismiss,
+    required this.size,
+  });
+
+  @override
+  State<_CardReveal> createState() => _CardRevealState();
+}
+
+class _CardRevealState extends State<_CardReveal>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _flip;
+
+  @override
+  void initState() {
+    super.initState();
+    _flip = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 620),
+    )..forward();
+  }
+
+  @override
+  void dispose() {
+    _flip.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final radius = BorderRadius.circular(cell * 0.12);
-    final c = card;
-    if (c == null) {
-      return IgnorePointer(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: radius,
-            border: Border.all(
-              color: _chance.withValues(alpha: 0.35),
-              width: math.max(1.0, cell * 0.03),
+    final w = (widget.size * 0.34).clamp(150.0, 260.0);
+    final h = w * 1.55;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: widget.onDismiss,
+      child: ColoredBox(
+        color: const Color(0xAA000000),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Carte chance — ${widget.ownerLabel}',
+                style: const TextStyle(
+                  color: Color(0xFFF3E3A3),
+                  fontSize: 13,
+                  letterSpacing: 1.1,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 10),
+              AnimatedBuilder(
+                animation: _flip,
+                builder: (context, _) {
+                  // Un demi-tour : de face cachée à face visible. Au-delà
+                  // du quart de tour on bascule sur la face, et on la
+                  // contre-pivote pour qu'elle ne s'affiche pas en miroir.
+                  final t = Curves.easeInOutCubic.transform(_flip.value);
+                  final angle = t * math.pi;
+                  final showFace = t > 0.5;
+                  return Transform(
+                    alignment: Alignment.center,
+                    transform: Matrix4.identity()
+                      ..setEntry(3, 2, 0.0012)
+                      ..rotateY(angle),
+                    child: Transform(
+                      alignment: Alignment.center,
+                      transform: Matrix4.identity()
+                        ..rotateY(showFace ? math.pi : 0),
+                      child: SizedBox(
+                        width: w,
+                        height: h,
+                        child: showFace
+                            ? CardFace(card: widget.card)
+                            : const CardBack(radius: 12),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Touchez pour fermer',
+                style: TextStyle(color: Color(0x99F3E3A3), fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// La carte que le joueur vient de RETOURNER dans sa base.
+///
+/// Tant qu'il n'y a pas touché, il ne voit que le dos ; ici il lit
+/// l'instruction, désigne sa cible s'il en faut une, et l'applique. Le
+/// moteur refuse la carte au mauvais moment : on le dit alors en clair
+/// plutôt que de griser un bouton sans explication.
+class _HandCardOverlay extends StatefulWidget {
+  final ChanceCard card;
+  final String ownerLabel;
+  final double size;
+  final bool playable;
+  final List<Pawn> pawnTargets;
+  final List<PlayerColor> playerTargets;
+  final TurnPhase phase;
+  final VoidCallback onClose;
+  final void Function({Pawn? targetPawn, PlayerColor? targetPlayer}) onPlay;
+
+  const _HandCardOverlay({
+    super.key,
+    required this.card,
+    required this.ownerLabel,
+    required this.size,
+    required this.playable,
+    required this.pawnTargets,
+    required this.playerTargets,
+    required this.phase,
+    required this.onClose,
+    required this.onPlay,
+  });
+
+  @override
+  State<_HandCardOverlay> createState() => _HandCardOverlayState();
+}
+
+class _HandCardOverlayState extends State<_HandCardOverlay> {
+  Pawn? _pawn;
+  PlayerColor? _player;
+
+  static String _fr(PlayerColor c) => switch (c) {
+        PlayerColor.blue => 'bleu',
+        PlayerColor.red => 'rouge',
+        PlayerColor.green => 'vert',
+        PlayerColor.yellow => 'jaune',
+      };
+
+  /// Pourquoi la carte ne part pas, dit en clair.
+  String get _why {
+    final card = widget.card;
+    if (!widget.playable) {
+      if (card.timing == ChanceTiming.beforeRoll &&
+          widget.phase == TurnPhase.moving) {
+        return 'Carte AVANT : elle se joue avant le lancer du dé.';
+      }
+      if (card.timing == ChanceTiming.afterRoll &&
+          widget.phase == TurnPhase.rolling) {
+        return 'Carte APRÈS : lance d\'abord ton dé.';
+      }
+      return 'Une seule carte différée par tour — celle-ci attendra.';
+    }
+    if (widget.card.needsTarget &&
+        widget.card.entity == CardEntity.pawn &&
+        widget.pawnTargets.isEmpty) {
+      return 'Aucun pion à désigner pour l\'instant.';
+    }
+    if (widget.card.needsTarget &&
+        widget.card.entity == CardEntity.player &&
+        widget.playerTargets.isEmpty) {
+      return 'Aucun joueur à désigner pour l\'instant.';
+    }
+    return '';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final needsPawn = widget.card.needsTarget &&
+        widget.card.entity == CardEntity.pawn;
+    final needsPlayer = widget.card.needsTarget &&
+        widget.card.entity == CardEntity.player;
+    final ready = widget.playable &&
+        (!needsPawn || _pawn != null) &&
+        (!needsPlayer || _player != null);
+    final w = (widget.size * 0.36).clamp(160.0, 270.0);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: widget.onClose,
+      child: ColoredBox(
+        color: const Color(0xCC000000),
+        child: Center(
+          // Le clic sur la carte elle-même ne doit pas la refermer.
+          child: GestureDetector(
+            onTap: () {},
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Votre carte — ${widget.ownerLabel}',
+                    style: const TextStyle(
+                      color: Color(0xFFF3E3A3),
+                      fontSize: 13,
+                      letterSpacing: 1.1,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: w,
+                    height: w * 1.55,
+                    child: CardFace(card: widget.card),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: w,
+                    child: Column(
+                      children: [
+                        if (needsPawn)
+                          DropdownButton<Pawn>(
+                            isExpanded: true,
+                            dropdownColor: const Color(0xFF1A1A1A),
+                            value: widget.pawnTargets.contains(_pawn)
+                                ? _pawn
+                                : null,
+                            hint: const Text('Choisir un pion',
+                                style: TextStyle(color: Color(0xFFF3E3A3))),
+                            items: [
+                              for (final p in widget.pawnTargets)
+                                DropdownMenuItem(
+                                  value: p,
+                                  child: Text(
+                                      'pion ${p.id + 1} de ${_fr(p.color)}',
+                                      style: const TextStyle(
+                                          color: Color(0xFFF3E3A3))),
+                                ),
+                            ],
+                            onChanged: (p) => setState(() => _pawn = p),
+                          ),
+                        if (needsPlayer)
+                          DropdownButton<PlayerColor>(
+                            isExpanded: true,
+                            dropdownColor: const Color(0xFF1A1A1A),
+                            value: widget.playerTargets.contains(_player)
+                                ? _player
+                                : null,
+                            hint: const Text('Choisir un joueur',
+                                style: TextStyle(color: Color(0xFFF3E3A3))),
+                            items: [
+                              for (final c in widget.playerTargets)
+                                DropdownMenuItem(
+                                  value: c,
+                                  child: Text(_fr(c),
+                                      style: const TextStyle(
+                                          color: Color(0xFFF3E3A3))),
+                                ),
+                            ],
+                            onChanged: (c) => setState(() => _player = c),
+                          ),
+                        if (_why.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              _why,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                  color: Color(0xCCF3E3A3), fontSize: 11),
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                        // Les deux boutons partagent la largeur de la
+                        // carte : sans `Expanded` ils la débordaient.
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextButton(
+                                onPressed: widget.onClose,
+                                child: const Text('Reposer',
+                                    style:
+                                        TextStyle(color: Color(0xFFF3E3A3))),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: FilledButton(
+                                onPressed: ready
+                                    ? () => widget.onPlay(
+                                        targetPawn: _pawn,
+                                        targetPlayer: _player)
+                                    : null,
+                                child: const Text('Appliquer'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-      );
-    }
-    // Une carte-dé porte sa valeur en clair : c'est ce qui la distingue
-    // des cinq autres.
-    final isDice = c.action == CardAction.setDice;
-    return Tooltip(
-      message: c.nameFr,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: radius,
-          color: _chance,
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.85),
-            width: math.max(1.0, cell * 0.03),
-          ),
-        ),
-        child: Center(
-          child: isDice
-              ? Text(
-                  '${c.value}',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    fontSize: (cell * 0.46).clamp(8.0, 26.0),
-                  ),
-                )
-              : Icon(
-                  _iconFor(c),
-                  color: Colors.white,
-                  size: (cell * 0.46).clamp(8.0, 26.0),
-                ),
         ),
       ),
     );
@@ -3311,12 +3758,21 @@ class _DeferredHandCardState extends State<_DeferredHandCard> {
           final playable = widget.canPlay(card);
           final pawns = widget.pawnTargets(card);
           final players = widget.playerTargets(card);
-          final needsPawn = pawns.isNotEmpty;
-          final needsPlayer = players.isNotEmpty;
+          // Le besoin d'une cible vient de la CARTE, jamais de la longueur
+          // de la liste : sans cette distinction, une carte à cible sans
+          // aucune cible légale passait pour une carte sans cible, le
+          // bouton restait actif et le clic ne faisait rien, en silence.
+          final needsPawn =
+              card.needsTarget && card.entity == CardEntity.pawn;
+          final needsPlayer =
+              card.needsTarget && card.entity == CardEntity.player;
+          final noTarget = (needsPawn && pawns.isEmpty) ||
+              (needsPlayer && players.isEmpty);
           final pawn = _pawnChoice[card.id];
           final player = _playerChoice[card.id];
           // Une carte à cible ne part qu'une fois la cible désignée.
           final ready = playable &&
+              !noTarget &&
               (!needsPawn || pawn != null) &&
               (!needsPlayer || player != null);
 
@@ -3332,8 +3788,32 @@ class _DeferredHandCardState extends State<_DeferredHandCard> {
                         color: playable ? cs.primary : cs.onSurfaceVariant),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(card.nameFr,
-                          style: theme.textTheme.bodySmall),
+                      child: Tooltip(
+                        message: card.descriptionFr,
+                        child: Row(
+                          children: [
+                            // Le moment d'utilisation, dit comme la spec
+                            // l'écrit : AVANT, APRÈS ou AVANT/APRÈS.
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: cs.secondaryContainer,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(card.timingLabelFr,
+                                  style: theme.textTheme.labelSmall
+                                      ?.copyWith(
+                                          color: cs.onSecondaryContainer)),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(card.nameFr,
+                                  style: theme.textTheme.bodySmall),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                     const SizedBox(width: 8),
                     FilledButton.tonal(
@@ -3345,7 +3825,16 @@ class _DeferredHandCardState extends State<_DeferredHandCard> {
                     ),
                   ],
                 ),
-                if (needsPawn)
+                if (noTarget)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 24, top: 4),
+                    child: Text(
+                      'Aucune cible possible pour l\'instant.',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: cs.outline),
+                    ),
+                  ),
+                if (needsPawn && pawns.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(left: 24, top: 4),
                     child: DropdownButton<Pawn>(
@@ -3362,7 +3851,7 @@ class _DeferredHandCardState extends State<_DeferredHandCard> {
                       }),
                     ),
                   ),
-                if (needsPlayer)
+                if (needsPlayer && players.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(left: 24, top: 4),
                     child: DropdownButton<PlayerColor>(
@@ -3384,9 +3873,9 @@ class _DeferredHandCardState extends State<_DeferredHandCard> {
         }(),
         Text(
           'Main de ${_fr(widget.owner)} — ${widget.hand.length}/'
-          '${LudoUpgrades.handLimit} cartes. Une seule carte par tour ; '
-          'les cartes « Avant » se jouent avant le lancer, les « Après » '
-          'après.',
+          '${LudoUpgrades.handLimit} cartes. Une seule carte à la fois. '
+          'AVANT = avant le lancer, APRÈS = après, AVANT/APRÈS = les deux. '
+          'Survolez une carte pour lire son effet.',
           style: theme.textTheme.bodySmall?.copyWith(color: cs.outline),
         ),
       ],
@@ -3451,11 +3940,11 @@ class _UpgradesCard extends StatelessWidget {
         row(
           icon: Icons.cyclone,
           title: 'Cases Vortex / Trou noir',
-          sub: 'Une case par couleur, juste devant votre case de départ, '
-              'et à votre couleur — vous seul l\'utilisez. Elle porte deux '
-              'formes : la bonne vous envoie sur la case de départ de '
-              'l\'adversaire en diagonale, la mauvaise sur sa dernière '
-              'ligne droite.',
+          sub: 'Deux cases par couleur, à votre couleur — vous seule les '
+              'utilisez. La bonne, juste devant votre départ, vous envoie '
+              'sur la première case de l\'adversaire en diagonale. La '
+              'mauvaise, première case de votre dernière ligne droite, vous '
+              'renvoie sur la sienne : 26 pas perdus.',
           value: vortexEnabled,
           onChanged: onToggleVortex,
         ),
@@ -3471,8 +3960,9 @@ class _UpgradesCard extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         Text(
-          'Les cartes différées (conservées en main et jouées à votre tour) '
-          'arrivent dans une prochaine version.',
+          'Un tirage sur deux donne une carte DIFFÉRÉE : elle se range dans '
+          'votre main (4 places au maximum, dans le bloc « Vos cartes '
+          'chance ») et se joue à votre tour, une seule à la fois.',
           style: theme.textTheme.bodySmall?.copyWith(color: cs.outline),
         ),
       ],
@@ -3581,15 +4071,18 @@ class BoardView extends StatelessWidget {
   final bool showVortexCells;
   final bool showChanceCells;
 
-  /// Pions RETENUS dans la boîte départ d'une autre couleur (carte
-  /// différée « le pion capturé va dans VOTRE boîte »). Ils s'affichent
-  /// dans la base de leur geôlier, à leur couleur d'origine.
-  final Map<Pawn, PlayerColor> prisonerOf;
-
-  /// Les cartes différées de chaque couleur, rangées dans SA base. La
-  /// spec prévoit 4 emplacements ; ils sont dessinés vides tant que le
-  /// joueur n'a rien tiré.
+  /// Les cartes différées que chaque couleur tient en main. Elles sont
+  /// posées EN UN BLOC dans sa base, toutes FACE CACHÉE : on voit le dos,
+  /// jamais l'instruction. Il faut TOUCHER une carte pour la retourner.
   final Map<PlayerColor, List<ChanceCard>> deferredHands;
+
+  /// La couleur dont les cartes sont cliquables — celle qui a la main, si
+  /// c'est un humain. Les cartes des autres restent closes : tant qu'on
+  /// n'y a pas droit, on ne voit pas ce qui est caché.
+  final PlayerColor? tappableCardSeat;
+
+  /// Le joueur a touché la carte n° [slot] de sa base.
+  final void Function(int slot)? onDeferredCardTap;
   const BoardView({
     super.key,
     required this.players,
@@ -3617,8 +4110,9 @@ class BoardView extends StatelessWidget {
     this.playerCount = 4,
     this.showVortexCells = false,
     this.showChanceCells = false,
-    this.prisonerOf = const {},
     this.deferredHands = const {},
+    this.tappableCardSeat,
+    this.onDeferredCardTap,
   });
 
   // Top-left grid cell of each colored base (the board is a 15x15 grid).
@@ -3635,19 +4129,22 @@ class BoardView extends StatelessWidget {
   // is stuck to the top of the (enlarged) white inner area with a 3px margin.
   static const List<double> _spotsX = [1.5, 2.5, 3.5, 4.5];
 
-  /// Hauteur (en cases, depuis le coin de la base) de la rangée des 4
-  /// emplacements de cartes différées. Elle se loge dans la bande libre
-  /// entre les pions — rangés en haut, vers 1,1 — et l'étiquette du
-  /// joueur, posée en bas vers 5,5.
-  static const double _cardRowY = 3.3;
+  /// Le BLOC de cartes d'une base : sa rangée est posée dans la bande
+  /// libre entre les pions — rangés en haut vers 1,1 — et l'étiquette du
+  /// joueur, en bas vers 5,5.
+  static const double _cardRowY = 3.4;
 
-  /// Centre de l'emplacement de carte [slot] (0..3) dans la base de
-  /// [color], en unités de case. Fonction pure : les tests la vérifient
-  /// sans monter le moindre widget.
+  /// Abscisses des 4 cartes du bloc, en cases depuis le coin de la base.
+  /// Elles se touchent presque : c'est un bloc, pas quatre emplacements
+  /// épars.
+  static const List<double> _cardSpotsX = [1.65, 2.55, 3.45, 4.35];
+
+  /// Centre de la carte [slot] (0..3) du bloc de [color], en unités de
+  /// case. Fonction pure : les tests la vérifient sans widget.
   static Offset cardSlotCenter(PlayerColor color, int slot) {
     final corner = _baseCorner[color]!;
     return Offset(
-      corner.dx + _spotsX[slot.clamp(0, 3)],
+      corner.dx + _cardSpotsX[slot.clamp(0, _cardSpotsX.length - 1)],
       corner.dy + _cardRowY,
     );
   }
@@ -3702,9 +4199,7 @@ class BoardView extends StatelessWidget {
     final loc = step?.location ?? overrideLoc?.location ?? p.location;
     final pos = step?.position ?? overrideLoc?.position ?? p.position;
     final cellCenter = switch (loc) {
-      // Un pion prisonnier attend dans la boîte de son geôlier.
-      PawnLocation.base       =>
-          _baseSlotCenter(prisonerOf[p] ?? p.color, pos, cell),
+      PawnLocation.base       => _baseSlotCenter(p.color, pos, cell),
       PawnLocation.ring       => _ringCellCenter(pos, cell),
       PawnLocation.homeColumn => _homeColumnCenter(p.color, pos, cell),
       // Un pion arrivé se range à SA place sur l'hypoténuse. L'index est
@@ -3891,26 +4386,55 @@ class BoardView extends StatelessWidget {
                 );
               }(),
 
-            // Les 4 emplacements de cartes différées, rangés dans la base
-            // de chaque joueur. Ils n'apparaissent qu'avec les cases
-            // Chance : sans elles, aucune carte ne peut être tirée.
+            // Le BLOC de cartes de chaque couleur, posé dans sa base et
+            // TOUJOURS face cachée : on voit le dos, jamais l'instruction.
+            // Les emplacements libres restent en pointillé doré.
             if (showChanceCells)
               for (final p in players)
                 for (int slot = 0; slot < LudoUpgrades.handLimit; slot++)
                   () {
-                    final hand = deferredHands[p.color] ?? const <ChanceCard>[];
+                    final hand =
+                        deferredHands[p.color] ?? const <ChanceCard>[];
                     final center = cardSlotCenter(p.color, slot);
-                    final w = cell * 0.86;
-                    final h = cell * 1.15;
+                    final w = cell * 0.80;
+                    final h = cell * 1.12;
                     return Positioned(
                       left: center.dx * cell - w / 2,
                       top: center.dy * cell - h / 2,
                       width: w,
                       height: h,
-                      child: _DeferredCardSlot(
-                        card: slot < hand.length ? hand[slot] : null,
-                        cell: cell,
-                      ),
+                      child: () {
+                        if (slot >= hand.length) {
+                          // Emplacement libre : un liseré, et rien à
+                          // toucher.
+                          return IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                borderRadius:
+                                    BorderRadius.circular(cell * 0.10),
+                                border: Border.all(
+                                  color: const Color(0x55D4AF37),
+                                  width: math.max(1.0, cell * 0.03),
+                                ),
+                              ),
+                            ),
+                          );
+                        }
+                        final mine = p.color == tappableCardSeat;
+                        final back = CardBack(radius: cell * 0.10);
+                        if (!mine || onDeferredCardTap == null) {
+                          return IgnorePointer(child: back);
+                        }
+                        // C'est MA carte et c'est mon tour : je peux la
+                        // retourner pour lire son instruction.
+                        return MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: GestureDetector(
+                            onTap: () => onDeferredCardTap!(slot),
+                            child: back,
+                          ),
+                        );
+                      }(),
                     );
                   }(),
 
@@ -3974,11 +4498,7 @@ class BoardView extends StatelessWidget {
                 final pos = step?.position ?? overrideLoc?.position ?? p.position;
                 switch (loc) {
                   case PawnLocation.base:
-                    // Un prisonnier occupe un créneau de la boîte de son
-                    // geôlier : il doit se GROUPER avec le pion qui s'y
-                    // trouve déjà, sinon les deux se superposent.
-                    final box = prisonerOf[p] ?? p.color;
-                    return 'base_${box.name}_$pos';
+                    return 'base_${p.color.name}_$pos';
                   case PawnLocation.ring:
                     return 'ring_$pos';
                   case PawnLocation.homeColumn:

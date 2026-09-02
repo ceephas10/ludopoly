@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludopoly/game/game_controller.dart';
+import 'package:ludopoly/game/card_art.dart';
 import 'package:ludopoly/game/pawn.dart';
 import 'package:ludopoly/game/upgrades.dart';
 import 'package:ludopoly/main.dart';
@@ -175,121 +176,390 @@ void main() {
     });
   });
 
-  group('🗃️ Les 4 emplacements de cartes dans les bases', () {
-    test('ils sont rangés dans la base, sans toucher pions ni étiquette',
-        () {
-      for (final color in PlayerColor.values) {
-        final places = {
-          for (int slot = 0; slot < 4; slot++)
-            BoardView.cardSlotCenter(color, slot),
-        };
-        expect(places.length, 4,
-            reason: '${color.name} : 4 emplacements distincts');
-
-        for (int slot = 0; slot < 4; slot++) {
-          final p = BoardView.cardSlotCenter(color, slot);
-          // Coin de la base : (0,0) (9,0) (0,9) (9,9) selon la couleur.
-          final cx = color == PlayerColor.green || color == PlayerColor.yellow
-              ? 9.0
-              : 0.0;
-          final cy = color == PlayerColor.blue || color == PlayerColor.yellow
-              ? 9.0
-              : 0.0;
-          final dx = p.dx - cx;
-          final dy = p.dy - cy;
-          // Dans l'aire blanche intérieure (0,5 → 5,5 depuis le coin).
-          expect(dx, inInclusiveRange(0.5, 5.5),
-              reason: '${color.name}#$slot déborde de la base');
-          expect(dy, inInclusiveRange(0.5, 5.5));
-          // Sous les pions (rangés vers 1,1) et au-dessus de l'étiquette
-          // du joueur (posée vers 5,5).
-          expect(dy, greaterThan(2.0),
-              reason: '${color.name}#$slot chevaucherait les pions');
-          expect(dy, lessThan(4.8),
-              reason: '${color.name}#$slot chevaucherait l\'étiquette');
-        }
-      }
-    });
-
-    test('les 4 sont alignés et régulièrement espacés', () {
-      for (final color in PlayerColor.values) {
-        final ys = {
-          for (int slot = 0; slot < 4; slot++)
-            BoardView.cardSlotCenter(color, slot).dy,
-        };
-        expect(ys.length, 1, reason: '${color.name} : une seule rangée');
-        final xs = [
-          for (int slot = 0; slot < 4; slot++)
-            BoardView.cardSlotCenter(color, slot).dx,
-        ]..sort();
-        for (int i = 1; i < xs.length; i++) {
-          expect(xs[i] - xs[i - 1], closeTo(1.0, 1e-9),
-              reason: '${color.name} : espacement irrégulier $xs');
-        }
-      }
-    });
-
-    testWidgets('4 emplacements par couleur, vides puis remplis', (t) async {
-      await bootApp(t);
-      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
-      final c = state.controller;
-
-      // Une carte en main, mais les cases Chance encore éteintes : aucun
-      // emplacement ne se dessine sur le plateau.
-      final dice6 = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_6');
-      c.upgrades.addToHand(PlayerColor.red, dice6);
-      await t.pump(const Duration(milliseconds: 300));
-      expect(find.byTooltip(dice6.nameFr), findsNothing,
-          reason: 'pas de cases Chance, pas de cartes sur le plateau');
-
-      state.setChanceEnabled(true);
-      await t.pump(const Duration(milliseconds: 300));
-
-      final board = t.widget<BoardView>(find.byType(BoardView));
-      expect(board.deferredHands.keys.length, 4,
-          reason: 'les 4 couleurs ont leur rangée');
-      expect(board.deferredHands[PlayerColor.red], [dice6]);
-      for (final color in PlayerColor.values.where((x) => x != PlayerColor.red)) {
-        expect(board.deferredHands[color], isEmpty,
-            reason: '${color.name} n\'a rien tiré');
-      }
-      expect(find.byTooltip(dice6.nameFr), findsOneWidget,
-          reason: 'la carte posée dans la base porte son nom');
-
-      await shutdownApp(t);
-    });
-
-    testWidgets('une carte tirée EN PARTIE apparaît dans la base du joueur',
-        (t) async {
-      // Le vrai chemin, de bout en bout : le pion tombe sur une case
-      // Chance, le tirage donne une différée, elle se range en main — et
-      // elle doit se voir dans la base, sans autre intervention.
+  group('⏱️ Une carte « Après » reste jouable', () {
+    testWidgets('le coup automatique ne devance plus la carte', (t) async {
+      // Une carte « Après » se joue le dé en main. Quand un seul pion
+      // pouvait bouger, le coup partait tout seul en 550 ms et la carte
+      // devenait injouable — la spec dit pourtant « et parfois après le
+      // lancer ».
       await bootApp(t);
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
       final c = state.controller;
       state.setChanceEnabled(true);
       final me = c.currentColor;
 
-      ChanceCard? drawn;
-      for (int attempt = 0; attempt < 40 && drawn == null; attempt++) {
-        // On replace le pion à 3 pas de la case Chance et on relance.
-        final p = c.state.pawnsByColor[me]![0];
-        p.location = PawnLocation.ring;
-        p.position = GameController.startIdx(me) + 3;
-        c.currentPlayerIdx = c.turnOrder.indexOf(me);
-        c.phase = TurnPhase.rolling;
-        state.rollManualForTest(3);
-        await t.pump(const Duration(milliseconds: 700));
-        await t.pump(const Duration(seconds: 2));
-        final hand = c.upgrades.handOf(me);
-        if (hand.isNotEmpty) drawn = hand.first;
+      final card = kDeferredCards
+          .singleWhere((x) => x.id == 'DEF_CAPTURE_TO_MY_BOX');
+      c.upgrades.addToHand(me, card);
+
+      // UN SEUL coup possible : un pion sur l'anneau, dé de 3.
+      final only = c.state.pawnsByColor[me]![0];
+      only.location = PawnLocation.ring;
+      only.position = GameController.startIdx(me) + 4;
+
+      state.rollManualForTest(3);
+      await t.pump(const Duration(milliseconds: 100));
+      expect(c.movablePawns().length, 1);
+      expect(c.canPlayDeferred(me, card), isTrue,
+          reason: 'le moteur autorise la carte');
+
+      state.playDeferredCard(card);
+      await t.pump(const Duration(milliseconds: 100));
+      expect(c.upgrades.handOf(me), isNot(contains(card)),
+          reason: 'l\'interface doit la laisser partir, elle aussi');
+      expect(c.upgrades.captureRuleArmed(me), isTrue);
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('sans carte en main, le coup unique part toujours tout seul',
+        (t) async {
+      // Le comportement demandé plus tôt ne bouge pas d'un pouce.
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      final me = c.currentColor;
+      final only = c.state.pawnsByColor[me]![0];
+      only.location = PawnLocation.ring;
+      only.position = GameController.startIdx(me) + 4;
+
+      state.rollManualForTest(3);
+      await t.pump(const Duration(milliseconds: 100));
+      expect(state.autoNotice, contains('part tout seul'));
+      await t.pump(const Duration(seconds: 2));
+      expect(only.position, GameController.startIdx(me) + 7,
+          reason: 'le pion a bien joué seul');
+
+      await shutdownApp(t);
+    });
+  });
+
+  group('🃏 Les cartes vivent dans UN SEUL bloc', () {
+    testWidgets('plus rien n\'est dessiné dans les bases', (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+
+      final dice6 = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_6');
+      c.upgrades.addToHand(c.currentColor, dice6);
+      await t.pump(const Duration(milliseconds: 300));
+
+      // La carte est visible UNE fois, et une seule : dans son bloc.
+      expect(find.text('Vos cartes chance'), findsOneWidget);
+      expect(find.text(dice6.nameFr), findsOneWidget,
+          reason: 'un seul endroit, pas un doublon sur le plateau');
+      expect(find.byTooltip(dice6.descriptionFr), findsOneWidget,
+          reason: 'l\'effet se lit au survol');
+      expect(find.text(dice6.timingLabelFr), findsOneWidget,
+          reason: 'le moment d\'utilisation est affiché');
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('la main tient 4 cartes et le bloc les montre toutes',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      final me = c.currentColor;
+
+      for (int v = 1; v <= 4; v++) {
+        c.upgrades.addToHand(
+            me, kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_$v'));
+      }
+      await t.pump(const Duration(milliseconds: 300));
+      expect(c.upgrades.handOf(me).length, 4);
+      for (int v = 1; v <= 4; v++) {
+        expect(
+            find.text(kDeferredCards
+                .singleWhere((x) => x.id == 'DEF_DICE_$v')
+                .nameFr),
+            findsOneWidget);
+      }
+      // La 5e est refusée.
+      expect(
+          c.upgrades.addToHand(
+              me, kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_5')),
+          isFalse);
+
+      await shutdownApp(t);
+    });
+  });
+
+  group('🎴 Les cartes sont posées FACE CACHÉE dans les bases', () {
+    test('le bloc tient dans la base, sous les pions et au-dessus du nom',
+        () {
+      for (final color in PlayerColor.values) {
+        final places = {
+          for (int slot = 0; slot < LudoUpgrades.handLimit; slot++)
+            BoardView.cardSlotCenter(color, slot),
+        };
+        expect(places.length, LudoUpgrades.handLimit,
+            reason: '${color.name} : autant de places que la main');
+
+        final cx = color == PlayerColor.green || color == PlayerColor.yellow
+            ? 9.0
+            : 0.0;
+        final cy = color == PlayerColor.blue || color == PlayerColor.yellow
+            ? 9.0
+            : 0.0;
+        for (final p in places) {
+          final dx = p.dx - cx;
+          final dy = p.dy - cy;
+          expect(dx, inInclusiveRange(0.5, 5.5),
+              reason: '${color.name} : le bloc déborde de la base');
+          expect(dy, greaterThan(2.0), reason: 'sous les pions');
+          expect(dy, lessThan(4.8), reason: 'au-dessus de l\'étiquette');
+        }
+      }
+    });
+
+    test('c\'est un BLOC : cartes alignées et jointives', () {
+      for (final color in PlayerColor.values) {
+        final ys = {
+          for (int slot = 0; slot < LudoUpgrades.handLimit; slot++)
+            BoardView.cardSlotCenter(color, slot).dy,
+        };
+        expect(ys.length, 1, reason: '${color.name} : une seule rangée');
+        final xs = [
+          for (int slot = 0; slot < LudoUpgrades.handLimit; slot++)
+            BoardView.cardSlotCenter(color, slot).dx,
+        ]..sort();
+        for (int i = 1; i < xs.length; i++) {
+          expect(xs[i] - xs[i - 1], closeTo(0.90, 1e-9),
+              reason: '${color.name} : espacement irrégulier $xs');
+        }
+      }
+    });
+
+    testWidgets('une carte en main montre son DOS, jamais son instruction',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      final me = c.currentColor;
+
+      expect(find.byType(CardBack), findsNothing,
+          reason: 'aucune carte, aucun dos');
+
+      final card = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_6');
+      c.upgrades.addToHand(me, card);
+      await t.pump(const Duration(milliseconds: 300));
+
+      expect(find.byType(CardBack), findsOneWidget,
+          reason: 'la carte est posée face cachée dans la base');
+      expect(find.byType(CardFace), findsNothing,
+          reason: 'sa face ne doit PAS être visible');
+
+      await shutdownApp(t);
+    });
+  });
+
+  group('🔓 La carte tirée S\'OUVRE', () {
+    testWidgets('elle se retourne, montre son instruction, puis se referme',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      final me = c.currentColor;
+
+      final p = c.state.pawnsByColor[me]![0];
+      p.location = PawnLocation.ring;
+      p.position = GameController.startIdx(me) + 3;
+
+      state.rollManualForTest(3);
+      await t.pump(const Duration(milliseconds: 700)); // pause du dé
+      await t.pump(const Duration(seconds: 2));        // trajet + arrivée
+
+      final opened = state.revealedCard;
+      expect(opened, isNotNull, reason: 'la carte doit s\'ouvrir');
+      // Le retournement passe du dos à la face.
+      await t.pump(const Duration(milliseconds: 700));
+      expect(find.byType(CardFace), findsOneWidget,
+          reason: 'sa vraie face est montrée');
+      expect(find.text(opened!.nameFr), findsWidgets);
+      expect(find.text(opened.descriptionFr), findsOneWidget,
+          reason: 'avec l\'instruction à suivre');
+
+      // Elle se referme d'elle-même.
+      await t.pump(const Duration(seconds: 4));
+      expect(state.revealedCard, isNull);
+      expect(find.byType(CardFace), findsNothing);
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('un clic la referme plus tôt', (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      final me = c.currentColor;
+
+      final p = c.state.pawnsByColor[me]![0];
+      p.location = PawnLocation.ring;
+      p.position = GameController.startIdx(me) + 3;
+      state.rollManualForTest(3);
+      await t.pump(const Duration(milliseconds: 700));
+      await t.pump(const Duration(seconds: 2));
+      expect(state.revealedCard, isNotNull);
+
+      state.closeCard();
+      await t.pump(const Duration(milliseconds: 200));
+      expect(state.revealedCard, isNull);
+
+      await shutdownApp(t);
+    });
+  });
+
+  group('👆 Toucher une carte de sa base pour la lire et l\'appliquer', () {
+    testWidgets('tant qu\'on n\'y touche pas, la face reste cachée',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      final me = c.currentColor;
+
+      final card = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_4');
+      c.upgrades.addToHand(me, card);
+      await t.pump(const Duration(milliseconds: 300));
+
+      expect(find.byType(CardBack), findsOneWidget, reason: 'le dos');
+      expect(find.byType(CardFace), findsNothing,
+          reason: 'rien à voir tant qu\'on n\'a pas touché');
+      expect(state.openedHandCard, isNull);
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('la toucher la retourne et montre son instruction',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      final me = c.currentColor;
+
+      final card = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_4');
+      c.upgrades.addToHand(me, card);
+      await t.pump(const Duration(milliseconds: 300));
+
+      state.openHandCard(0);
+      await t.pump(const Duration(milliseconds: 300));
+
+      expect(state.openedHandCard, card);
+      expect(find.byType(CardFace), findsOneWidget);
+      expect(find.text(card.descriptionFr), findsOneWidget,
+          reason: 'l\'instruction se lit sur la carte');
+      expect(find.text('Appliquer'), findsOneWidget);
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('« Appliquer » joue vraiment la carte', (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      final me = c.currentColor;
+
+      final card = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_4');
+      c.upgrades.addToHand(me, card);
+      await t.pump(const Duration(milliseconds: 300));
+      state.openHandCard(0);
+      await t.pump(const Duration(milliseconds: 300));
+
+      await t.tap(find.widgetWithText(FilledButton, 'Appliquer'));
+      await t.pump(const Duration(milliseconds: 400));
+
+      expect(c.lastRoll, 4, reason: 'la carte-dé a remplacé le lancer');
+      expect(c.upgrades.handOf(me), isEmpty, reason: 'carte consommée');
+      expect(state.openedHandCard, isNull, reason: 'la carte se referme');
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('on ne peut PAS retourner la carte d\'un autre joueur',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      final me = c.currentColor;
+      final other =
+          PlayerColor.values.firstWhere((x) => x != me);
+
+      c.upgrades.addToHand(
+          other, kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_4'));
+      await t.pump(const Duration(milliseconds: 300));
+
+      final board = t.widget<BoardView>(find.byType(BoardView));
+      expect(board.tappableCardSeat, me,
+          reason: 'seules MES cartes sont cliquables');
+      // Même en forçant le clic, rien ne s'ouvre : ce n'est pas ma carte.
+      state.openHandCard(0);
+      await t.pump(const Duration(milliseconds: 200));
+      expect(state.openedHandCard, isNull);
+      expect(find.byType(CardFace), findsNothing);
+
+      await shutdownApp(t);
+    });
+
+    testWidgets('les cartes d\'un siège ORDINATEUR ne sont pas cliquables',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      state.setChanceEnabled(true);
+      state.setAiSeats(PlayerColor.values.toSet());
+      await t.pump(const Duration(milliseconds: 300));
+
+      expect(
+          t.widget<BoardView>(find.byType(BoardView)).tappableCardSeat,
+          isNull,
+          reason: 'aucune carte d\'ordinateur ne s\'ouvre au clic');
+
+      await shutdownApp(t);
+    });
+  });
+
+  group('🤖 L\'ordinateur joue ses cartes différées', () {
+    testWidgets('il pose sa carte au lieu de la garder', (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      state.setAiSeats(PlayerColor.values.toSet());
+
+      // On garnit les quatre mains : aucune ne doit rester pleine.
+      for (final color in PlayerColor.values) {
+        for (final id in ['DEF_DICE_6', 'DEF_DICE_5', 'DEF_SKIP_CHOSEN']) {
+          c.upgrades.addToHand(
+              color, kDeferredCards.singleWhere((x) => x.id == id));
+        }
+      }
+      final before = {
+        for (final color in PlayerColor.values)
+          color: c.upgrades.handOf(color).length,
+      };
+      expect(before.values.every((n) => n == 3), isTrue);
+
+      // On laisse la partie tourner.
+      for (int i = 0; i < 120; i++) {
+        await t.pump(const Duration(milliseconds: 200));
       }
 
-      expect(drawn, isNotNull,
-          reason: 'une chance sur deux : une différée doit finir par tomber');
-      await t.pump(const Duration(milliseconds: 300));
-      expect(find.byTooltip(drawn!.nameFr), findsOneWidget,
-          reason: 'la carte tirée en partie doit se voir dans la base');
+      final after = {
+        for (final color in PlayerColor.values)
+          color: c.upgrades.handOf(color).length,
+      };
+      expect(after.values.any((n) => n < 3), isTrue,
+          reason: 'au moins un ordinateur doit avoir joué une carte : '
+              'avant $before, après $after');
 
       await shutdownApp(t);
     });

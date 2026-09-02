@@ -6,19 +6,26 @@
 //
 // GÉOMÉTRIE (verrouillée par test/upgrades_test.dart) :
 //
-//   * Case VORTEX / TROU NOIR — UNE SEULE case par couleur, située juste
-//     DEVANT sa première case de départ (départ + 1 pas). Elle est à la
-//     couleur de son propriétaire et lui seul peut l'utiliser : un pion
-//     adverse qui s'y pose ne bouge pas.
+//   * Cases VORTEX / TROU NOIR — DEUX cases par couleur, chacune à SA
+//     couleur, et son propriétaire seul peut les utiliser : un pion
+//     adverse qui s'y pose ne bouge pas. Chacune a sa propre règle.
 //
-//     Cette unique case porte DEUX FORMES, et c'est l'une ou l'autre qui
-//     s'applique quand un pion s'y arrête :
-//       - la BONNE  → le pion file sur la case de départ de l'adversaire
-//                     EN DIAGONALE ;
-//       - la MAUVAISE → le pion est envoyé sur la case de la dernière
-//                     ligne droite de ce même adversaire.
-//     Laquelle des deux ? Tirée à pile ou face, comme le reste du hasard
-//     de LudoPoly — voir [LudoUpgrades.rng].
+//     LA BONNE — juste devant sa case de départ (départ + 1 pas), donc la
+//     première case après la boîte départ. Le pion file sur la première
+//     case de l'adversaire en diagonale, celle qui suit SA case de
+//     départ : 26 pas gagnés.
+//
+//     LA MAUVAISE — la première case de sa dernière ligne droite, son 44e
+//     pas. C'est là que le parcours prend son dernier segment rectiligne
+//     (6 cases, pas 44 à 49), avant le virage du pas 50 qui ouvre sur le
+//     couloir final. Sur la grille 15×15 du plateau :
+//         vert 81 · jaune 99 · bleu 143 · rouge 125
+//     — vérifiées par test/upgrades_test.dart. Le pion REVIENT à la
+//     première case de la dernière ligne droite de l'adversaire en
+//     diagonale : 26 pas perdus alors qu'il touchait au but.
+//
+//     Chaque case mène à son homologue d'en face. Aucun rebond possible :
+//     cette case-là appartient à l'autre couleur.
 //
 //   * Cases CHANCE — 4 cases NEUTRES (elles ne portent la couleur d'aucun
 //     joueur, cf. Annexe B), placées 2 cases AVANT chaque étoile de
@@ -60,6 +67,9 @@ enum ChanceTiming {
 
   /// Après le lancer de dé.
   afterRoll,
+
+  /// Indifféremment avant ou après le lancer.
+  beforeOrAfterRoll,
 }
 
 /// Immédiate (appliquée sur-le-champ au pion tombé sur la case) ou
@@ -77,8 +87,8 @@ enum CardAction {
   setState,      // invulnérable / figé
   modifyDice,    // demi-dé / double-dé / deux dés
   setDice,       // carte-dé : remplace le lancer par une valeur fixe
-  noExit,        // le pion désigné passe sa sortie et refait le tour
-  captureToBox,  // le prochain pion capturé va dans VOTRE boîte
+  noExit,        // le pion désigné ne peut pas sortir de sa boîte
+  captureToBox,  // règle spéciale appliquée à la prochaine capture
   skipTurn,      // un joueur ne joue pas pendant N tours
 }
 
@@ -125,6 +135,11 @@ class ChanceCard {
   final String nameFr;
   final String nameEn;
   final String nameEs;
+
+  /// Ce que la carte fait, en clair — §10 de la spec : « chaque carte doit
+  /// avoir un identifiant unique, un nom, une description… ». C'est ce
+  /// texte qui s'affiche en infobulle dans le bloc de cartes.
+  final String descriptionFr;
   final CardKind kind;
   final ChanceTiming timing;
   final CardAction action;
@@ -144,11 +159,17 @@ class ChanceCard {
   final CardPawnState? pawnState;
   final CardDiceMode? diceMode;
 
+  /// Nombre d'exemplaires de cette carte dans le paquet — §8 : « si
+  /// plusieurs exemplaires d'une même carte sont souhaités, le système
+  /// doit permettre de définir une quantité pour chaque carte ».
+  final int quantity;
+
   const ChanceCard({
     required this.id,
     required this.nameFr,
     required this.nameEn,
     required this.nameEs,
+    required this.descriptionFr,
     required this.kind,
     required this.timing,
     required this.action,
@@ -159,10 +180,29 @@ class ChanceCard {
     this.value = 0,
     this.pawnState,
     this.diceMode,
+    this.quantity = 1,
   });
 
   /// Vrai si le joueur doit DÉSIGNER une cible avant de jouer la carte.
   bool get needsTarget => selection == CardSelection.chosen;
+
+  /// La carte peut-elle se jouer avant le lancer ?
+  bool get playableBeforeRoll =>
+      timing == ChanceTiming.beforeRoll ||
+      timing == ChanceTiming.beforeOrAfterRoll;
+
+  /// Et après ?
+  bool get playableAfterRoll =>
+      timing == ChanceTiming.afterRoll ||
+      timing == ChanceTiming.beforeOrAfterRoll;
+
+  /// Le moment, dit comme la spec l'écrit.
+  String get timingLabelFr => switch (timing) {
+        ChanceTiming.onChance => 'Immédiate',
+        ChanceTiming.beforeRoll => 'AVANT',
+        ChanceTiming.afterRoll => 'APRÈS',
+        ChanceTiming.beforeOrAfterRoll => 'AVANT/APRÈS',
+      };
 
   @override
   String toString() => id;
@@ -175,6 +215,8 @@ const List<ChanceCard> kImmediateCards = [
     nameFr: 'Reculez de 3 cases',
     nameEn: 'Move back 3 spaces',
     nameEs: 'Retrocede 3 casillas',
+    descriptionFr:
+        'Le pion recule exactement de 3 cases, sans jamais franchir une zone qu\'il ne peut normalement pas franchir.',
     kind: CardKind.immediate,
     timing: ChanceTiming.onChance,
     action: CardAction.move,
@@ -185,6 +227,8 @@ const List<ChanceCard> kImmediateCards = [
     nameFr: 'Avancez de 3 cases',
     nameEn: 'Move forward 3 spaces',
     nameEs: 'Avanza 3 casillas',
+    descriptionFr:
+        'Le pion avance exactement de 3 cases, selon les règles normales du jeu.',
     kind: CardKind.immediate,
     timing: ChanceTiming.onChance,
     action: CardAction.move,
@@ -195,6 +239,8 @@ const List<ChanceCard> kImmediateCards = [
     nameFr: 'Tous vos pions sortent',
     nameEn: 'All your pawns come out',
     nameEs: 'Todas tus fichas salen',
+    descriptionFr:
+        'Tous les pions du joueur encore dans sa boîte de départ sortent immédiatement. Les autres joueurs ne sont pas concernés.',
     kind: CardKind.immediate,
     timing: ChanceTiming.onChance,
     action: CardAction.releaseAll,
@@ -206,6 +252,8 @@ const List<ChanceCard> kImmediateCards = [
     nameFr: 'Votre pion se place juste devant la sortie',
     nameEn: 'Your pawn moves just before the exit',
     nameEs: 'Tu ficha se coloca justo antes de la salida',
+    descriptionFr:
+        'Le pion est placé sur la case située immédiatement avant la sortie vers son couloir maison — jamais dans le couloir lui-même.',
     kind: CardKind.immediate,
     timing: ChanceTiming.onChance,
     action: CardAction.teleport,
@@ -215,6 +263,8 @@ const List<ChanceCard> kImmediateCards = [
     nameFr: 'Votre pion retourne dans sa boîte départ',
     nameEn: 'Your pawn goes back to its start box',
     nameEs: 'Tu ficha vuelve a su caja de salida',
+    descriptionFr:
+        'Le pion retourne dans sa boîte de départ. Il devra ensuite suivre les règles normales pour ressortir.',
     kind: CardKind.immediate,
     timing: ChanceTiming.onChance,
     action: CardAction.returnToBase,
@@ -224,6 +274,8 @@ const List<ChanceCard> kImmediateCards = [
     nameFr: 'Pion invulnérable pendant 2 tours',
     nameEn: 'Invulnerable pawn for 2 turns',
     nameEs: 'Ficha invulnerable por 2 turnos',
+    descriptionFr:
+        'Pendant 2 tours, ce pion ne peut pas être capturé. L\'invulnérabilité disparaît ensuite d\'elle-même.',
     kind: CardKind.immediate,
     timing: ChanceTiming.onChance,
     action: CardAction.setState,
@@ -235,6 +287,8 @@ const List<ChanceCard> kImmediateCards = [
     nameFr: 'Pion figé pendant 2 tours',
     nameEn: 'Frozen pawn for 2 turns',
     nameEs: 'Ficha congelada por 2 turnos',
+    descriptionFr:
+        'Ce pion ne peut pas être déplacé pendant 2 tours. Il redevient normal ensuite.',
     kind: CardKind.immediate,
     timing: ChanceTiming.onChance,
     action: CardAction.setState,
@@ -246,6 +300,8 @@ const List<ChanceCard> kImmediateCards = [
     nameFr: 'Avancez sur le premier adversaire devant et capturez-le',
     nameEn: 'Advance to the first opponent ahead and capture it',
     nameEs: 'Avanza hasta el primer rival delante y captúralo',
+    descriptionFr:
+        'Le programme cherche le premier pion adverse devant, dans le sens du parcours ; le pion y avance et le capture.',
     kind: CardKind.immediate,
     timing: ChanceTiming.onChance,
     action: CardAction.captureAhead,
@@ -256,6 +312,8 @@ const List<ChanceCard> kImmediateCards = [
     nameFr: 'Reculez sur le premier adversaire derrière et capturez-le',
     nameEn: 'Move back to the first opponent behind and capture it',
     nameEs: 'Retrocede hasta el primer rival detrás y captúralo',
+    descriptionFr:
+        'Le programme cherche le premier pion adverse derrière ; le pion y recule et le capture.',
     kind: CardKind.immediate,
     timing: ChanceTiming.onChance,
     action: CardAction.captureBehind,
@@ -266,6 +324,8 @@ const List<ChanceCard> kImmediateCards = [
     nameFr: 'Demi-dé pendant 2 tours (1, 2 ou 3)',
     nameEn: 'Half dice for 2 turns',
     nameEs: 'Medio dado por 2 turnos',
+    descriptionFr:
+        'À partir du tour suivant et pendant 2 tours, le dé ne peut produire que 1, 2 ou 3.',
     kind: CardKind.immediate,
     timing: ChanceTiming.onChance,
     action: CardAction.modifyDice,
@@ -279,6 +339,8 @@ const List<ChanceCard> kImmediateCards = [
     nameFr: 'Double-dé pendant 2 tours (2, 4, 6, 8, 10, 12)',
     nameEn: 'Double dice for 2 turns',
     nameEs: 'Dado doble por 2 turnos',
+    descriptionFr:
+        'À partir du tour suivant et pendant 2 tours, le dé ne produit que des valeurs paires : 2, 4, 6, 8, 10 ou 12.',
     kind: CardKind.immediate,
     timing: ChanceTiming.onChance,
     action: CardAction.modifyDice,
@@ -292,6 +354,8 @@ const List<ChanceCard> kImmediateCards = [
     nameFr: 'Deux dés pendant 2 tours (2 à 12)',
     nameEn: 'Two dice for 2 turns',
     nameEs: 'Dos dados por 2 turnos',
+    descriptionFr:
+        'À partir du tour suivant et pendant 2 tours, le joueur lance 2 dés ; le résultat est leur somme, de 2 à 12.',
     kind: CardKind.immediate,
     timing: ChanceTiming.onChance,
     action: CardAction.modifyDice,
@@ -308,9 +372,11 @@ const List<ChanceCard> kDeferredCards = [
   // ---- Concernant les pions ----
   ChanceCard(
     id: 'DEF_PAWN_INVULNERABLE',
-    nameFr: 'Votre pion invulnérable pendant 2 tours (Avant)',
+    nameFr: 'Votre pion invulnérable pendant 2 tours',
     nameEn: 'Your pawn invulnerable for 2 turns',
     nameEs: 'Tu ficha invulnerable por 2 turnos',
+    descriptionFr:
+        'Avant de lancer le dé, désignez un de vos pions : aucun adversaire ne peut le capturer pendant 2 tours.',
     kind: CardKind.deferred,
     timing: ChanceTiming.beforeRoll,
     action: CardAction.setState,
@@ -320,9 +386,11 @@ const List<ChanceCard> kDeferredCards = [
   ),
   ChanceCard(
     id: 'DEF_OPPONENT_FROZEN',
-    nameFr: 'Pion d\'un adversaire figé pendant 2 tours (Avant)',
+    nameFr: 'Pion d\'un adversaire figé pendant 2 tours',
     nameEn: 'An opponent\'s pawn frozen for 2 turns',
     nameEs: 'Ficha de un rival congelada por 2 turnos',
+    descriptionFr:
+        'Avant de lancer le dé, désignez un pion adverse : il est immobilisé pendant 2 tours.',
     kind: CardKind.deferred,
     timing: ChanceTiming.beforeRoll,
     action: CardAction.setState,
@@ -333,9 +401,11 @@ const List<ChanceCard> kDeferredCards = [
   ),
   ChanceCard(
     id: 'DEF_OPPONENT_NO_EXIT',
-    nameFr: 'Un pion adverse passe sa sortie et refait le tour (Avant)',
-    nameEn: 'An opponent\'s pawn misses its exit and laps again',
-    nameEs: 'Una ficha rival pasa su salida y da otra vuelta',
+    nameFr: 'Empêcher un pion adverse de sortir',
+    nameEn: 'Stop an opponent\'s pawn from leaving its box',
+    nameEs: 'Impide que una ficha rival salga de su caja',
+    descriptionFr:
+        'Désignez un pion adverse encore en boîte : à son tour, s\'il pouvait sortir, il ne sort pas et attend une prochaine occasion.',
     kind: CardKind.deferred,
     timing: ChanceTiming.beforeRoll,
     action: CardAction.noExit,
@@ -345,9 +415,11 @@ const List<ChanceCard> kDeferredCards = [
   // ---- Concernant les dés : 6 cartes, de 1 à 6 ----
   ChanceCard(
     id: 'DEF_DICE_1',
-    nameFr: 'Carte dé : 1 (Avant)',
+    nameFr: 'Carte dé 1',
     nameEn: 'Dice card: 1',
     nameEs: 'Carta de dado: 1',
+    descriptionFr:
+        'Jouée à la place du lancer : le résultat du dé est 1.',
     kind: CardKind.deferred,
     timing: ChanceTiming.beforeRoll,
     action: CardAction.setDice,
@@ -357,9 +429,11 @@ const List<ChanceCard> kDeferredCards = [
   ),
   ChanceCard(
     id: 'DEF_DICE_2',
-    nameFr: 'Carte dé : 2 (Avant)',
+    nameFr: 'Carte dé 2',
     nameEn: 'Dice card: 2',
     nameEs: 'Carta de dado: 2',
+    descriptionFr:
+        'Jouée à la place du lancer : le résultat du dé est 2.',
     kind: CardKind.deferred,
     timing: ChanceTiming.beforeRoll,
     action: CardAction.setDice,
@@ -369,9 +443,11 @@ const List<ChanceCard> kDeferredCards = [
   ),
   ChanceCard(
     id: 'DEF_DICE_3',
-    nameFr: 'Carte dé : 3 (Avant)',
+    nameFr: 'Carte dé 3',
     nameEn: 'Dice card: 3',
     nameEs: 'Carta de dado: 3',
+    descriptionFr:
+        'Jouée à la place du lancer : le résultat du dé est 3.',
     kind: CardKind.deferred,
     timing: ChanceTiming.beforeRoll,
     action: CardAction.setDice,
@@ -381,9 +457,11 @@ const List<ChanceCard> kDeferredCards = [
   ),
   ChanceCard(
     id: 'DEF_DICE_4',
-    nameFr: 'Carte dé : 4 (Avant)',
+    nameFr: 'Carte dé 4',
     nameEn: 'Dice card: 4',
     nameEs: 'Carta de dado: 4',
+    descriptionFr:
+        'Jouée à la place du lancer : le résultat du dé est 4.',
     kind: CardKind.deferred,
     timing: ChanceTiming.beforeRoll,
     action: CardAction.setDice,
@@ -393,9 +471,11 @@ const List<ChanceCard> kDeferredCards = [
   ),
   ChanceCard(
     id: 'DEF_DICE_5',
-    nameFr: 'Carte dé : 5 (Avant)',
+    nameFr: 'Carte dé 5',
     nameEn: 'Dice card: 5',
     nameEs: 'Carta de dado: 5',
+    descriptionFr:
+        'Jouée à la place du lancer : le résultat du dé est 5.',
     kind: CardKind.deferred,
     timing: ChanceTiming.beforeRoll,
     action: CardAction.setDice,
@@ -405,9 +485,11 @@ const List<ChanceCard> kDeferredCards = [
   ),
   ChanceCard(
     id: 'DEF_DICE_6',
-    nameFr: 'Carte dé : 6 (Avant)',
+    nameFr: 'Carte dé 6',
     nameEn: 'Dice card: 6',
     nameEs: 'Carta de dado: 6',
+    descriptionFr:
+        'Jouée à la place du lancer : le résultat du dé est 6.',
     kind: CardKind.deferred,
     timing: ChanceTiming.beforeRoll,
     action: CardAction.setDice,
@@ -418,9 +500,11 @@ const List<ChanceCard> kDeferredCards = [
   // ---- Concernant les captures ----
   ChanceCard(
     id: 'DEF_CAPTURE_TO_MY_BOX',
-    nameFr: 'Le pion capturé va dans VOTRE boîte départ (Après)',
-    nameEn: 'The captured pawn goes into YOUR start box',
-    nameEs: 'La ficha capturada va a TU caja de salida',
+    nameFr: 'Règle spéciale après capture',
+    nameEn: 'Special rule after a capture',
+    nameEs: 'Regla especial tras una captura',
+    descriptionFr:
+        'Après une capture : le pion capturé retourne dans la boîte de son propriétaire et devra obtenir un 6 pour ressortir.',
     kind: CardKind.deferred,
     timing: ChanceTiming.afterRoll,
     action: CardAction.captureToBox,
@@ -430,9 +514,11 @@ const List<ChanceCard> kDeferredCards = [
   // ---- Concernant les joueurs ----
   ChanceCard(
     id: 'DEF_SKIP_RIGHT',
-    nameFr: 'Le joueur à votre droite ne joue pas pendant 2 tours (Avant)',
+    nameFr: 'Le joueur à votre droite ne joue pas pendant 2 tours',
     nameEn: 'The player on your right misses 2 turns',
     nameEs: 'El jugador a tu derecha pierde 2 turnos',
+    descriptionFr:
+        'Avant de lancer le dé : le joueur situé à votre droite ne joue pas pendant 2 tours, son tour est passé automatiquement.',
     kind: CardKind.deferred,
     timing: ChanceTiming.beforeRoll,
     action: CardAction.skipTurn,
@@ -443,9 +529,11 @@ const List<ChanceCard> kDeferredCards = [
   ),
   ChanceCard(
     id: 'DEF_SKIP_CHOSEN',
-    nameFr: 'Le joueur de votre choix ne joue pas pendant 2 tours (Avant)',
+    nameFr: 'Le joueur de votre choix ne joue pas pendant 2 tours',
     nameEn: 'A player of your choice misses 2 turns',
     nameEs: 'El jugador que elijas pierde 2 turnos',
+    descriptionFr:
+        'Avant de lancer le dé : l\'adversaire de votre choix ne joue pas pendant 2 tours, son tour est passé automatiquement.',
     kind: CardKind.deferred,
     timing: ChanceTiming.beforeRoll,
     action: CardAction.skipTurn,
@@ -478,20 +566,41 @@ class SpecialCells {
     PlayerColor.yellow: PlayerColor.red,
   };
 
-  /// L'UNIQUE case Vortex d'une couleur : juste devant sa case de départ.
-  static int vortexCell(PlayerColor c) => (startOf[c]! + 1) % ringSize;
+  /// Pas auquel commence la dernière ligne droite d'une couleur. Le
+  /// parcours file alors tout droit sur 6 cases (pas 44 à 49), tourne au
+  /// pas 50, puis entre dans le couloir final. Ce n'est pas un réglage :
+  /// c'est le dessin du plateau.
+  static const int lastStraightStep = 44;
 
-  /// Cible de la BONNE forme : la case de départ de la diagonale.
-  static int goodVortexTarget(PlayerColor c) => startOf[diagonalOf[c]!]!;
+  /// La BONNE case d'une couleur : juste devant sa case de départ, donc
+  /// la première case après sa boîte départ.
+  static int goodVortexCell(PlayerColor c) => (startOf[c]! + 1) % ringSize;
 
-  /// Cible de la MAUVAISE forme : la case d'anneau de la dernière ligne
-  /// droite de la diagonale, celle d'où elle entre dans son couloir (son
-  /// 50e pas).
+  /// Cible de la bonne : la première case de l'adversaire en diagonale,
+  /// celle qui suit SA case de départ — donc sa propre bonne case.
+  static int goodVortexTarget(PlayerColor c) =>
+      goodVortexCell(diagonalOf[c]!);
+
+  /// La MAUVAISE case d'une couleur : la première case de sa dernière
+  /// ligne droite (44e pas).
+  static int badVortexCell(PlayerColor c) =>
+      (startOf[c]! + lastStraightStep) % ringSize;
+
+  /// Cible de la mauvaise : la première case de la dernière ligne droite
+  /// de l'adversaire en diagonale — donc son propre trou noir.
   static int badVortexTarget(PlayerColor c) =>
-      (startOf[diagonalOf[c]!]! + 50) % ringSize;
+      badVortexCell(diagonalOf[c]!);
+
+  /// Les deux cases spéciales d'une couleur, dans l'ordre du parcours.
+  static List<int> vortexCellsOf(PlayerColor c) =>
+      [goodVortexCell(c), badVortexCell(c)];
 
   /// Les 4 cases Chance : 2 cases avant chaque étoile (départ + 6).
   static const Set<int> chanceCells = {6, 19, 32, 45};
+
+  /// La case Chance du bras de [c] : celle qui se trouve 6 pas après son
+  /// départ. Il y en a une par couleur, et c'est elle qui porte sa teinte.
+  static int chanceCellOf(PlayerColor c) => (startOf[c]! + 6) % ringSize;
 }
 
 /// Un modificateur de dé actif pour une couleur.
@@ -505,7 +614,12 @@ class _DiceMod {
 class _PawnMod {
   final CardPawnState state;
   final int sinceDone;
-  const _PawnMod(this.state, this.sinceDone);
+
+  /// Tours à laisser passer avant que l'effet ne morde. Zéro pour un
+  /// effet qui prend tout de suite ; un quand le pion vient justement de
+  /// jouer et que ce tour-ci est déjà consommé.
+  final int startsIn;
+  const _PawnMod(this.state, this.sinceDone, this.startsIn);
 }
 
 /// Un talon de cartes à jouer : mélangé une fois, puis RETOURNÉ (et non
@@ -519,8 +633,15 @@ class _Deck {
 
   ChanceCard draw(math.Random rng) {
     if (_cards.isEmpty) {
-      // STATUS : une carte INACTIVE est sautée, comme si elle n'existait pas.
-      _cards.addAll(_source.where((c) => c.active));
+      // STATUS : une carte INACTIVE est sautée, comme si elle n'existait
+      // pas. Et chaque carte entre dans le paquet en autant d'exemplaires
+      // que le dit sa `quantity` (§8).
+      for (final c in _source) {
+        if (!c.active) continue;
+        for (int i = 0; i < c.quantity; i++) {
+          _cards.add(c);
+        }
+      }
       _cards.shuffle(rng);
     }
     if (_next >= _cards.length) {
@@ -552,7 +673,10 @@ class LudoUpgrades {
   /// Remplaçable par les tests pour un tirage reproductible.
   math.Random rng = math.Random();
 
-  /// Nombre maximum de cartes différées tenues en main (spec : 4).
+  /// Nombre maximum de cartes différées tenues en main — §3 : « il peut
+  /// avoir au maximum 4 cartes différées disponibles », et §9 interdit
+  /// « plus de 4 cartes différées dans la main d'un joueur ». Une carte
+  /// tirée alors que la main est pleine est perdue — voir [addToHand].
   static const int handLimit = 4;
 
   // --- Talons -------------------------------------------------------------
@@ -586,8 +710,8 @@ class LudoUpgrades {
   bool handIsFull(PlayerColor c) => _hands[c]!.length >= handLimit;
 
   /// Range [card] dans la main de [c]. Renvoie `false` si la main est
-  /// pleine : il n'y a de la place que pour 4 cartes différées, la carte
-  /// tirée en trop est perdue.
+  /// pleine : il n'y a de la place que pour [handLimit] cartes différées,
+  /// la carte tirée en trop est perdue.
   bool addToHand(PlayerColor c, ChanceCard card) {
     if (handIsFull(c)) return false;
     _hands[c]!.add(card);
@@ -616,9 +740,9 @@ class LudoUpgrades {
     _done[c] = _done[c]! + 1;
     // Le tour est fini : la couleur pourra rejouer une carte différée.
     _playedThisTurn.remove(c);
-    // Une carte « le prochain capturé va dans ma boîte » non utilisée
-    // pendant le tour où elle a été jouée est perdue.
-    _captureToBox.remove(c);
+    // Une carte « règle après capture » non utilisée pendant le tour où
+    // elle a été jouée est perdue.
+    _captureRule.remove(c);
   }
 
   int doneTurns(PlayerColor c) => _done[c]!;
@@ -629,15 +753,20 @@ class LudoUpgrades {
 
   /// Pose [state] sur [p]. REMPLACE l'état précédent : retirer une seconde
   /// carte « invulnérable » repart pour 2 tours, sans cumul.
-  void setPawnState(Pawn p, CardPawnState state) =>
-      _pawnMods[p] = _PawnMod(state, _done[p.color]!);
+  ///
+  /// [startsIn] décale le début de la fenêtre. Il vaut 1 dans un seul
+  /// cas : le GEL posé par une carte immédiate. Le pion vient alors de
+  /// jouer pour atterrir sur la case Chance ; le figer séance tenante ne
+  /// lui coûterait qu'UN tour jouable au lieu des deux annoncés.
+  void setPawnState(Pawn p, CardPawnState state, {int startsIn = 0}) =>
+      _pawnMods[p] = _PawnMod(state, _done[p.color]!, startsIn);
 
   bool _hasState(Pawn p, CardPawnState s) {
     final mod = _pawnMods[p];
     if (mod == null || mod.state != s) return false;
-    // Effet IMMÉDIAT, sur 2 tours du propriétaire : celui du tirage
-    // (d = 0) et le suivant (d = 1). Voir l'en-tête du fichier.
-    return _done[p.color]! - mod.sinceDone < 2;
+    // Deux tours du propriétaire, à compter du début de la fenêtre.
+    final d = _done[p.color]! - mod.sinceDone;
+    return d >= mod.startsIn && d < mod.startsIn + 2;
   }
 
   bool isInvulnerable(Pawn p) => _hasState(p, CardPawnState.invulnerable);
@@ -661,45 +790,49 @@ class LudoUpgrades {
     return (d >= 1 && d <= 2) ? mod.mode : null;
   }
 
-  // --- « Refaire le tour » : le pion désigné passe sa sortie --------------
+  // --- Carte 15 : « empêcher un pion adverse de SORTIR de sa boîte » ------
 
-  final Set<Pawn> _mustLap = {};
+  final Set<Pawn> _noExit = {};
 
-  void markMustLap(Pawn p) => _mustLap.add(p);
+  void markNoExit(Pawn p) => _noExit.add(p);
 
-  /// Vrai tant que [p] n'a pas encore raté sa sortie.
-  bool mustLap(Pawn p) => _mustLap.contains(p);
+  /// Vrai tant que [p] n'a pas laissé passer son occasion de sortir.
+  bool cannotExit(Pawn p) => _noExit.contains(p);
 
-  /// Le pion vient de passer devant sa sortie : la marque est consommée,
-  /// il pourra rentrer au tour suivant.
-  void clearLap(Pawn p) => _mustLap.remove(p);
+  /// L'occasion s'est présentée et le pion l'a laissée passer : la marque
+  /// est consommée. « Il doit rester dans sa boîte et attendre une
+  /// prochaine possibilité de sortie » — celle-là, il l'aura.
+  void clearNoExit(Pawn p) => _noExit.remove(p);
 
-  // --- « Le pion capturé va dans VOTRE boîte départ » ---------------------
+  /// Consomme la marque de tous les pions de [c] : leur occasion de sortir
+  /// vient de passer. Renvoie ceux qui étaient marqués, pour l'annonce.
+  List<Pawn> consumeNoExitFor(PlayerColor c) {
+    final missed = _noExit.where((p) => p.color == c).toList();
+    _noExit.removeAll(missed);
+    return missed;
+  }
 
-  final Set<PlayerColor> _captureToBox = {};
+  // --- Carte 22 : la règle spéciale après capture -------------------------
+  //
+  // Telle que la spec la décrit désormais, la carte ne déplace PAS la
+  // victime chez le captureur : « le pion capturé retourne dans la boîte
+  // de départ de son propriétaire » et « doit obtenir un 6 » pour
+  // ressortir. C'est déjà le sort d'un pion capturé au Ludo ; la carte se
+  // contente donc de l'appliquer explicitement à la capture qui suit.
+  //
+  // Le mécanisme de PRISONNIER retenu dans la boîte de l'adversaire, qui
+  // vivait ici, a été RETIRÉ : il ne figure plus dans la spec.
 
-  /// Arme la carte pour [c] : sa prochaine capture de ce tour enverra la
-  /// victime dans SA boîte départ.
-  void armCaptureToBox(PlayerColor c) => _captureToBox.add(c);
+  final Set<PlayerColor> _captureRule = {};
 
-  bool captureToBoxArmed(PlayerColor c) => _captureToBox.contains(c);
+  /// Arme la carte pour [c] : sa prochaine capture de ce tour appliquera
+  /// explicitement la règle.
+  void armCaptureRule(PlayerColor c) => _captureRule.add(c);
+
+  bool captureRuleArmed(PlayerColor c) => _captureRule.contains(c);
 
   /// Consomme l'armement s'il existe. Renvoie `true` s'il a servi.
-  bool consumeCaptureToBox(PlayerColor c) => _captureToBox.remove(c);
-
-  /// Pions prisonniers : rangés dans la boîte d'une AUTRE couleur, en
-  /// attente d'un 6 pour rentrer chez eux.
-  final Map<Pawn, PlayerColor> _prisoners = {};
-
-  void imprison(Pawn p, PlayerColor captor) => _prisoners[p] = captor;
-
-  /// La couleur dont la boîte retient [p], ou `null` s'il est libre.
-  PlayerColor? captorOf(Pawn p) => _prisoners[p];
-
-  bool isPrisoner(Pawn p) => _prisoners.containsKey(p);
-
-  /// Le 6 est tombé : le pion regagne SA propre boîte départ.
-  void freePrisoner(Pawn p) => _prisoners.remove(p);
+  bool consumeCaptureRule(PlayerColor c) => _captureRule.remove(c);
 
   // --- « Ne joue pas pendant 2 tours » ------------------------------------
 
@@ -721,6 +854,28 @@ class LudoUpgrades {
       _skips[c] = left - 1;
     }
     return true;
+  }
+
+  // --- La dernière carte TIRÉE, pour que l'interface l'ouvre --------------
+
+  ChanceCard? _lastDrawn;
+  PlayerColor? _lastDrawnBy;
+
+  /// Retenue au tirage : l'interface la retire pour la montrer face
+  /// visible, puis elle est oubliée.
+  void noteDrawn(ChanceCard card, PlayerColor by) {
+    _lastDrawn = card;
+    _lastDrawnBy = by;
+  }
+
+  /// Rend la carte tirée depuis le dernier appel, et l'oublie. `null` si
+  /// aucune carte n'a été tirée entre-temps.
+  ({ChanceCard card, PlayerColor by})? takeLastDrawn() {
+    final c = _lastDrawn;
+    final by = _lastDrawnBy;
+    _lastDrawn = null;
+    _lastDrawnBy = null;
+    return (c == null || by == null) ? null : (card: c, by: by);
   }
 
   // --- Annonces pour l'interface ------------------------------------------
@@ -752,9 +907,10 @@ class LudoUpgrades {
     _playedThisTurn.clear();
     _pawnMods.clear();
     _diceMods.clear();
-    _mustLap.clear();
-    _captureToBox.clear();
-    _prisoners.clear();
+    _noExit.clear();
+    _captureRule.clear();
+    _lastDrawn = null;
+    _lastDrawnBy = null;
     _skips.clear();
     _notices.clear();
     for (final c in PlayerColor.values) {

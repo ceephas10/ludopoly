@@ -27,9 +27,11 @@ class BoardPainter extends CustomPainter {
   static const Color _gridLine = Color(0xFFAAAAAA);
   static const Color _bg     = Color(0xFF1A2541);
 
-  /// Couleur NEUTRE des cases Chance — la spec demande une couleur qui
-  /// n'appartient à aucun joueur : un violet absent de la palette.
-  static const Color _chance = Color(0xFF8E44AD);
+  /// Les deux ors de la case Chance : l'un pour les aplats, l'autre — plus
+  /// sombre — pour les traits et le point d'interrogation, afin qu'ils
+  /// tiennent sur la case blanche.
+  static const Color _goldBright = Color(0xFFE8B923);
+  static const Color _goldDeep   = Color(0xFF7A5B00);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -126,39 +128,233 @@ class BoardPainter extends CustomPainter {
     }
 
     // 9) Améliorations LudoPoly (uniquement quand activées).
+    //
+    // Aucune de ces cases n'a de fond : la case du plateau reste telle
+    // qu'elle est, et c'est le DESSIN qui porte la couleur. Les ailes et
+    // la tête de mort prennent celle de leur joueur ; la boîte cadeau
+    // garde une teinte unique — l'or — parce que la case Chance
+    // n'appartient à personne.
     if (showChance) {
-      // Les 4 cases Chance, neutres : fond violet + « ? » blanc.
       for (final idx in SpecialCells.chanceCells) {
         final c = ring[idx].pos;
-        final r = Rect.fromCenter(
-            center: Offset(c.dx * cell, c.dy * cell),
-            width: cell * 0.92,
-            height: cell * 0.92);
-        canvas.drawRRect(
-            RRect.fromRectAndRadius(r, Radius.circular(cell * 0.14)),
-            Paint()..color = _chance);
-        _drawGlyph(canvas, '?', c.dx * cell, c.dy * cell, cell * 0.62,
-            Colors.white);
+        _drawGiftBox(canvas, c.dx * cell, c.dy * cell, cell);
       }
     }
     if (showVortex) {
-      // UNE case par couleur, juste devant son départ, peinte à SA couleur
-      // — « elle est à votre couleur et vous seul pouvez l'utiliser ». Elle
-      // porte les DEUX formes côte à côte : la spirale claire (la bonne) et
-      // la spirale sombre (le trou noir).
       for (final color in SpecialCells.startOf.keys) {
-        final c = ring[SpecialCells.vortexCell(color)].pos;
-        final cx = c.dx * cell;
-        final cy = c.dy * cell;
-        final r = Rect.fromCenter(
-            center: Offset(cx, cy), width: cell * 0.96, height: cell * 0.96);
-        canvas.drawRect(r, fill..color = _playerColors[color]!);
-        final off = cell * 0.21;
-        _drawSpiral(canvas, cx - off, cy, cell * 0.55, Colors.white);
-        _drawSpiral(canvas, cx + off, cy, cell * 0.55,
-            const Color(0xE6202020));
+        final tint = _playerColors[color]!;
+        final g = ring[SpecialCells.goodVortexCell(color)].pos;
+        _drawWings(canvas, g.dx * cell, g.dy * cell, cell, tint);
+        final b = ring[SpecialCells.badVortexCell(color)].pos;
+        _drawTopHatSkull(canvas, b.dx * cell, b.dy * cell, cell, tint);
       }
     }
+  }
+
+  /// Une paire d'ailes déployées, gravée sur une case.
+  ///
+  /// Deux ailes en miroir, pointes vers le bas, épaules jointes en haut —
+  /// et quelques nervures pour suggérer les plumes. À la taille d'une case
+  /// (30 à 50 px) c'est la SILHOUETTE qui doit se lire : inutile d'y
+  /// graver chaque plume, elle deviendrait une tache. Elles portent la
+  /// COULEUR de leur joueur, cernées de sombre pour rester lisibles sur la
+  /// case nue.
+  void _drawWings(
+      Canvas canvas, double cx, double cy, double cell, Color color) {
+    final s = cell * 0.40;
+
+    final fill = Paint()
+      ..style = PaintingStyle.fill
+      ..color = color;
+    final edge = Paint()
+      ..style = PaintingStyle.stroke
+      ..color = const Color(0xE6101010)
+      ..strokeWidth = math.max(0.7, cell * 0.022)
+      ..strokeJoin = StrokeJoin.round;
+    final vein = Paint()
+      ..style = PaintingStyle.stroke
+      ..color = const Color(0x99101010)
+      ..strokeWidth = math.max(0.5, cell * 0.014)
+      ..strokeCap = StrokeCap.round;
+
+    // Le contour d'UNE aile, celle de droite, dans un repère centré :
+    // l'épaule s'ouvre en haut près du centre, le bord extérieur descend
+    // en trois festons — les pointes de plumes — jusqu'à la longue rémige
+    // du bas, puis le bord intérieur remonte vers l'épaule.
+    Path wing() => Path()
+      ..moveTo(0.09 * s, -0.86 * s)
+      ..cubicTo(
+          0.58 * s, -1.02 * s, 1.06 * s, -0.60 * s, 0.97 * s, -0.20 * s)
+      ..quadraticBezierTo(0.84 * s, -0.08 * s, 0.88 * s, 0.08 * s)
+      ..quadraticBezierTo(0.72 * s, 0.14 * s, 0.72 * s, 0.32 * s)
+      ..quadraticBezierTo(0.56 * s, 0.36 * s, 0.52 * s, 0.56 * s)
+      ..quadraticBezierTo(0.41 * s, 0.62 * s, 0.29 * s, 1.04 * s)
+      ..cubicTo(
+          0.24 * s, 0.52 * s, 0.17 * s, 0.10 * s, 0.12 * s, -0.28 * s)
+      ..close();
+
+    void veins() {
+      for (int i = 0; i < 4; i++) {
+        final t = (i + 1) / 5.0;
+        canvas.drawLine(
+            Offset((0.14 + 0.04 * t) * s, (-0.55 + 1.30 * t) * s),
+            Offset((0.80 - 0.48 * t) * s, (-0.32 + 1.20 * t) * s),
+            vein);
+      }
+    }
+
+    for (final mirror in [1.0, -1.0]) {
+      canvas.save();
+      canvas.translate(cx, cy);
+      canvas.scale(mirror, 1.0);
+      final w = wing();
+      canvas.drawPath(w, fill);
+      canvas.drawPath(w, edge);
+      veins();
+      canvas.restore();
+    }
+  }
+
+  /// La TÊTE DE MORT AU HAUT-DE-FORME du trou noir.
+  ///
+  /// Elle porte la COULEUR de son joueur : le crâne dans sa teinte, le
+  /// chapeau dans la même assombrie. À l'échelle d'une case, ce qui la
+  /// fait reconnaître tient à quatre choses : la silhouette du chapeau,
+  /// les deux orbites creuses, le nez triangulaire et la rangée de dents.
+  /// Le reste serait du bruit.
+  void _drawTopHatSkull(
+      Canvas canvas, double cx, double cy, double cell, Color color) {
+    final ink = Paint()
+      ..style = PaintingStyle.fill
+      ..color = Color.lerp(color, const Color(0xFF000000), 0.62)!;
+    final bone = Paint()
+      ..style = PaintingStyle.fill
+      ..color = color;
+    final line = Paint()
+      ..style = PaintingStyle.stroke
+      ..color = Color.lerp(color, const Color(0xFF000000), 0.62)!
+      ..strokeWidth = math.max(0.5, cell * 0.016)
+      ..strokeCap = StrokeCap.round;
+
+    canvas.save();
+    canvas.translate(cx, cy);
+    final u = cell;
+
+    // --- le haut-de-forme -------------------------------------------------
+    // La coiffe, puis le ruban, puis le bord large.
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromLTWH(-0.20 * u, -0.44 * u, 0.40 * u, 0.26 * u),
+            Radius.circular(u * 0.03)),
+        ink);
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromLTWH(-0.21 * u, -0.24 * u, 0.42 * u, 0.06 * u),
+            Radius.circular(u * 0.02)),
+        bone);
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromLTWH(-0.34 * u, -0.20 * u, 0.68 * u, 0.07 * u),
+            Radius.circular(u * 0.035)),
+        ink);
+
+    // --- le crâne ---------------------------------------------------------
+    final skull = Path()
+      ..moveTo(-0.21 * u, -0.02 * u)
+      ..cubicTo(-0.23 * u, -0.16 * u, 0.23 * u, -0.16 * u, 0.21 * u,
+          -0.02 * u)
+      ..cubicTo(0.20 * u, 0.10 * u, 0.13 * u, 0.14 * u, 0.11 * u, 0.19 * u)
+      ..lineTo(-0.11 * u, 0.19 * u)
+      ..cubicTo(-0.13 * u, 0.14 * u, -0.20 * u, 0.10 * u, -0.21 * u,
+          -0.02 * u)
+      ..close();
+    canvas.drawPath(skull, bone);
+    canvas.drawPath(skull, line);
+
+    // --- orbites, nez, dents ---------------------------------------------
+    for (final sx in [-1.0, 1.0]) {
+      canvas.drawOval(
+          Rect.fromCenter(
+              center: Offset(sx * 0.095 * u, -0.035 * u),
+              width: 0.115 * u,
+              height: 0.105 * u),
+          ink);
+    }
+    final nose = Path()
+      ..moveTo(0, 0.015 * u)
+      ..lineTo(0.035 * u, 0.085 * u)
+      ..lineTo(-0.035 * u, 0.085 * u)
+      ..close();
+    canvas.drawPath(nose, ink);
+
+    // La mâchoire : un bandeau clair barré de traits verticaux.
+    final jaw = Rect.fromLTWH(-0.105 * u, 0.115 * u, 0.21 * u, 0.075 * u);
+    canvas.drawRect(jaw, bone);
+    canvas.drawRect(jaw, line);
+    for (int i = 1; i < 5; i++) {
+      final x = jaw.left + jaw.width * i / 5;
+      canvas.drawLine(
+          Offset(x, jaw.top), Offset(x, jaw.bottom), line);
+    }
+    canvas.restore();
+  }
+
+  /// La BOÎTE CADEAU MAGIQUE de la case Chance : le couvercle s'ouvre, une
+  /// lueur en sort, et le point d'interrogation flotte au-dessus.
+  ///
+  /// Elle garde une teinte UNIQUE — l'or — quelle que soit la couleur du
+  /// bras où elle se trouve : la case Chance n'appartient à personne.
+  void _drawGiftBox(Canvas canvas, double cx, double cy, double cell) {
+    final u = cell;
+    final ink = Paint()
+      ..style = PaintingStyle.fill
+      ..color = _goldDeep;
+    final gold = Paint()
+      ..style = PaintingStyle.fill
+      ..color = _goldBright;
+    final line = Paint()
+      ..style = PaintingStyle.stroke
+      ..color = _goldDeep
+      ..strokeWidth = math.max(0.5, cell * 0.018)
+      ..strokeJoin = StrokeJoin.round;
+
+    canvas.save();
+    canvas.translate(cx, cy);
+
+    // La lueur qui s'échappe : trois halos de plus en plus larges.
+    for (int i = 3; i >= 1; i--) {
+      canvas.drawCircle(
+          Offset(0, -0.04 * u),
+          u * 0.10 * i,
+          Paint()..color = const Color(0xFFFFE9A8).withValues(alpha: 0.11));
+    }
+
+    // Le corps de la boîte.
+    final body = RRect.fromRectAndRadius(
+        Rect.fromLTWH(-0.26 * u, 0.02 * u, 0.52 * u, 0.32 * u),
+        Radius.circular(u * 0.03));
+    canvas.drawRRect(body, gold);
+    canvas.drawRRect(body, line);
+    // Le ruban vertical.
+    canvas.drawRect(
+        Rect.fromLTWH(-0.045 * u, 0.02 * u, 0.09 * u, 0.32 * u), ink);
+
+    // Les deux battants du couvercle, ouverts vers l'extérieur.
+    for (final sx in [-1.0, 1.0]) {
+      final flap = Path()
+        ..moveTo(sx * 0.04 * u, 0.02 * u)
+        ..lineTo(sx * 0.30 * u, -0.10 * u)
+        ..lineTo(sx * 0.40 * u, -0.02 * u)
+        ..lineTo(sx * 0.10 * u, 0.10 * u)
+        ..close();
+      canvas.drawPath(flap, gold);
+      canvas.drawPath(flap, line);
+    }
+
+    canvas.restore();
+
+    // Le point d'interrogation, au-dessus de l'ouverture.
+    _drawGlyph(canvas, '?', cx, cy - u * 0.20, u * 0.40, _goldDeep);
   }
 
   /// Couleur de plateau de chaque joueur, pour peindre sa case Vortex.
@@ -168,33 +364,6 @@ class BoardPainter extends CustomPainter {
     PlayerColor.blue: _blue,
     PlayerColor.yellow: _yellow,
   };
-
-  /// Petite spirale d'Archimède (statique — le rendu animé, s'il arrive un
-  /// jour, sera un asset du Studio Animations).
-  void _drawSpiral(Canvas canvas, double cx, double cy, double cell,
-      Color color) {
-    final p = Path();
-    const turns = 2.2;
-    final maxR = cell * 0.34;
-    for (double t = 0; t <= 1.0; t += 0.02) {
-      final angle = t * turns * 2 * math.pi;
-      final r = maxR * t;
-      final x = cx + r * math.cos(angle);
-      final y = cy + r * math.sin(angle);
-      if (t == 0) {
-        p.moveTo(x, y);
-      } else {
-        p.lineTo(x, y);
-      }
-    }
-    canvas.drawPath(
-        p,
-        Paint()
-          ..color = color
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.round
-          ..strokeWidth = math.max(1.5, cell * 0.10));
-  }
 
   /// Un caractère centré sur une case (statique).
   void _drawGlyph(Canvas canvas, String glyph, double cx, double cy,

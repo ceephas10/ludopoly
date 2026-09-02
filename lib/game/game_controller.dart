@@ -105,6 +105,14 @@ class GameSnapshot {
   });
 }
 
+/// Le choix d'une IA : quelle carte différée jouer, et sur quelle cible.
+class AiCardPlay {
+  final ChanceCard card;
+  final Pawn? targetPawn;
+  final PlayerColor? targetPlayer;
+  const AiCardPlay(this.card, {this.targetPawn, this.targetPlayer});
+}
+
 class GameController {
   /// Turn order. Mutable so the host can swap players in/out at runtime
   /// (e.g. when the user picks 1/2/3 players in the command center).
@@ -384,14 +392,13 @@ class GameController {
     switch (p.location) {
       case PawnLocation.base:
         if (v != 6) return false;
+        // Branchement Améliorations, carte 15 : ce pion est désigné, il ne
+        // sort pas. Il reste en boîte et attendra une prochaine occasion.
+        if (upgrades.cannotExit(p)) return false;
         // La case départ ne doit pas déjà porter un pion de la couleur.
         return !wouldSelfStack(p, v);
       case PawnLocation.ring:
         final taken = _stepsTaken(p);
-        // Branchement Améliorations : un pion DÉSIGNÉ « refait le tour »
-        // passe devant sa sortie sans la prendre — il n'a donc plus de
-        // compte exact à respecter tant que la marque n'est pas consommée.
-        if (upgrades.mustLap(p)) return true;
         // SEULE exclusion d'un pion déjà en jeu : dépasser la maison. Le
         // compte doit être exact pour rentrer, c'est une règle du Ludo.
         //
@@ -483,20 +490,6 @@ class GameController {
 
     switch (p.location) {
       case PawnLocation.base:
-        // Branchement Améliorations : un pion PRISONNIER (rangé dans la
-        // boîte d'un adversaire par une carte différée) ne sort pas — son
-        // 6 le ramène d'abord dans SA propre boîte départ.
-        if (upgrades.isPrisoner(p)) {
-          upgrades.freePrisoner(p);
-          upgrades.addNotice(
-              'Le pion ${p.id + 1} de ${_fr[p.color]} regagne sa boîte '
-              'départ.');
-          lastMovedThisTurn = p;
-          // Le 6 donne un tour supplémentaire, comme toute sortie.
-          diceValue = 0;
-          phase = TurnPhase.rolling;
-          return;
-        }
         // Exit on 6 → start cell.
         p.location = PawnLocation.ring;
         p.position = _startIdx[p.color]!;
@@ -504,16 +497,6 @@ class GameController {
       case PawnLocation.ring:
         final taken = _stepsTaken(p);
         final newSteps = taken + diceValue;
-        // Branchement Améliorations : le pion désigné passe sa sortie et
-        // repart pour un tour complet. La marque est consommée ici.
-        if (upgrades.mustLap(p) && newSteps > lastRingStep) {
-          p.position = (_startIdx[p.color]! + newSteps) % ringSize;
-          upgrades.clearLap(p);
-          upgrades.addNotice(
-              'Le pion ${p.id + 1} de ${_fr[p.color]} passe devant sa '
-              'sortie : il doit refaire le tour.');
-          break;
-        }
         if (newSteps <= lastRingStep) {
           p.position = (_startIdx[p.color]! + newSteps) % ringSize;
         } else if (newSteps == totalStepsToHome) {
@@ -557,14 +540,13 @@ class GameController {
           if (other.location == PawnLocation.ring &&
               other.position == p.position) {
             _returnPawnToBase(other);
-            // Branchement Améliorations : carte « le pion capturé va dans
-            // VOTRE boîte » armée juste avant ce coup.
-            if (upgrades.consumeCaptureToBox(p.color)) {
-              upgrades.imprison(other, p.color);
+            // Branchement Améliorations, carte 22 : la règle après capture
+            // était armée. La victime rentre dans SA propre boîte et devra
+            // faire 6 pour ressortir — on le dit explicitement.
+            if (upgrades.consumeCaptureRule(p.color)) {
               upgrades.addNotice(
-                  'Le pion ${other.id + 1} de ${_fr[other.color]} est '
-                  'retenu dans la boîte de ${_fr[p.color]} — il lui faudra '
-                  'un 6 pour rentrer chez lui.');
+                  'Le pion ${other.id + 1} de ${_fr[other.color]} regagne '
+                  'sa boîte de départ : il lui faudra un 6 pour ressortir.');
             }
             captured = true;
           }
@@ -1069,6 +1051,17 @@ class GameController {
   void _nextPlayer() {
     // Branchement Améliorations : la couleur courante REND la main — son
     // compteur de tours terminés avance (durées des cartes « 2 tours »).
+    //
+    // Carte 15 : si elle a sorti un 6 pendant ce tour, l'occasion de
+    // sortir s'est présentée et le pion désigné l'a laissée passer. La
+    // marque tombe ici — « il attendra une prochaine possibilité ».
+    if (consecutiveSixes > 0) {
+      for (final missed in upgrades.consumeNoExitFor(currentColor)) {
+        upgrades.addNotice(
+            'Le pion ${missed.id + 1} de ${_fr[missed.color]} n\'a pas pu '
+            'sortir : il attendra la prochaine occasion.');
+      }
+    }
     upgrades.onTurnCompleted(currentColor);
     diceValue = 0;
     consecutiveSixes = 0;
@@ -1143,24 +1136,32 @@ class GameController {
   /// Vortex — appliqué à l'atterrissage d'un coup de dé, jamais à un
   /// déplacement de carte.
   ///
-  /// UNE SEULE case par couleur, juste devant sa case de départ, et elle
-  /// n'agit QUE pour sa couleur. Elle porte deux formes : le pion part
-  /// soit sur la case de départ de la diagonale (la bonne), soit sur la
-  /// case de sa dernière ligne droite (la mauvaise).
+  /// DEUX cases par couleur, chacune avec sa règle, et elles n'agissent
+  /// QUE pour leur couleur :
+  ///   * la BONNE, juste devant la case de départ → le pion file sur la
+  ///     première case de l'adversaire en diagonale (26 pas gagnés) ;
+  ///   * la MAUVAISE, première case de la dernière ligne droite → le pion
+  ///     revient sur celle de l'adversaire en diagonale (26 pas perdus).
+  /// Chacune mène à son homologue d'en face, qui appartient à l'autre
+  /// couleur : aucun enchaînement possible.
+  /// L'INVULNÉRABILITÉ ne protège pas d'un vortex : elle empêche d'être
+  /// CAPTURÉ par un adversaire, pas d'être aspiré par sa propre case. La
+  /// règle vaut pour les 4 couleurs et pour tous les pions, sans exception.
   void _applyVortexOnLanding(Pawn p) {
     if (!upgrades.vortexEnabled) return;
     if (p.location != PawnLocation.ring) return;
-    if (p.position != SpecialCells.vortexCell(p.color)) return;
     final diag = _fr[SpecialCells.diagonalOf[p.color]!];
-    if (upgrades.rng.nextBool()) {
+    if (p.position == SpecialCells.goodVortexCell(p.color)) {
       p.position = SpecialCells.goodVortexTarget(p.color);
       upgrades.addNotice(
-          'Vortex ${_fr[p.color]} : le pion ${p.id + 1} file sur la case '
-          'de départ de $diag !');
-    } else {
+          'Vortex ${_fr[p.color]} : le pion ${p.id + 1} file sur la '
+          'première case de $diag !');
+      return;
+    }
+    if (p.position == SpecialCells.badVortexCell(p.color)) {
       p.position = SpecialCells.badVortexTarget(p.color);
       upgrades.addNotice(
-          'Trou noir ${_fr[p.color]} : le pion ${p.id + 1} est envoyé sur '
+          'Trou noir ${_fr[p.color]} : le pion ${p.id + 1} est renvoyé sur '
           'la dernière ligne droite de $diag…');
     }
   }
@@ -1174,12 +1175,15 @@ class GameController {
     if (!SpecialCells.chanceCells.contains(p.position)) return;
     // Une chance sur deux : carte immédiate ou carte différée (Annexe B).
     final card = upgrades.drawOnChance(p.color);
+    // La carte est retenue pour que l'interface l'OUVRE : le joueur doit
+    // voir sa vraie face et l'instruction à suivre.
+    upgrades.noteDrawn(card, p.color);
     if (card.kind == CardKind.deferred) {
       if (upgrades.addToHand(p.color, card)) {
         upgrades.addNotice('Carte différée pour ${_fr[p.color]} : '
             '« ${card.nameFr} » — à jouer à votre tour.');
       } else {
-        // Il n'y a de la place que pour 4 cartes différées.
+        // La main est pleine : il n'y a que 3 emplacements.
         upgrades.addNotice('Carte différée pour ${_fr[p.color]} : '
             '« ${card.nameFr} » — main pleine, la carte est perdue.');
       }
@@ -1207,10 +1211,12 @@ class GameController {
     if (currentColor != c) return false;
     if (upgrades.hasPlayedThisTurn(c)) return false;
     if (!upgrades.handOf(c).contains(card)) return false;
-    return switch (card.timing) {
-      ChanceTiming.beforeRoll => phase == TurnPhase.rolling,
-      ChanceTiming.afterRoll => phase == TurnPhase.moving,
-      ChanceTiming.onChance => false, // ne se joue pas à la main
+    // Le moteur EMPÊCHE de jouer une carte au mauvais moment : « une carte
+    // AVANT ne peut pas être utilisée APRÈS », et réciproquement.
+    return switch (phase) {
+      TurnPhase.rolling => card.playableBeforeRoll,
+      TurnPhase.moving => card.playableAfterRoll,
+      TurnPhase.gameOver => false,
     };
   }
 
@@ -1228,10 +1234,11 @@ class GameController {
           for (final p in entry.value)
             // Un pion arrivé au centre ne subit plus rien.
             if (p.location != PawnLocation.home)
-              // « Refaire le tour » ne veut rien dire pour un pion encore
-              // en base ou déjà dans son couloir.
+              // Carte 15 : « empêcher de SORTIR » ne vise qu'un pion encore
+              // dans sa boîte de départ — viser un pion déjà sorti n'aurait
+              // aucun sens.
               if (card.action != CardAction.noExit ||
-                  p.location == PawnLocation.ring)
+                  p.location == PawnLocation.base)
                 p,
     ];
   }
@@ -1246,6 +1253,135 @@ class GameController {
       for (final other in turnOrder)
         if (!_sameTeam(other, c) && !hasFinished(other)) other,
     ];
+  }
+
+  /// Choisit la carte différée que [c] devrait jouer maintenant, cible
+  /// comprise, ou `null` s'il n'y a rien de bon à jouer.
+  ///
+  /// L'ordinateur joue ses cartes comme un joueur : il ne les accumule pas
+  /// jusqu'à saturer sa main. L'ordre de préférence est simple et se lit
+  /// d'un trait — d'abord ce qui rapporte gros, ensuite ce qui gêne
+  /// l'adversaire, enfin ce qui se protège.
+  AiCardPlay? pickAiDeferred(PlayerColor c) {
+    final playable = [
+      for (final card in upgrades.handOf(c))
+        if (canPlayDeferred(c, card)) card,
+    ];
+    if (playable.isEmpty) return null;
+
+    ChanceCard? byId(bool Function(ChanceCard) test) {
+      for (final card in playable) {
+        if (test(card)) return card;
+      }
+      return null;
+    }
+
+    /// Mon pion le plus AVANCÉ encore sur l'anneau — le plus précieux.
+    Pawn? myBest() {
+      Pawn? best;
+      int bestSteps = -1;
+      for (final p in state.pawnsByColor[c]!) {
+        if (p.location != PawnLocation.ring) continue;
+        final st = _stepsTaken(p);
+        if (st > bestSteps) {
+          bestSteps = st;
+          best = p;
+        }
+      }
+      return best;
+    }
+
+    /// Le pion adverse le plus avancé, celui qui menace le plus.
+    Pawn? foeBest({bool inBase = false}) {
+      Pawn? best;
+      int bestSteps = -1;
+      for (final e in state.pawnsByColor.entries) {
+        if (_sameTeam(e.key, c) || hasFinished(e.key)) continue;
+        for (final p in e.value) {
+          if (inBase) {
+            if (p.location != PawnLocation.base) continue;
+            return p;
+          }
+          if (p.location != PawnLocation.ring) continue;
+          final st = _stepsTaken(p);
+          if (st > bestSteps) {
+            bestSteps = st;
+            best = p;
+          }
+        }
+      }
+      return best;
+    }
+
+    // 1. Une carte-dé : c'est un coup CHOISI, le plus fort de tous. On
+    //    prend 6 s'il reste un pion en boîte (sortir vaut tout), sinon la
+    //    plus grande valeur disponible.
+    final needsSix = state.pawnsByColor[c]!
+        .any((p) => p.location == PawnLocation.base);
+    final diceCards = [
+      for (final card in playable)
+        if (card.action == CardAction.setDice) card,
+    ]..sort((a, b) => b.value.compareTo(a.value));
+    if (diceCards.isNotEmpty) {
+      final six = diceCards.where((x) => x.value == 6);
+      if (needsSix && six.isNotEmpty) return AiCardPlay(six.first);
+      if (!needsSix) return AiCardPlay(diceCards.first);
+    }
+
+    // 2. Faire sauter le tour d'un adversaire encore en course.
+    final skip = byId((x) => x.action == CardAction.skipTurn);
+    if (skip != null) {
+      if (skip.needsTarget) {
+        final targets = deferredPlayerTargets(c, skip);
+        if (targets.isNotEmpty) {
+          return AiCardPlay(skip, targetPlayer: targets.first);
+        }
+      } else if (!hasFinished(rightNeighbourOf(c))) {
+        return AiCardPlay(skip);
+      }
+    }
+
+    // 3. Figer le pion adverse le plus avancé.
+    final freeze = byId((x) =>
+        x.action == CardAction.setState &&
+        x.pawnState == CardPawnState.frozen);
+    if (freeze != null) {
+      final target = foeBest();
+      if (target != null && deferredPawnTargets(c, freeze).contains(target)) {
+        return AiCardPlay(freeze, targetPawn: target);
+      }
+    }
+
+    // 4. Empêcher un adversaire de sortir.
+    final noExit = byId((x) => x.action == CardAction.noExit);
+    if (noExit != null) {
+      final targets = deferredPawnTargets(c, noExit);
+      if (targets.isNotEmpty) {
+        return AiCardPlay(noExit, targetPawn: targets.first);
+      }
+    }
+
+    // 5. Protéger son propre pion le plus avancé.
+    final shield = byId((x) =>
+        x.action == CardAction.setState &&
+        x.pawnState == CardPawnState.invulnerable);
+    if (shield != null) {
+      final mine = myBest();
+      if (mine != null && deferredPawnTargets(c, shield).contains(mine)) {
+        return AiCardPlay(shield, targetPawn: mine);
+      }
+    }
+
+    // 6. À défaut, la règle après capture — elle ne coûte rien.
+    final rule = byId((x) => x.action == CardAction.captureToBox);
+    if (rule != null) return AiCardPlay(rule);
+
+    // Une carte-dé de faible valeur reste préférable à laisser la main
+    // pleine : la main sature à 4 et tout tirage suivant serait perdu.
+    if (diceCards.isNotEmpty && upgrades.handIsFull(c)) {
+      return AiCardPlay(diceCards.first);
+    }
+    return null;
   }
 
   /// Joue la carte différée [card] au nom de [c].
@@ -1280,16 +1416,19 @@ class GameController {
         upgrades.setPawnState(targetPawn!, card.pawnState!);
         break;
       case CardAction.noExit:
-        upgrades.markMustLap(targetPawn!);
+        upgrades.markNoExit(targetPawn!);
         break;
       case CardAction.setDice:
         forcedDice = card.value;
         break;
       case CardAction.captureToBox:
-        upgrades.armCaptureToBox(c);
+        upgrades.armCaptureRule(c);
         break;
       case CardAction.skipTurn:
         final victim = targetPlayer ?? rightNeighbourOf(c);
+        // Un joueur ayant déjà rentré ses 4 pions ne joue plus : le tour
+        // ne lui revient jamais, et la carte serait perdue pour rien.
+        if (hasFinished(victim)) return null;
         upgrades.setSkipTurns(victim, card.value);
         break;
       // Les autres actions n'existent que sur les cartes immédiates.
@@ -1323,7 +1462,7 @@ class GameController {
         // « Juste devant la sortie » : le 50e pas, la bouche du couloir.
         if (p.location == PawnLocation.ring) {
           p.position = (_startIdx[p.color]! + lastRingStep) % ringSize;
-          _cardCaptureEnemiesAt(p);
+          _settleAfterCardMove(p);
         }
         break;
       case CardAction.returnToBase:
@@ -1334,6 +1473,9 @@ class GameController {
         // départ (l'empilement de sa propre couleur est légal). Le vortex
         // ne se déclenche pas sur une sortie de carte.
         for (final mate in state.pawnsByColor[p.color]!) {
+          // Carte 15 : un pion à qui l'on a interdit de sortir ne part pas
+          // avec les autres.
+          if (upgrades.cannotExit(mate)) continue;
           if (mate.location == PawnLocation.base) {
             mate.location = PawnLocation.ring;
             mate.position = _startIdx[p.color]!;
@@ -1347,10 +1489,19 @@ class GameController {
         _cardChase(p, forward: false);
         break;
       case CardAction.setState:
-        upgrades.setPawnState(p, card.pawnState!);
+        // Le GEL immédiat ne mord qu'au tour SUIVANT : le pion vient de
+        // jouer pour arriver ici, ce tour-ci est déjà dépensé. Sans ce
+        // décalage la carte ne coûtait qu'un seul tour jouable.
+        // L'INVULNÉRABILITÉ, elle, protège tout de suite — c'est pendant
+        // les tours adverses qui suivent que le pion risque d'être mangé.
+        upgrades.setPawnState(p, card.pawnState!,
+            startsIn: card.pawnState == CardPawnState.frozen ? 1 : 0);
         break;
       case CardAction.modifyDice:
-        upgrades.setDiceMode(p.color, card.diceMode!);
+        // Le modificateur suit CELUI QUI LANCE, pas la couleur du pion :
+        // en mode Équipe un joueur ayant fini joue les pions de son
+        // partenaire, et la carte doit peser sur son propre dé.
+        upgrades.setDiceMode(currentColor, card.diceMode!);
         break;
       // Actions réservées aux cartes DIFFÉRÉES : elles passent par
       // [playDeferredCard], jamais par une case Chance.
@@ -1375,7 +1526,7 @@ class GameController {
     if (delta < 0) {
       final clamped = math.max(0, target);
       p.position = (_startIdx[p.color]! + clamped) % ringSize;
-      _cardCaptureEnemiesAt(p);
+      _settleAfterCardMove(p);
       return;
     }
     if (target > totalStepsToHome) return;
@@ -1387,7 +1538,7 @@ class GameController {
       p.position = target - lastRingStep - 1;
     } else {
       p.position = (_startIdx[p.color]! + target) % ringSize;
-      _cardCaptureEnemiesAt(p);
+      _settleAfterCardMove(p);
     }
   }
 
@@ -1413,10 +1564,24 @@ class GameController {
               !upgrades.isInvulnerable(foe)));
       if (hasVictim) {
         p.position = cell;
-        _cardCaptureEnemiesAt(p);
+        _settleAfterCardMove(p);
         return;
       }
     }
+  }
+
+  /// Le pion vient d'être POSÉ par une carte : il atterrit, donc les cases
+  /// spéciales lui répondent comme après un coup de dé.
+  ///
+  /// « Tomber sur » une case ne veut pas dire « y arriver au dé » : une
+  /// carte qui vous y dépose vous y dépose quand même. Le vortex agit
+  /// d'abord, puis la capture se résout à la case d'ARRIVÉE réelle.
+  ///
+  /// Aucun enchaînement sans fin : le vortex mène toujours à la case de
+  /// l'adversaire en diagonale, qui n'appartient pas à ce pion.
+  void _settleAfterCardMove(Pawn p) {
+    _applyVortexOnLanding(p);
+    _cardCaptureEnemiesAt(p);
   }
 
   /// Capture par CARTE à la case du pion [p] : mêmes règles que la capture
@@ -1432,6 +1597,14 @@ class GameController {
         if (other.location == PawnLocation.ring &&
             other.position == p.position) {
           _returnPawnToBase(other);
+          // Même règle qu'au dé : la carte 22 vaut pour TOUTE capture du
+          // tour, sinon elle serait gaspillée quand c'est une carte qui
+          // mange.
+          if (upgrades.consumeCaptureRule(p.color)) {
+            upgrades.addNotice(
+                'Le pion ${other.id + 1} de ${_fr[other.color]} regagne sa '
+                'boîte de départ : il lui faudra un 6 pour ressortir.');
+          }
         }
       }
     }

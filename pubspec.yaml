@@ -59,7 +59,9 @@ flutter:
 
   assets:
     - AnimStock/Tokens/WEBP/
+    - AnimStock/Tokens/PNG/
     - AnimStock/Dices/PNG/
+    - AnimStock/Dices/WEBP/
     - AnimStock/Selectors/WEBP/
     - AnimStock/Selectors/PNG/
     - Documentation/Board4_Nomenclature.png
