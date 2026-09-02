@@ -1,0 +1,921 @@
+{
+  "version": "1.0",
+  "board": "4 joueurs",
+  "ringSize": 52,
+  "note": "Les identifiants sont ceux affichés par l'interrupteur « Show ring ». Une case spéciale appartient à UNE couleur et se trouve à un nombre de pas fixe de SA case de départ.",
+  "colors": {
+    "red": {
+      "start": 13,
+      "vortexGood": 14,
+      "vortexBad": 5,
+      "chance": 19,
+      "safeStar": 21,
+      "lastRingCell": 11,
+      "diagonal": "yellow"
+    },
+    "green": {
+      "start": 26,
+      "vortexGood": 27,
+      "vortexBad": 18,
+      "chance": 32,
+      "safeStar": 34,
+      "lastRingCell": 24,
+      "diagonal": "blue"
+    },
+    "blue": {
+      "start": 0,
+      "vortexGood": 1,
+      "vortexBad": 44,
+      "chance": 6,
+      "safeStar": 8,
+      "lastRingCell": 50,
+      "diagonal": "green"
+    },
+    "yellow": {
+      "start": 39,
+      "vortexGood": 40,
+      "vortexBad": 31,
+      "chance": 45,
+      "safeStar": 47,
+      "lastRingCell": 37,
+      "diagonal": "red"
+    }
+  },
+  "groups": [
+    {
+      "function": "START",
+      "nameFr": "Case de départ",
+      "descriptionFr": "Le pion y sort de sa boîte sur un 6. Case sûre : on n'y capture personne.",
+      "stepFromOwnStart": 0,
+      "safe": true,
+      "cells": [
+        0,
+        13,
+        26,
+        39
+      ],
+      "byColor": {
+        "red": 13,
+        "green": 26,
+        "blue": 0,
+        "yellow": 39
+      }
+    },
+    {
+      "function": "VORTEX_GOOD",
+      "nameFr": "Vortex — la bonne",
+      "descriptionFr": "Première case après la boîte départ. Son propriétaire seul l'utilise : il file sur la première case de l'adversaire en diagonale, 26 pas gagnés.",
+      "stepFromOwnStart": 1,
+      "safe": false,
+      "cells": [
+        1,
+        14,
+        27,
+        40
+      ],
+      "byColor": {
+        "red": 14,
+        "green": 27,
+        "blue": 1,
+        "yellow": 40
+      }
+    },
+    {
+      "function": "VORTEX_BAD",
+      "nameFr": "Vortex — le trou noir",
+      "descriptionFr": "Première case de la dernière ligne droite. Son propriétaire seul l'utilise : il revient sur celle de l'adversaire en diagonale, 26 pas perdus.",
+      "stepFromOwnStart": 44,
+      "safe": false,
+      "cells": [
+        5,
+        18,
+        31,
+        44
+      ],
+      "byColor": {
+        "red": 5,
+        "green": 18,
+        "blue": 44,
+        "yellow": 31
+      }
+    },
+    {
+      "function": "CHANCE",
+      "nameFr": "Case Chance",
+      "descriptionFr": "Deux cases avant l'étoile. Le pion qui s'y arrête tire une carte : une chance sur deux qu'elle soit immédiate ou différée. Elle n'appartient à aucun joueur.",
+      "stepFromOwnStart": 6,
+      "safe": false,
+      "cells": [
+        6,
+        19,
+        32,
+        45
+      ]
+    },
+    {
+      "function": "SAFE_STAR",
+      "nameFr": "Étoile de protection",
+      "descriptionFr": "Case sûre : on n'y capture personne.",
+      "stepFromOwnStart": 8,
+      "safe": true,
+      "cells": [
+        8,
+        21,
+        34,
+        47
+      ],
+      "byColor": {
+        "red": 21,
+        "green": 34,
+        "blue": 8,
+        "yellow": 47
+      }
+    },
+    {
+      "function": "NORMAL",
+      "nameFr": "Case ordinaire",
+      "descriptionFr": "Case de parcours ordinaire. La capture y est possible.",
+      "safe": false,
+      "cells": [
+        2,
+        3,
+        4,
+        7,
+        9,
+        10,
+        11,
+        12,
+        15,
+        16,
+        17,
+        20,
+        22,
+        23,
+        24,
+        25,
+        28,
+        29,
+        30,
+        33,
+        35,
+        36,
+        37,
+        38,
+        41,
+        42,
+        43,
+        46,
+        48,
+        49,
+        50,
+        51
+      ]
+    }
+  ],
+  "cells": [
+    {
+      "id": 0,
+      "grid": 201,
+      "col": 6,
+      "row": 13,
+      "function": "START",
+      "owner": "blue",
+      "safe": true,
+      "steps": {
+        "red": 39,
+        "green": 26,
+        "blue": 0,
+        "yellow": 13
+      }
+    },
+    {
+      "id": 1,
+      "grid": 186,
+      "col": 6,
+      "row": 12,
+      "function": "VORTEX_GOOD",
+      "owner": "blue",
+      "safe": false,
+      "steps": {
+        "red": 40,
+        "green": 27,
+        "blue": 1,
+        "yellow": 14
+      }
+    },
+    {
+      "id": 2,
+      "grid": 171,
+      "col": 6,
+      "row": 11,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 41,
+        "green": 28,
+        "blue": 2,
+        "yellow": 15
+      }
+    },
+    {
+      "id": 3,
+      "grid": 156,
+      "col": 6,
+      "row": 10,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 42,
+        "green": 29,
+        "blue": 3,
+        "yellow": 16
+      }
+    },
+    {
+      "id": 4,
+      "grid": 141,
+      "col": 6,
+      "row": 9,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 43,
+        "green": 30,
+        "blue": 4,
+        "yellow": 17
+      }
+    },
+    {
+      "id": 5,
+      "grid": 125,
+      "col": 5,
+      "row": 8,
+      "function": "VORTEX_BAD",
+      "owner": "red",
+      "safe": false,
+      "steps": {
+        "red": 44,
+        "green": 31,
+        "blue": 5,
+        "yellow": 18
+      }
+    },
+    {
+      "id": 6,
+      "grid": 124,
+      "col": 4,
+      "row": 8,
+      "function": "CHANCE",
+      "safe": false,
+      "steps": {
+        "red": 45,
+        "green": 32,
+        "blue": 6,
+        "yellow": 19
+      }
+    },
+    {
+      "id": 7,
+      "grid": 123,
+      "col": 3,
+      "row": 8,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 46,
+        "green": 33,
+        "blue": 7,
+        "yellow": 20
+      }
+    },
+    {
+      "id": 8,
+      "grid": 122,
+      "col": 2,
+      "row": 8,
+      "function": "SAFE_STAR",
+      "owner": "blue",
+      "safe": true,
+      "steps": {
+        "red": 47,
+        "green": 34,
+        "blue": 8,
+        "yellow": 21
+      }
+    },
+    {
+      "id": 9,
+      "grid": 121,
+      "col": 1,
+      "row": 8,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 48,
+        "green": 35,
+        "blue": 9,
+        "yellow": 22
+      }
+    },
+    {
+      "id": 10,
+      "grid": 120,
+      "col": 0,
+      "row": 8,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 49,
+        "green": 36,
+        "blue": 10,
+        "yellow": 23
+      }
+    },
+    {
+      "id": 11,
+      "grid": 105,
+      "col": 0,
+      "row": 7,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 50,
+        "green": 37,
+        "blue": 11,
+        "yellow": 24
+      }
+    },
+    {
+      "id": 12,
+      "grid": 90,
+      "col": 0,
+      "row": 6,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 51,
+        "green": 38,
+        "blue": 12,
+        "yellow": 25
+      }
+    },
+    {
+      "id": 13,
+      "grid": 91,
+      "col": 1,
+      "row": 6,
+      "function": "START",
+      "owner": "red",
+      "safe": true,
+      "steps": {
+        "red": 0,
+        "green": 39,
+        "blue": 13,
+        "yellow": 26
+      }
+    },
+    {
+      "id": 14,
+      "grid": 92,
+      "col": 2,
+      "row": 6,
+      "function": "VORTEX_GOOD",
+      "owner": "red",
+      "safe": false,
+      "steps": {
+        "red": 1,
+        "green": 40,
+        "blue": 14,
+        "yellow": 27
+      }
+    },
+    {
+      "id": 15,
+      "grid": 93,
+      "col": 3,
+      "row": 6,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 2,
+        "green": 41,
+        "blue": 15,
+        "yellow": 28
+      }
+    },
+    {
+      "id": 16,
+      "grid": 94,
+      "col": 4,
+      "row": 6,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 3,
+        "green": 42,
+        "blue": 16,
+        "yellow": 29
+      }
+    },
+    {
+      "id": 17,
+      "grid": 95,
+      "col": 5,
+      "row": 6,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 4,
+        "green": 43,
+        "blue": 17,
+        "yellow": 30
+      }
+    },
+    {
+      "id": 18,
+      "grid": 81,
+      "col": 6,
+      "row": 5,
+      "function": "VORTEX_BAD",
+      "owner": "green",
+      "safe": false,
+      "steps": {
+        "red": 5,
+        "green": 44,
+        "blue": 18,
+        "yellow": 31
+      }
+    },
+    {
+      "id": 19,
+      "grid": 66,
+      "col": 6,
+      "row": 4,
+      "function": "CHANCE",
+      "safe": false,
+      "steps": {
+        "red": 6,
+        "green": 45,
+        "blue": 19,
+        "yellow": 32
+      }
+    },
+    {
+      "id": 20,
+      "grid": 51,
+      "col": 6,
+      "row": 3,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 7,
+        "green": 46,
+        "blue": 20,
+        "yellow": 33
+      }
+    },
+    {
+      "id": 21,
+      "grid": 36,
+      "col": 6,
+      "row": 2,
+      "function": "SAFE_STAR",
+      "owner": "red",
+      "safe": true,
+      "steps": {
+        "red": 8,
+        "green": 47,
+        "blue": 21,
+        "yellow": 34
+      }
+    },
+    {
+      "id": 22,
+      "grid": 21,
+      "col": 6,
+      "row": 1,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 9,
+        "green": 48,
+        "blue": 22,
+        "yellow": 35
+      }
+    },
+    {
+      "id": 23,
+      "grid": 6,
+      "col": 6,
+      "row": 0,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 10,
+        "green": 49,
+        "blue": 23,
+        "yellow": 36
+      }
+    },
+    {
+      "id": 24,
+      "grid": 7,
+      "col": 7,
+      "row": 0,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 11,
+        "green": 50,
+        "blue": 24,
+        "yellow": 37
+      }
+    },
+    {
+      "id": 25,
+      "grid": 8,
+      "col": 8,
+      "row": 0,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 12,
+        "green": 51,
+        "blue": 25,
+        "yellow": 38
+      }
+    },
+    {
+      "id": 26,
+      "grid": 23,
+      "col": 8,
+      "row": 1,
+      "function": "START",
+      "owner": "green",
+      "safe": true,
+      "steps": {
+        "red": 13,
+        "green": 0,
+        "blue": 26,
+        "yellow": 39
+      }
+    },
+    {
+      "id": 27,
+      "grid": 38,
+      "col": 8,
+      "row": 2,
+      "function": "VORTEX_GOOD",
+      "owner": "green",
+      "safe": false,
+      "steps": {
+        "red": 14,
+        "green": 1,
+        "blue": 27,
+        "yellow": 40
+      }
+    },
+    {
+      "id": 28,
+      "grid": 53,
+      "col": 8,
+      "row": 3,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 15,
+        "green": 2,
+        "blue": 28,
+        "yellow": 41
+      }
+    },
+    {
+      "id": 29,
+      "grid": 68,
+      "col": 8,
+      "row": 4,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 16,
+        "green": 3,
+        "blue": 29,
+        "yellow": 42
+      }
+    },
+    {
+      "id": 30,
+      "grid": 83,
+      "col": 8,
+      "row": 5,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 17,
+        "green": 4,
+        "blue": 30,
+        "yellow": 43
+      }
+    },
+    {
+      "id": 31,
+      "grid": 99,
+      "col": 9,
+      "row": 6,
+      "function": "VORTEX_BAD",
+      "owner": "yellow",
+      "safe": false,
+      "steps": {
+        "red": 18,
+        "green": 5,
+        "blue": 31,
+        "yellow": 44
+      }
+    },
+    {
+      "id": 32,
+      "grid": 100,
+      "col": 10,
+      "row": 6,
+      "function": "CHANCE",
+      "safe": false,
+      "steps": {
+        "red": 19,
+        "green": 6,
+        "blue": 32,
+        "yellow": 45
+      }
+    },
+    {
+      "id": 33,
+      "grid": 101,
+      "col": 11,
+      "row": 6,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 20,
+        "green": 7,
+        "blue": 33,
+        "yellow": 46
+      }
+    },
+    {
+      "id": 34,
+      "grid": 102,
+      "col": 12,
+      "row": 6,
+      "function": "SAFE_STAR",
+      "owner": "green",
+      "safe": true,
+      "steps": {
+        "red": 21,
+        "green": 8,
+        "blue": 34,
+        "yellow": 47
+      }
+    },
+    {
+      "id": 35,
+      "grid": 103,
+      "col": 13,
+      "row": 6,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 22,
+        "green": 9,
+        "blue": 35,
+        "yellow": 48
+      }
+    },
+    {
+      "id": 36,
+      "grid": 104,
+      "col": 14,
+      "row": 6,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 23,
+        "green": 10,
+        "blue": 36,
+        "yellow": 49
+      }
+    },
+    {
+      "id": 37,
+      "grid": 119,
+      "col": 14,
+      "row": 7,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 24,
+        "green": 11,
+        "blue": 37,
+        "yellow": 50
+      }
+    },
+    {
+      "id": 38,
+      "grid": 134,
+      "col": 14,
+      "row": 8,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 25,
+        "green": 12,
+        "blue": 38,
+        "yellow": 51
+      }
+    },
+    {
+      "id": 39,
+      "grid": 133,
+      "col": 13,
+      "row": 8,
+      "function": "START",
+      "owner": "yellow",
+      "safe": true,
+      "steps": {
+        "red": 26,
+        "green": 13,
+        "blue": 39,
+        "yellow": 0
+      }
+    },
+    {
+      "id": 40,
+      "grid": 132,
+      "col": 12,
+      "row": 8,
+      "function": "VORTEX_GOOD",
+      "owner": "yellow",
+      "safe": false,
+      "steps": {
+        "red": 27,
+        "green": 14,
+        "blue": 40,
+        "yellow": 1
+      }
+    },
+    {
+      "id": 41,
+      "grid": 131,
+      "col": 11,
+      "row": 8,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 28,
+        "green": 15,
+        "blue": 41,
+        "yellow": 2
+      }
+    },
+    {
+      "id": 42,
+      "grid": 130,
+      "col": 10,
+      "row": 8,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 29,
+        "green": 16,
+        "blue": 42,
+        "yellow": 3
+      }
+    },
+    {
+      "id": 43,
+      "grid": 129,
+      "col": 9,
+      "row": 8,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 30,
+        "green": 17,
+        "blue": 43,
+        "yellow": 4
+      }
+    },
+    {
+      "id": 44,
+      "grid": 143,
+      "col": 8,
+      "row": 9,
+      "function": "VORTEX_BAD",
+      "owner": "blue",
+      "safe": false,
+      "steps": {
+        "red": 31,
+        "green": 18,
+        "blue": 44,
+        "yellow": 5
+      }
+    },
+    {
+      "id": 45,
+      "grid": 158,
+      "col": 8,
+      "row": 10,
+      "function": "CHANCE",
+      "safe": false,
+      "steps": {
+        "red": 32,
+        "green": 19,
+        "blue": 45,
+        "yellow": 6
+      }
+    },
+    {
+      "id": 46,
+      "grid": 173,
+      "col": 8,
+      "row": 11,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 33,
+        "green": 20,
+        "blue": 46,
+        "yellow": 7
+      }
+    },
+    {
+      "id": 47,
+      "grid": 188,
+      "col": 8,
+      "row": 12,
+      "function": "SAFE_STAR",
+      "owner": "yellow",
+      "safe": true,
+      "steps": {
+        "red": 34,
+        "green": 21,
+        "blue": 47,
+        "yellow": 8
+      }
+    },
+    {
+      "id": 48,
+      "grid": 203,
+      "col": 8,
+      "row": 13,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 35,
+        "green": 22,
+        "blue": 48,
+        "yellow": 9
+      }
+    },
+    {
+      "id": 49,
+      "grid": 218,
+      "col": 8,
+      "row": 14,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 36,
+        "green": 23,
+        "blue": 49,
+        "yellow": 10
+      }
+    },
+    {
+      "id": 50,
+      "grid": 217,
+      "col": 7,
+      "row": 14,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 37,
+        "green": 24,
+        "blue": 50,
+        "yellow": 11
+      }
+    },
+    {
+      "id": 51,
+      "grid": 216,
+      "col": 6,
+      "row": 14,
+      "function": "NORMAL",
+      "safe": false,
+      "steps": {
+        "red": 38,
+        "green": 25,
+        "blue": 51,
+        "yellow": 12
+      }
+    }
+  ]
+}
