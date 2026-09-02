@@ -640,6 +640,7 @@ void main() {
       final c = landOnInvulnerable(PlayerColor.blue);
       final lander = c.state.pawnsByColor[PlayerColor.blue]![0];
       final chosen = c.state.pawnsByColor[PlayerColor.blue]![2];
+      putOnRing(c, chosen, 25); // lui aussi sur l'anneau
       c.resolvePendingImmediate(chosen: chosen);
       expect(c.upgrades.isInvulnerable(chosen), isTrue);
       expect(c.upgrades.isInvulnerable(lander), isFalse);
@@ -661,6 +662,44 @@ void main() {
       expect(target, best, reason: 'c\'est le pion le plus précieux');
       c.resolvePendingImmediate(chosen: target);
       expect(c.upgrades.isInvulnerable(best), isTrue);
+    });
+
+    test('le choix se limite aux pions DÉJÀ SUR L\'ANNEAU', () {
+      // L'invulnérabilité protège d'une capture, et l'on ne peut être
+      // mangé que sur l'anneau : protéger un pion en boîte ou déjà dans
+      // son couloir ne servirait à rien.
+      final c = landOnInvulnerable(PlayerColor.blue);
+      final pawns = c.state.pawnsByColor[PlayerColor.blue]!;
+      final lander = pawns[0];                    // sur l'anneau
+      final onRing = pawns[1];
+      putOnRing(c, onRing, 20);
+      pawns[2].location = PawnLocation.homeColumn;
+      pawns[2].position = 2;
+      // pawns[3] reste en boîte
+
+      final targets =
+          c.immediateTargets(c.upgrades.pendingChoice!.card, lander);
+      expect(targets, containsAll([lander, onRing]));
+      expect(targets, isNot(contains(pawns[2])),
+          reason: 'un pion dans son couloir ne risque plus rien');
+      expect(targets, isNot(contains(pawns[3])),
+          reason: 'un pion en boîte non plus');
+      expect(targets.every((p) => p.location == PawnLocation.ring), isTrue);
+    });
+
+    test('la carte DIFFÉRÉE suit la même règle', () {
+      final c = newGame();
+      final card =
+          kDeferredCards.singleWhere((x) => x.id == 'DEF_PAWN_INVULNERABLE');
+      c.upgrades.addToHand(PlayerColor.blue, card);
+      c.currentPlayerIdx = c.turnOrder.indexOf(PlayerColor.blue);
+      c.phase = TurnPhase.rolling;
+      final pawns = c.state.pawnsByColor[PlayerColor.blue]!;
+      putOnRing(c, pawns[0], 12);
+
+      final targets = c.deferredPawnTargets(PlayerColor.blue, card);
+      expect(targets, [pawns[0]],
+          reason: 'seul le pion sur l\'anneau peut être protégé');
     });
 
     test('un pion INVULNÉRABLE ne peut plus être visé par un adversaire',
@@ -979,6 +1018,9 @@ void main() {
       final card = give(c, PlayerColor.blue, 'DEF_PAWN_INVULNERABLE');
       final mine = c.state.pawnsByColor[PlayerColor.blue]![0];
       final theirs = c.state.pawnsByColor[PlayerColor.red]![0];
+      // Elle ne se pose que sur un pion DÉJÀ SUR L'ANNEAU.
+      putOnRing(c, mine, 12);
+      putOnRing(c, theirs, 12);
 
       final targets = c.deferredPawnTargets(PlayerColor.blue, card);
       expect(targets, contains(mine));

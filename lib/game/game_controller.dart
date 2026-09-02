@@ -1227,9 +1227,21 @@ class GameController {
             if (p.location != PawnLocation.home)
               // Un pion INVULNÉRABLE ne se laisse pas viser par un
               // adversaire — ni capturer, ni contrôler.
-              if (wantsOwn || !upgrades.isInvulnerable(p)) p,
+              if (wantsOwn || !upgrades.isInvulnerable(p))
+                // L'invulnérabilité protège d'une CAPTURE : elle ne se
+                // pose donc que sur un pion DÉJÀ SUR L'ANNEAU, le seul
+                // endroit où l'on peut être mangé. En protéger un resté
+                // en boîte ou déjà dans son couloir ne servirait à rien.
+                if (!_protectsFromCapture(card) ||
+                    p.location == PawnLocation.ring)
+                  p,
     ];
   }
+
+  /// La carte pose-t-elle une invulnérabilité ?
+  static bool _protectsFromCapture(ChanceCard card) =>
+      card.action == CardAction.setState &&
+      card.pawnState == CardPawnState.invulnerable;
 
   /// Applique la carte en attente au pion [chosen]. Sans choix valable,
   /// elle retombe sur le pion qui l'a déclenchée : l'effet a toujours lieu.
@@ -1311,7 +1323,11 @@ class GameController {
                 // sorti n'aurait aucun sens.
                 if (card.action != CardAction.noExit ||
                     p.location == PawnLocation.base)
-                  p,
+                  // Même règle que pour l'immédiate : on ne protège que
+                  // ce qui peut être mangé, donc un pion sur l'anneau.
+                  if (!_protectsFromCapture(card) ||
+                      p.location == PawnLocation.ring)
+                    p,
     ];
   }
 

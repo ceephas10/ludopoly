@@ -159,6 +159,11 @@ void main() {
       final card =
           kDeferredCards.singleWhere((x) => x.id == 'DEF_PAWN_INVULNERABLE');
       c.upgrades.addToHand(c.currentColor, card);
+      // Un pion sur l'anneau : sans cible possible, la carte n'offrirait
+      // aucun menu.
+      final mine = c.state.pawnsByColor[c.currentColor]![0];
+      mine.location = PawnLocation.ring;
+      mine.position = GameController.startIdx(c.currentColor) + 12;
       await t.pump(const Duration(milliseconds: 300));
 
       expect(find.text('Choisir un pion'), findsOneWidget,
@@ -169,7 +174,6 @@ void main() {
       expect(button.onPressed, isNull);
 
       // Cible choisie par le code : la carte part et fait son effet.
-      final mine = c.state.pawnsByColor[c.currentColor]![0];
       state.playDeferredCard(card, targetPawn: mine);
       await t.pump(const Duration(milliseconds: 300));
       expect(c.upgrades.isInvulnerable(mine), isTrue);
@@ -682,8 +686,11 @@ void main() {
       expect(find.text('Choisir un pion'), findsNothing,
           reason: 'le pion qui a déclenché est proposé d\'office');
 
-      // On désigne un AUTRE pion que celui qui a déclenché la carte.
+      // On désigne un AUTRE pion que celui qui a déclenché la carte — mais
+      // lui aussi sur l'anneau : on ne protège que ce qui peut être mangé.
       final chosen = c.state.pawnsByColor[me]![2];
+      chosen.location = PawnLocation.ring;
+      chosen.position = GameController.startIdx(me) + 20;
       state.resolvePendingChoice(chosen);
       await t.pump(const Duration(milliseconds: 300));
 
@@ -850,6 +857,40 @@ void main() {
           reason: 'le demi-dé n\'en ajoute pas un second');
       final seen = <int>{for (int i = 0; i < 200; i++) c.pickDiceValueFor(me)};
       expect(seen, {1, 2, 3});
+
+      await shutdownApp(t);
+    });
+  });
+
+  group('🛡️ Le pion protégé se DISTINGUE des autres', () {
+    testWidgets('un repère apparaît sur lui, et sur lui seul', (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      state.setChanceEnabled(true);
+      final me = c.currentColor;
+
+      BoardView board() => t.widget<BoardView>(find.byType(BoardView));
+      expect(board().invulnerablePawns, isEmpty,
+          reason: 'aucun pion protégé au départ');
+
+      final mine = c.state.pawnsByColor[me]![1];
+      mine.location = PawnLocation.ring;
+      mine.position = GameController.startIdx(me) + 12;
+      c.upgrades.setPawnState(mine, CardPawnState.invulnerable);
+      state.setChanceEnabled(true); // redemande un rendu
+      await t.pump(const Duration(milliseconds: 300));
+
+      expect(board().invulnerablePawns, {mine},
+          reason: 'le repère ne marque que le pion désigné');
+
+      // Deux tours plus tard, l'invulnérabilité tombe et le repère aussi.
+      c.upgrades.onTurnCompleted(me);
+      c.upgrades.onTurnCompleted(me);
+      state.setChanceEnabled(true);
+      await t.pump(const Duration(milliseconds: 300));
+      expect(board().invulnerablePawns, isEmpty,
+          reason: 'plus protégé, plus de repère');
 
       await shutdownApp(t);
     });

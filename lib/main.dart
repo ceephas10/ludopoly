@@ -2124,6 +2124,10 @@ class BoardScreenState extends State<BoardScreen>
                         for (final p in _activePlayers)
                           p.color: _controller.upgrades.handOf(p.color),
                       },
+                      invulnerablePawns: {
+                        for (final p in _game.allPawns)
+                          if (_controller.upgrades.isInvulnerable(p)) p,
+                      },
                       twoDice: _twoDiceShown,
                       tappableCardSeat: _cardTapSeat,
                       onDeferredCardTap: _openHandCard,
@@ -3659,6 +3663,56 @@ class _CardRevealState extends State<_CardReveal>
   }
 }
 
+/// Le repère d'un pion INVULNÉRABLE : un anneau clair autour de sa case,
+/// et un petit écusson.
+///
+/// Volontairement discret — « une petite différence », pas un décor : le
+/// pion doit rester le sujet de sa case.
+class _ShieldMark extends CustomPainter {
+  final Color color;
+  const _ShieldMark({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final u = size.shortestSide;
+    final c = Offset(size.width / 2, size.height / 2);
+    final r = u * 0.44;
+
+    // Halo : un disque très pâle, puis l'anneau lui-même.
+    canvas.drawCircle(
+        c, r, Paint()..color = Colors.white.withValues(alpha: 0.55));
+    canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(1.2, u * 0.055)
+          ..color = color);
+
+    // L'écusson, en haut à droite : un petit blason plein.
+    final sx = c.dx + r * 0.72;
+    final sy = c.dy - r * 0.72;
+    final w = u * 0.22;
+    final h = u * 0.26;
+    final shield = Path()
+      ..moveTo(sx - w / 2, sy - h / 2)
+      ..lineTo(sx + w / 2, sy - h / 2)
+      ..lineTo(sx + w / 2, sy + h * 0.12)
+      ..quadraticBezierTo(sx, sy + h * 0.62, sx - w / 2, sy + h * 0.12)
+      ..close();
+    canvas.drawPath(shield, Paint()..color = color);
+    canvas.drawPath(
+        shield,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(0.8, u * 0.030)
+          ..color = Colors.white);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ShieldMark old) => old.color != color;
+}
+
 /// Les 24 cartes Chance, à essayer à la main.
 ///
 /// Le pendant de « Jeu manuel » pour les cartes : on choisit une famille,
@@ -4382,6 +4436,11 @@ class BoardView extends StatelessWidget {
   /// jamais l'instruction. Il faut TOUCHER une carte pour la retourner.
   final Map<PlayerColor, List<ChanceCard>> deferredHands;
 
+  /// Les pions actuellement INVULNÉRABLES. Ils portent un petit repère —
+  /// un anneau clair et un écusson — qui les distingue des autres sans
+  /// masquer le pion lui-même.
+  final Set<Pawn> invulnerablePawns;
+
   /// Les DEUX dés à montrer au centre, quand « Deux dés » ou « Double-dé »
   /// est actif pour le joueur au tour. `null` = un seul dé, comme
   /// d'habitude. Le demi-dé, lui, reste un dé unique : il ne change que
@@ -4423,6 +4482,7 @@ class BoardView extends StatelessWidget {
     this.showVortexCells = false,
     this.showChanceCells = false,
     this.deferredHands = const {},
+    this.invulnerablePawns = const {},
     this.twoDice,
     this.tappableCardSeat,
     this.onDeferredCardTap,
@@ -4502,6 +4562,21 @@ class BoardView extends StatelessWidget {
   /// With `visibleCenterFrac = 0.5` and content filling the full bbox,
   /// visible_bottom = anchor + 0.5 pawnHeight, so
   ///   anchor = cell_center + (0, 0.1 cell − 0.5 pawnHeight).
+  /// Le centre de la CASE qu'occupe visuellement [p] — sans le décalage
+  /// que [_pawnCenter] applique pour caler l'image du pion.
+  Offset _pawnCellCenter(Pawn p, double cell) {
+    final step = travelStep[p];
+    final overrideLoc = captureOverride[p];
+    final loc = step?.location ?? overrideLoc?.location ?? p.location;
+    final pos = step?.position ?? overrideLoc?.position ?? p.position;
+    return switch (loc) {
+      PawnLocation.base       => _baseSlotCenter(p.color, pos, cell),
+      PawnLocation.ring       => _ringCellCenter(pos, cell),
+      PawnLocation.homeColumn => _homeColumnCenter(p.color, pos, cell),
+      PawnLocation.home       => _homeCenter(p.color, p.id, cell),
+    };
+  }
+
   Offset _pawnCenter(Pawn p, double cell, double pawnHeight) {
     // Pendant un trajet, la case affichée vient de `travelStep` : le modèle
     // est déjà à l'arrivée, mais on montre le pion là où il en est.
@@ -4813,6 +4888,26 @@ class BoardView extends StatelessWidget {
             //      another pawn's MouseRegion).
             //   2) yield all pawn MouseRegions next → topmost in their bbox,
             //      hover/click hit-testing stays simple per pawn.
+            // Le repère des pions INVULNÉRABLES, posé SOUS les pions pour
+            // ne rien masquer ni voler un clic : un anneau clair sur la
+            // case, et un petit écusson en haut à droite.
+            for (final p in invulnerablePawns)
+              () {
+                final c = _pawnCellCenter(p, cell);
+                final d = cell * 1.02;
+                return Positioned(
+                  left: c.dx - d / 2,
+                  top: c.dy - d / 2,
+                  width: d,
+                  height: d,
+                  child: IgnorePointer(
+                    child: CustomPaint(
+                      painter: _ShieldMark(color: _colorOf(p.color)),
+                    ),
+                  ),
+                );
+              }(),
+
             ...() sync* {
               final activeColors = players.map((p) => p.color).toSet();
               final rawList = game.allPawns

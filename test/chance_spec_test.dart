@@ -297,9 +297,13 @@ void main() {
       final card = give(c, PlayerColor.blue, 'DEF_PAWN_INVULNERABLE');
       expect(card.timing, ChanceTiming.beforeRoll);
       final mine = c.state.pawnsByColor[PlayerColor.blue]![0];
-      // Elle vise VOS pions.
+      // L'invulnérabilité protège d'une capture : elle ne se pose que sur
+      // un pion DÉJÀ SUR L'ANNEAU, le seul endroit où l'on peut être mangé.
+      putOnRing(mine, 12);
       expect(c.deferredPawnTargets(PlayerColor.blue, card),
-          everyElement(predicate<Pawn>((x) => x.color == PlayerColor.blue)));
+          everyElement(predicate<Pawn>((x) =>
+              x.color == PlayerColor.blue &&
+              x.location == PawnLocation.ring)));
       c.playDeferredCard(PlayerColor.blue, card, targetPawn: mine);
       expect(c.upgrades.isInvulnerable(mine), isTrue);
     });
