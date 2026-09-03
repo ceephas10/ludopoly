@@ -66,6 +66,8 @@ flutter:
     - AnimStock/Selectors/PNG/
     - Documentation/Board4_Nomenclature.png
     - Documentation/Token_Nomenclature.png
+    # Le squelette du gameplay : le JSON que le moteur lit et auquel il obéit.
+    - assets/gameplay/board.json
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
