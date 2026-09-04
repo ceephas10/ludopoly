@@ -19,17 +19,17 @@
 
   "ring": [
     { "id": 0, "cellType": "startBlue", "safe": true, "action": "move" },
-    { "id": 1, "cellType": "vortexBlue", "safe": false, "move": true, "action": "vortex" },
+    { "id": 1, "cellType": "vortexBlue", "safe": false, "action": "vortex" },
     { "id": 2, "cellType": "normal", "safe": false, "action": "move" },
     { "id": 3, "cellType": "normal", "safe": false, "action": "move" },
     { "id": 4, "cellType": "normal", "safe": false, "vector": 90, "action": "move" },
-    { "id": 5, "cellType": "deathRed", "safe": false, "move": true, "action": "death" },
-    { "id": 6, "cellType": "luck", "safe": false, "move": true, "action": "luck" },
+    { "id": 5, "cellType": "deathRed", "safe": false, "action": "death" },
+    { "id": 6, "cellType": "luck", "safe": false, "action": "luck" },
     { "id": 7, "cellType": "normal", "safe": false, "action": "move" },
     { "id": 8, "cellType": "normal", "safe": true, "action": "move" },
     { "id": 9, "cellType": "normal", "safe": false, "action": "move" },
     { "id": 10, "cellType": "normal", "safe": false, "action": "move" },
-    { "id": 11, "cellType": "normal", "safe": false, "vector": 90, "action": "moveExit" },
+    { "id": 11, "cellType": "normal", "safe": false, "vector": 90, "action": "move" },
     { "id": 12, "cellType": "normal", "safe": false, "action": "move" },
 
     { "id": 13, "cellType": "startRed", "safe": true, "action": "move" },
@@ -43,7 +43,7 @@
     { "id": 21, "cellType": "normal", "safe": true, "action": "move" },
     { "id": 22, "cellType": "normal", "safe": false, "action": "move" },
     { "id": 23, "cellType": "normal", "safe": false, "action": "move" },
-    { "id": 24, "cellType": "normal", "safe": false, "vector": 90, "action": "moveExit" },
+    { "id": 24, "cellType": "normal", "safe": false, "vector": 90, "action": "move" },
     { "id": 25, "cellType": "normal", "safe": false, "action": "move" },
 
     { "id": 26, "cellType": "startGreen", "safe": true, "action": "move" },
@@ -57,7 +57,7 @@
     { "id": 34, "cellType": "normal", "safe": true, "action": "move" },
     { "id": 35, "cellType": "normal", "safe": false, "action": "move" },
     { "id": 36, "cellType": "normal", "safe": false, "action": "move" },
-    { "id": 37, "cellType": "normal", "safe": false, "vector": 90, "action": "moveExit" },
+    { "id": 37, "cellType": "normal", "safe": false, "vector": 90, "action": "move" },
     { "id": 38, "cellType": "normal", "safe": false, "action": "move" },
 
     { "id": 39, "cellType": "startYellow", "safe": true, "action": "move" },
@@ -71,7 +71,7 @@
     { "id": 47, "cellType": "normal", "safe": true, "action": "move" },
     { "id": 48, "cellType": "normal", "safe": false, "action": "move" },
     { "id": 49, "cellType": "normal", "safe": false, "action": "move" },
-    { "id": 50, "cellType": "normal", "safe": false, "vector": 90, "action": "moveExit" },
+    { "id": 50, "cellType": "normal", "safe": false, "vector": 90, "action": "move" },
     { "id": 51, "cellType": "normal", "safe": false, "action": "move" }
   ],
 
@@ -85,6 +85,8 @@
     "color": null,
     "colorIndex": 0,
     "ringIndex": 0,
+    "inExit": false,
+    "exitIndex": 50,
     "status": "tokenStatus",
     "statusCount": 0
   }

@@ -65,11 +65,13 @@ void main() {
       expect(ids(spec.ring.where((c) => c.safe)), [0, 8, 13, 21, 26, 34, 39, 47]);
     });
 
-    test('vortex, trous noirs, chance et sorties', () {
+    test('vortex, trous noirs et chance', () {
       expect(ids(spec.cellsOf(CellKind.vortex)), [1, 14, 27, 40]);
       expect(ids(spec.cellsOf(CellKind.death)), [5, 18, 31, 44]);
       expect(ids(spec.cellsOf(CellKind.luck)), [6, 19, 32, 45]);
-      expect(ids(spec.cellsWithAction(CellAction.moveExit)), [11, 24, 37, 50]);
+      // Il n'y a plus d'action moveExit : on entre dans le couloir par le
+      // calcul, pas en foulant une case précise. 52 − 12 spéciales = 40.
+      expect(spec.cellsWithAction(CellAction.move).length, 40);
       expect(spec.cell(5).color, TokenColor.red);
       expect(spec.cell(44).color, TokenColor.blue);
       expect(ids(spec.cellsOf(CellKind.vortex, TokenColor.green)), [27]);
@@ -82,8 +84,9 @@ void main() {
           reason: 'absent du JSON : le code n\'invente pas');
     });
 
-    test('le drapeau move: true, tel qu\'écrit dans le JSON', () {
-      expect(ids(spec.ring.where((c) => c.move)), [1, 5, 6]);
+    test('plus aucune case ne porte le drapeau move', () {
+      // Le champ a ete retire du JSON ; le parseur le laisse a false.
+      expect(ids(spec.ring.where((c) => c.move)), isEmpty);
     });
 
     test('tokenStatus et move.source', () {
@@ -207,16 +210,19 @@ void main() {
       expect(g.preview(t).vectorAngle, 0);
     });
 
-    test('l\'anneau boucle : pas de couloir final pour l\'instant', () {
+    test('l\'anneau ne boucle plus : le bleu ne foule jamais la 51', () {
       final g = game();
       final t = tok(g, TokenColor.blue)..enterRing(50);
       g.roll(3);
-      expect(g.preview(t).path, [51, 0, 1]);
+      final mv = g.preview(t);
+      expect(mv.path, isEmpty, reason: 'aucune case d\'anneau ne restait');
+      expect(mv.exitRank, 3);
       g.play(t);
-      expect(t.ringIndex, 1);
+      expect(t.inExit, isTrue);
+      expect(t.ringIndex, 3);
     });
 
-    test('sur l\'anneau, un pion peut toujours jouer, quel que soit le dé', () {
+    test('loin de sa sortie, un pion joue n\'importe quel dé', () {
       for (var v = 1; v <= 5; v++) {
         final g = game();
         final t = tok(g, TokenColor.blue)..enterRing(20);
@@ -418,11 +424,10 @@ void main() {
       expect(b.ringIndex, 1);
     });
 
-    test('death, luck et moveExit sont signalés de même', () {
+    test('death et luck sont signalés de même', () {
       const cases = [
         (from: 4, action: CellAction.death),
         (from: 5, action: CellAction.luck),
-        (from: 10, action: CellAction.moveExit),
       ];
       for (final c in cases) {
         final g = game();
@@ -443,6 +448,142 @@ void main() {
       g.roll(1); // → case 2
       final ev = g.play(b);
       expect(ev.any((e) => e.type == EventType.specialCell), isFalse);
+    });
+  });
+
+  group('🚩 La sortie du ring', () {
+    test('exitIndex : 50 bleu, 11 rouge, 24 vert, 37 jaune', () {
+      expect(spec.exitIndexOf(TokenColor.blue), 50);
+      expect(spec.exitIndexOf(TokenColor.red), 11);
+      expect(spec.exitIndexOf(TokenColor.green), 24);
+      expect(spec.exitIndexOf(TokenColor.yellow), 37);
+    });
+
+    test('la case jamais foulée : 51 bleu, 12 rouge, 25 vert, 38 jaune', () {
+      expect(spec.neverVisitedBy(TokenColor.blue), 51);
+      expect(spec.neverVisitedBy(TokenColor.red), 12);
+      expect(spec.neverVisitedBy(TokenColor.green), 25);
+      expect(spec.neverVisitedBy(TokenColor.yellow), 38);
+    });
+
+    test('l\'exemple du document : bleu sur 48, dé 4 → couloir rang 2', () {
+      final g = game();
+      final t = tok(g, TokenColor.blue)..enterRing(48);
+      g.roll(4);
+      final mv = g.preview(t);
+      expect(mv.entersExit, isTrue);
+      expect(mv.exitRank, 2);
+      expect(mv.path, [49, 50], reason: 'les 2 cases d\'anneau qui restaient');
+      g.play(t);
+      expect(t.inExit, isTrue);
+      expect(t.ringIndex, 2);
+    });
+
+    test('la bascule vaut pour les quatre couleurs', () {
+      for (final c in spec.colors) {
+        final other = c == TokenColor.blue ? TokenColor.red : TokenColor.blue;
+        final g = game(players: [c, other]);
+        final before = (spec.exitIndexOf(c) - 2 + spec.size) % spec.size;
+        final t = tok(g, c)..enterRing(before);
+        g.roll(4);
+        g.play(t);
+        expect(t.inExit, isTrue, reason: c.name);
+        expect(t.ringIndex, 2, reason: c.name);
+      }
+    });
+
+    test('le piège : un rouge fraîchement sorti ne part pas au couloir', () {
+      // 13 + 4 = 17 dépasse son exitIndex 11 : la comparaison directe
+      // l'enverrait au couloir sans un seul tour. Le modulo dit qu'il lui
+      // reste 50 cases.
+      final g = game(players: [TokenColor.red, TokenColor.blue]);
+      final t = tok(g, TokenColor.red)..enterRing(13);
+      g.roll(4);
+      expect(g.preview(t).entersExit, isFalse);
+      g.play(t);
+      expect(t.inExit, isFalse);
+      expect(t.ringIndex, 17);
+    });
+
+    test('le jet exact : dépasser le centre est illégal', () {
+      final g = game();
+      final t = tok(g, TokenColor.blue)..enterExit(3);
+      tok(g, TokenColor.blue, 1).enterRing(20); // pour que le tour ne passe pas
+      g.roll(3); // 3 + 3 = 6 > 5
+      expect(g.currentPlayer, TokenColor.blue);
+      expect(g.canMove(t), isFalse);
+    });
+
+    test('le jet exact : la bonne valeur sort le pion', () {
+      final g = game();
+      final t = tok(g, TokenColor.blue)..enterExit(3);
+      g.roll(2); // 3 + 2 = 5
+      final ev = g.play(t);
+      expect(t.isHome, isTrue);
+      expect(types(ev), contains(EventType.home));
+    });
+
+    test('un pion sorti ne rejoue plus', () {
+      final g = game();
+      final t = tok(g, TokenColor.blue)..enterExit(BoardSpec.exitGoal);
+      tok(g, TokenColor.blue, 1).enterRing(20);
+      g.roll(1);
+      expect(g.currentPlayer, TokenColor.blue);
+      expect(g.canMove(t), isFalse);
+    });
+
+    test('un pion du couloir ne se fait pas capturer', () {
+      // Le rang 2 du couloir n'est PAS la case 2 de l'anneau.
+      final g = game();
+      final safe = tok(g, TokenColor.blue)..enterExit(2);
+      final victim = tok(g, TokenColor.red)..enterRing(2);
+      final mover = tok(g, TokenColor.blue, 1)..enterRing(1);
+      g.roll(1);
+      g.play(mover);
+      expect(victim.inBase, isTrue, reason: 'le rouge de l\'anneau part');
+      expect(safe.inExit, isTrue, reason: 'le bleu du couloir reste');
+      expect(safe.ringIndex, 2);
+    });
+
+    test('un tour complet : 55 pas, et la case interdite jamais foulée', () {
+      // Le parcours entier, dé de 1, pour chacune des quatre couleurs :
+      // 50 cases d'anneau puis 5 rangs de couloir.
+      for (final c in spec.colors) {
+        final other = c == TokenColor.blue ? TokenColor.red : TokenColor.blue;
+        final g = game(players: [c, other]);
+        final t = tok(g, c)..enterRing(spec.startOf[c]!);
+        final visited = <int>[];
+        var steps = 0;
+        while (!t.isHome && steps < 200) {
+          if (g.currentPlayer != c) {
+            g.roll(1); // l'adversaire a tout en base : son tour repasse
+            continue;
+          }
+          g.roll(1);
+          if (g.phase != Phase.moving) continue;
+          g.play(t);
+          steps++;
+          if (!t.inExit) visited.add(t.ringIndex);
+        }
+        expect(steps, BoardSpec.lapLength + BoardSpec.exitGoal, reason: c.name);
+        expect(visited, isNot(contains(spec.neverVisitedBy(c))),
+            reason: '${c.name} ne foule jamais sa case interdite');
+        expect(visited.last, spec.exitIndexOf(c),
+            reason: '${c.name} quitte l\'anneau depuis sa dernière case');
+      }
+    });
+
+    test('victoire : les quatre pions sortis', () {
+      final g = game();
+      final mine = g.tokens[TokenColor.blue]!;
+      for (var i = 0; i < 3; i++) {
+        mine[i].enterExit(BoardSpec.exitGoal);
+      }
+      final last = mine[3]..enterExit(4);
+      g.roll(1);
+      final ev = g.play(last);
+      expect(types(ev), contains(EventType.won));
+      expect(g.winners, [TokenColor.blue]);
     });
   });
 }

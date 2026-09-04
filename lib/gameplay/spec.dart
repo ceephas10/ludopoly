@@ -19,8 +19,11 @@ enum TokenStatus { normal, doubleDice, halfDice, invincible }
 /// (`vortexBlue` → [vortex], appartenant à [TokenColor.blue]).
 enum CellKind { normal, exit, start, star, luck, vortex, death }
 
-/// L'`action` d'une case.
-enum CellAction { move, moveExit, vortex, death, luck }
+/// L'`action` d'une case. Il n'y a PLUS de `moveExit` : on n'entre pas
+/// dans le couloir en foulant une case précise, mais par le calcul de
+/// [BoardSpec.exitIndexOf] — un pion peut atteindre son couloir sans jamais
+/// se poser sur sa dernière case d'anneau.
+enum CellAction { move, vortex, death, luck }
 
 /// Le JSON est invalide : le moteur ne doit pas démarrer.
 class BoardSpecError implements Exception {
@@ -71,6 +74,8 @@ class BoardSpec {
     required this.cellTypes,
     required this.tokenStatuses,
     required this.moveSource,
+    required this.tokenInExit,
+    required this.tokenExitIndex,
   }) : startOf = {
           for (final c in ring)
             if (c.kind == CellKind.start) c.color!: c.id,
@@ -90,6 +95,20 @@ class BoardSpec {
   /// La case de départ de chaque couleur jouable.
   final Map<TokenColor, int> startOf;
 
+  /// Les deux champs du schéma `token`, lus tels quels. Ce sont des valeurs
+  /// d'exemple : à l'exécution, chaque pion reçoit l'`exitIndex` de SA
+  /// couleur, calculé par [exitIndexOf].
+  final bool tokenInExit;
+  final int tokenExitIndex;
+
+  /// Nombre de cases d'anneau parcourues avant de basculer dans le couloir.
+  static const int lapLength = 50;
+
+  /// Somme à atteindre dans le couloir pour être sorti. Le couloir compte
+  /// donc [exitGoal] rangs, numérotés à partir de 1, le dernier étant le
+  /// centre. Un tour complet vaut [lapLength] + [exitGoal] pas.
+  static const int exitGoal = 5;
+
   int get size => ring.length;
   CellSpec cell(int id) => ring[id];
   int next(int id) => (id + 1) % size;
@@ -100,6 +119,21 @@ class BoardSpec {
       ..sort((a, b) => startOf[a]!.compareTo(startOf[b]!));
     return list;
   }
+
+  /// La DERNIÈRE case d'anneau de [c] : le pivot du calcul de sortie.
+  /// Les départs étant espacés régulièrement, les sorties le sont aussi.
+  /// Bleu 50, rouge 11, vert 24, jaune 37.
+  int exitIndexOf(TokenColor c) {
+    final start = startOf[c];
+    if (start == null) {
+      throw BoardSpecError('${c.name} n\'a pas de case de départ');
+    }
+    return (start + lapLength) % size;
+  }
+
+  /// La case que [c] ne foule JAMAIS : celle qui précède son propre départ.
+  /// Bleu 51, rouge 12, vert 25, jaune 38.
+  int neverVisitedBy(TokenColor c) => (exitIndexOf(c) + 1) % size;
 
   /// Les cases de la famille [kind] (et de la couleur [color], si donnée).
   List<CellSpec> cellsOf(CellKind kind, [TokenColor? color]) => [
@@ -218,11 +252,24 @@ class BoardSpec {
           'move.source : seul « lastDice » est pris en charge, trouvé « $source »');
     }
 
+    // Le schéma `token` : les deux champs de la sortie du ring.
+    final token = _map(root['token'], 'token');
+    final inExit = token['inExit'];
+    if (inExit is! bool) {
+      throw BoardSpecError('token.inExit doit être true/false');
+    }
+    final exitIndex = token['exitIndex'];
+    if (exitIndex is! int) {
+      throw BoardSpecError('token.exitIndex doit être un entier');
+    }
+
     return BoardSpec._(
       ring: ring,
       cellTypes: cellTypes,
       tokenStatuses: tokenStatuses,
       moveSource: source as String,
+      tokenInExit: inExit,
+      tokenExitIndex: exitIndex,
     );
   }
 

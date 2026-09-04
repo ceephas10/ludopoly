@@ -5,11 +5,18 @@
 // capture, et les tours (un 6 ou une capture redonnent la main, trois 6
 // d'affilée font perdre le tour).
 //
+// La SORTIE DU RING : un pion n'entre pas dans son couloir en foulant une
+// case précise, mais en DÉPASSANT la dernière case d'anneau de sa couleur.
+// Ce qui compte est donc la distance qu'il lui reste à couvrir, calculée au
+// modulo — c'est elle qui rend la formule juste pour les quatre couleurs,
+// y compris le rouge dont le parcours enjambe le zéro. Dans le couloir, le
+// déplacement devient une addition sans modulo, et il faut le JET EXACT
+// pour atteindre le centre.
+//
 // Ce qu'il ne fait PAS encore, parce que le JSON ne le dit pas : l'effet des
-// cases `vortex`, `death`, `luck` et `moveExit` (elles sont reconnues et
-// signalées, rien de plus), le couloir final, la victoire, et l'effet des
-// statuts `doubleDice` / `halfDice`. Seul `invincible` agit : un pion
-// invincible ne se fait pas capturer.
+// cases `vortex`, `death` et `luck` (elles sont reconnues et signalées, rien
+// de plus), et l'effet des statuts `doubleDice` / `halfDice`. Seul
+// `invincible` agit : un pion invincible ne se fait pas capturer.
 
 import 'dart:math' as math;
 
@@ -21,6 +28,9 @@ enum Phase { rolling, moving }
 enum EventType {
   exited,
   moved,
+  enteredExit,
+  home,
+  won,
   captured,
   specialCell,
   extraTurn,
@@ -67,18 +77,32 @@ class Move {
     required this.moveValue,
     required this.path,
     required this.vectorAngle,
+    this.exitRank,
   });
 
   final Token token;
   final int moveValue;
 
-  /// Les cases traversées, arrivée comprise. Une sortie de base = `[start]`.
+  /// Les cases d'ANNEAU traversées, arrivée comprise. Une sortie de base =
+  /// `[start]`. Vide si le pion était déjà dans son couloir.
   final List<int> path;
 
   /// Rotation cumulée pendant ce déplacement, en degrés (mod 360).
   final int vectorAngle;
 
-  int get destination => path.last;
+  /// Rang atteint dans le couloir (à partir de 1), ou `null` si le pion
+  /// reste sur l'anneau.
+  final int? exitRank;
+
+  /// Ce coup fait basculer le pion hors de l'anneau.
+  bool get entersExit => exitRank != null;
+
+  /// Ce coup amène le pion au centre : il est sorti.
+  bool get reachesHome => exitRank == BoardSpec.exitGoal;
+
+  /// La dernière case d'ANNEAU foulée. N'a de sens que si [entersExit] est
+  /// faux — sinon l'arrivée est [exitRank].
+  int get destination => path.isEmpty ? token.ringIndex : path.last;
 }
 
 class GameplayEngine {
@@ -96,9 +120,10 @@ class GameplayEngine {
       if (!spec.startOf.containsKey(p)) {
         throw ArgumentError('${p.name} n\'a pas de case de départ dans le JSON');
       }
+      final exit = spec.exitIndexOf(p);
       tokens[p] = [
         for (var i = 0; i < tokensPerColor; i++)
-          Token(color: p, colorIndex: i),
+          Token(color: p, colorIndex: i, exitIndex: exit),
       ];
     }
   }
@@ -122,9 +147,15 @@ class GameplayEngine {
 
   Iterable<Token> get allTokens => tokens.values.expand((l) => l);
 
-  /// Les pions posés sur la case [cell].
+  /// Les couleurs qui ont rentré tous leurs pions, dans l'ordre d'arrivée.
+  final List<TokenColor> winners = [];
+
+  /// Les pions posés sur la case [cell]. Un pion du couloir n'y figure
+  /// PAS : son `ringIndex` désigne un rang, pas une case — sans ce filtre,
+  /// un pion au rang 2 se ferait capturer par un adversaire arrivant sur
+  /// la case 2 de l'anneau.
   List<Token> tokensAt(int cell) =>
-      [for (final t in allTokens) if (t.onRing && t.ringIndex == cell) t];
+      [for (final t in allTokens) if (t.onRingPath && t.ringIndex == cell) t];
 
   // --- le tour -------------------------------------------------------------
 
@@ -161,12 +192,70 @@ class GameplayEngine {
     return _emit(out);
   }
 
-  /// [t] peut-il jouer le dernier dé ? En base, il faut un 6. Sur l'anneau,
-  /// on avance toujours : il n'y a pas encore de couloir final.
+  /// Le coup que [t] jouerait avec [dice], ou `null` s'il est illégal — le
+  /// pion ne bougerait alors pas. C'est l'UNIQUE endroit où le déplacement
+  /// est décidé : [canMove] et [preview] s'y ramènent tous les deux.
+  Move? _plan(Token t, int dice) {
+    if (t.isHome) return null;
+
+    // En base : il faut un 6, et on sort sur sa case de départ.
+    if (t.inBase) {
+      if (dice != 6) return null;
+      final start = spec.startOf[t.color]!;
+      return Move(
+        token: t,
+        moveValue: dice,
+        path: [start],
+        vectorAngle: spec.cell(start).vector % 360,
+      );
+    }
+
+    // Déjà dans le couloir : simple addition, sans modulo. Dépasser le
+    // centre est illégal — c'est le jet exact.
+    if (t.inExit) {
+      final target = t.ringIndex + dice;
+      if (target > BoardSpec.exitGoal) return null;
+      return Move(
+        token: t,
+        moveValue: dice,
+        path: const [],
+        vectorAngle: 0,
+        exitRank: target,
+      );
+    }
+
+    // Sur l'anneau : ce qui compte est la distance restante jusqu'à sa
+    // dernière case, PAS la comparaison directe des index. Sans ce modulo,
+    // un pion rouge fraîchement sorti sur sa case 13 avec un dé de 4
+    // donnerait 17 > 11 et filerait au couloir sans avoir fait un tour.
+    final remaining = (t.exitIndex - t.ringIndex + spec.size) % spec.size;
+    final steps = dice <= remaining ? dice : remaining;
+    final path = <int>[];
+    var angle = 0;
+    var cell = t.ringIndex;
+    for (var i = 0; i < steps; i++) {
+      cell = spec.next(cell);
+      path.add(cell);
+      angle = (angle + spec.cell(cell).vector) % 360;
+    }
+    if (dice <= remaining) {
+      return Move(token: t, moveValue: dice, path: path, vectorAngle: angle);
+    }
+    final rank = dice - remaining;
+    if (rank > BoardSpec.exitGoal) return null; // dépassement du but
+    return Move(
+      token: t,
+      moveValue: dice,
+      path: path,
+      vectorAngle: angle,
+      exitRank: rank,
+    );
+  }
+
+  /// [t] peut-il jouer le dernier dé ?
   bool canMove(Token t) {
     if (t.color != currentPlayer) return false;
-    if (t.inBase) return lastDice == 6;
-    return true;
+    return _plan(t, lastDice) != null;
   }
 
   List<Token> movableTokens() =>
@@ -174,24 +263,9 @@ class GameplayEngine {
 
   /// Le déplacement que jouerait [t], sans l'appliquer.
   Move preview(Token t) {
-    if (t.inBase) {
-      final start = spec.startOf[t.color]!;
-      return Move(
-        token: t,
-        moveValue: lastDice,
-        path: [start],
-        vectorAngle: spec.cell(start).vector % 360,
-      );
-    }
-    final path = <int>[];
-    var angle = 0;
-    var cell = t.ringIndex;
-    for (var i = 0; i < lastDice; i++) {
-      cell = spec.next(cell);
-      path.add(cell);
-      angle = (angle + spec.cell(cell).vector) % 360;
-    }
-    return Move(token: t, moveValue: lastDice, path: path, vectorAngle: angle);
+    final m = _plan(t, lastDice);
+    if (m == null) throw StateError('${t.name} ne peut pas jouer $lastDice');
+    return m;
   }
 
   /// Joue [t] avec le dernier dé, puis applique la capture et la règle du
@@ -203,20 +277,37 @@ class GameplayEngine {
     final mv = preview(t);
     final out = <GameEvent>[];
     final wasInBase = t.inBase;
-    t.enterRing(mv.destination);
-    out.add(GameEvent(
-      wasInBase ? EventType.exited : EventType.moved,
-      token: t,
-      cell: mv.destination,
-    ));
+    var captured = false;
 
-    final captured = _capture(t, out);
+    if (mv.entersExit) {
+      t.enterExit(mv.exitRank!);
+      out.add(GameEvent(EventType.enteredExit,
+          token: t, reason: 'couloir, rang ${mv.exitRank}'));
+      if (t.isHome) out.add(GameEvent(EventType.home, token: t));
+    } else {
+      t.enterRing(mv.destination);
+      out.add(GameEvent(
+        wasInBase ? EventType.exited : EventType.moved,
+        token: t,
+        cell: mv.destination,
+      ));
+      captured = _capture(t, out);
 
-    final cell = spec.cell(t.ringIndex);
-    if (cell.action != CellAction.move) {
-      // Reconnue, pas appliquée : le JSON ne dit pas ce qu'elle fait.
-      out.add(GameEvent(EventType.specialCell,
-          token: t, cell: cell.id, action: cell.action));
+      final cell = spec.cell(t.ringIndex);
+      if (cell.action != CellAction.move) {
+        // Reconnue, pas appliquée : le JSON ne dit pas ce qu'elle fait.
+        out.add(GameEvent(EventType.specialCell,
+            token: t, cell: cell.id, action: cell.action));
+      }
+    }
+
+    // Victoire : les quatre pions d'une couleur sont sortis.
+    if (!winners.contains(t.color) &&
+        tokens[t.color]!.every((x) => x.isHome)) {
+      winners.add(t.color);
+      out.add(GameEvent(EventType.won,
+          token: t,
+          reason: '${t.color.name} a sorti ses $tokensPerColor pions'));
     }
 
     if (lastDice == 6 || captured) {
