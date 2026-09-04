@@ -98,7 +98,7 @@ void main() {
           if (c.currentColor == human) {
             // Tour humain : on clique, exactement comme le ferait un joueur.
             if (c.phase == TurnPhase.rolling) {
-              final dice = find.widgetWithText(FilledButton, 'Lancer le dé');
+              final dice = find.byKey(const Key('roll-normal'));
               if (dice.evaluate().isNotEmpty) {
                 await tester.ensureVisible(dice);
                 await tester.tap(dice, warnIfMissed: false);

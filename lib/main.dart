@@ -2292,7 +2292,9 @@ class BoardScreenState extends State<BoardScreen>
                     },
                     manualValue: _manualValue,
                     onChangeManualValue: (v) =>
-                        _rollDiceManual(_manualPlayer, v),
+                        setState(() => _manualValue = v),
+                    onManualRoll: () =>
+                        _rollDiceManual(_manualPlayer, _manualValue),
                     onFillManualHome: _fillManualHome,
                     onStepBack: _stepBack,
                     canStepBack:
@@ -2456,6 +2458,11 @@ class _ControlPanel extends StatelessWidget {
   /// home pawns first, then the least-advanced.
   final ValueChanged<int> onFillManualHome;
 
+  /// Bouton « Lancer » du Jeu manuel : joue [manualValue] pour
+  /// [manualPlayer]. Choisir une valeur ne fait plus que la SÉLECTIONNER —
+  /// c'est ce bouton, et lui seul, qui déclenche le lancer.
+  final VoidCallback onManualRoll;
+
   /// Boutons « Retour » / « Rejouer » du bas de la carte Jeu manuel :
   /// annulent et rétablissent le dernier coup. Les libellés décrivent
   /// l'action concernée.
@@ -2554,6 +2561,7 @@ class _ControlPanel extends StatelessWidget {
     required this.manualValue,
     required this.onChangeManualValue,
     required this.onFillManualHome,
+    required this.onManualRoll,
     required this.onStepBack,
     required this.canStepBack,
     required this.stepBackLabel,
@@ -3143,12 +3151,31 @@ class _ControlPanel extends StatelessWidget {
               ),
             ),
           const SizedBox(height: 12),
-          FilledButton.icon(
-            icon: const Icon(Icons.casino),
-            label: const Text('Lancer le dé'),
-            onPressed: (phase == TurnPhase.rolling && !busy)
-                ? onRollDice
-                : null,
+          // « Jeu normal » ne reçoit qu'un septième de la largeur du panneau
+          // (flex 1 contre 3 et 3). Un bouton libre y empilait ses lettres à
+          // la verticale : libellé court, une seule ligne, et coupure nette
+          // plutôt qu'un retour à la ligne.
+          SizedBox(
+            height: 32,
+            child: FilledButton(
+              // Deux boutons s'appellent « Lancer » (ici et dans Jeu manuel) :
+              // la cle les distingue sans ambiguite pour les tests.
+              key: const Key('roll-normal'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              onPressed:
+                  (phase == TurnPhase.rolling && !busy) ? onRollDice : null,
+              child: const Text(
+                'Lancer',
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12),
+              ),
+            ),
           ),
         ],
       ),
@@ -3161,52 +3188,33 @@ class _ControlPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Couleur',
-              style: theme.textTheme.labelSmall
-                  ?.copyWith(color: cs.onSurfaceVariant)),
-          const SizedBox(height: 4),
-          Wrap(
-            spacing: 4,
-            runSpacing: 4,
-            children: [
-              for (final p in activePlayers)
-                _ColorDot(
-                  color: _playerColor(p.color),
-                  selected: p.color == manualPlayer,
-                  onTap: () => onChangeManualPlayer(p.color),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
+          // ─── Haut : Couleur à gauche (verticale), Pions dans la Maison
+          //     en haut à DROITE, à l'horizontale ───
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ─── Valeur dé (left) ───
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Valeur dé',
-                        style: theme.textTheme.labelSmall
-                            ?.copyWith(color: cs.onSurfaceVariant)),
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 4,
-                      runSpacing: 4,
-                      children: [
-                        for (int v = 1; v <= 6; v++)
-                          _MiniDiceButton(
-                            value: v,
-                            selected: v == manualValue,
-                            onTap: () => onChangeManualValue(v),
-                          ),
-                      ],
+              // La colonne des couleurs ne prend que la largeur qu'il lui
+              // faut : tout le reste va aux pions, qui en ont besoin pour
+              // tenir sur une seule ligne.
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Couleur',
+                      style: theme.textTheme.labelSmall
+                          ?.copyWith(color: cs.onSurfaceVariant)),
+                  const SizedBox(height: 4),
+                  for (final p in activePlayers)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: _ColorDot(
+                        color: _playerColor(p.color),
+                        selected: p.color == manualPlayer,
+                        onTap: () => onChangeManualPlayer(p.color),
+                      ),
                     ),
-                  ],
-                ),
+                ],
               ),
               const SizedBox(width: 12),
-              // ─── Pions à la base (right) ───
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -3215,6 +3223,8 @@ class _ControlPanel extends StatelessWidget {
                         style: theme.textTheme.labelSmall
                             ?.copyWith(color: cs.onSurfaceVariant)),
                     const SizedBox(height: 4),
+                    // Wrap et non Row : horizontal par nature, mais il passe
+                    // à la ligne au lieu de déborder si la carte rétrécit.
                     Wrap(
                       spacing: 4,
                       runSpacing: 4,
@@ -3230,6 +3240,54 @@ class _ControlPanel extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+          // ─── Milieu : Valeur dé, à l'horizontale et centrée ───
+          const SizedBox(height: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text('Valeur dé',
+                  style: theme.textTheme.labelSmall
+                      ?.copyWith(color: cs.onSurfaceVariant)),
+              const SizedBox(height: 4),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 4,
+                runSpacing: 4,
+                children: [
+                  for (int v = 1; v <= 6; v++)
+                    _MiniDiceButton(
+                      value: v,
+                      selected: v == manualValue,
+                      onTap: () => onChangeManualValue(v),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          // ─── Lancer : joue la couleur et la valeur choisies ───
+          // Hauteur bridée et libellé sur UNE ligne : dans une colonne
+          // étroite un bouton libre empile ses lettres à la verticale.
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 32,
+            child: FilledButton.icon(
+              key: const Key('roll-manual'),
+              icon: const Icon(Icons.casino, size: 16),
+              label: const Text(
+                'Lancer',
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+              ),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                visualDensity: VisualDensity.compact,
+                textStyle: const TextStyle(fontSize: 13),
+              ),
+              onPressed:
+                  (busy || phase == TurnPhase.gameOver) ? null : onManualRoll,
+            ),
           ),
           // ─── Retour / Rejouer (undo / redo) — bas de carte ───
           const SizedBox(height: 12),
