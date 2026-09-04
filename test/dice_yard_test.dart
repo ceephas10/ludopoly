@@ -39,7 +39,7 @@ void main() {
       await shutdownApp(t);
     });
 
-    testWidgets('quand la main passe, le dé change de couleur AVEC elle',
+    testWidgets('la main passe, mais le dé attend qu\'on ait lu le chiffre',
         (t) async {
       await bootApp(t);
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
@@ -52,10 +52,20 @@ void main() {
 
       expect(state.currentColor, isNot(before),
           reason: 'un 3 sans coup jouable doit passer la main');
+      // Le moteur a changé de joueur, mais PAS l'affichage : le dé garde la
+      // couleur de celui qui vient de lancer, sinon son 3 apparaîtrait
+      // aussitôt sous la couleur du suivant et il ne verrait jamais ce
+      // qu'il a tiré.
+      expect(diceAssets(t).single,
+          'AnimStock/Dices/PNG/Dice_3_${before.name}.png',
+          reason: 'le dé doit rester sur le lanceur le temps de la lecture');
+
+      // La pause écoulée, il prend la couleur du joueur suivant.
+      await t.pump(const Duration(milliseconds: 900));
       expect(diceAssets(t).single,
           'AnimStock/Dices/PNG/Dice_3_${state.currentColor.name}.png',
-          reason: 'le dé garde la valeur sortie mais prend la couleur du '
-              'joueur suivant');
+          reason: 'le dé garde la valeur sortie mais prend enfin la couleur '
+              'du joueur suivant');
 
       await shutdownApp(t);
     });
@@ -80,7 +90,7 @@ void main() {
       await shutdownApp(t);
     });
 
-    testWidgets('le halo SUIT le tour quand la main passe', (t) async {
+    testWidgets('le halo SUIT le tour, une fois le chiffre lu', (t) async {
       await bootApp(t);
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
       final before = state.currentColor;
@@ -91,6 +101,11 @@ void main() {
       await t.pump(const Duration(milliseconds: 300));
       expect(state.currentColor, isNot(before));
 
+      // Le halo accompagne le dé : il reste d'abord sur le lanceur.
+      expect(t.widget<YardBlink>(find.byType(YardBlink)).playerColor, before,
+          reason: 'les deux indicateurs de tour doivent rester ensemble');
+
+      await t.pump(const Duration(milliseconds: 900));
       final blink = t.widget<YardBlink>(find.byType(YardBlink));
       expect(blink.playerColor, state.currentColor,
           reason: 'le halo est resté sur ${blink.playerColor.name} alors '

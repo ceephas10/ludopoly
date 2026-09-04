@@ -835,6 +835,10 @@ class BoardScreenState extends State<BoardScreen>
     _controller.pushHistory(
         '${(forPlayer ?? _controller.currentColor).name} · dé $value');
     Pawn? autoMove;
+    // Non nul si le LANCER LUI-MÊME a passé la main : aucun coup jouable,
+    // ou troisième 6. Ces deux cas changeaient de joueur dans le même
+    // instant que l'affichage du chiffre.
+    PlayerColor? passedFrom;
     setState(() {
       if (forPlayer != null) {
         // Mode manuel : on force la main à [forPlayer] et on repart d'un
@@ -872,6 +876,14 @@ class BoardScreenState extends State<BoardScreen>
         debugPrint('[amélioration] $n');
       }
       if (rollNotices.isNotEmpty) _autoNotice = rollNotices.join('\n');
+      // Le lancer a-t-il passé la main tout seul ? On RETIENT alors la
+      // couleur de celui qui vient de lancer : sans ça, son chiffre
+      // s'affiche aussitôt sous la couleur du joueur suivant, et il ne
+      // voit jamais ce qu'il a tiré.
+      if (_controller.currentColor != roller) {
+        passedFrom = roller;
+        _activeColorHold = roller;
+      }
       // The ONLY rule, applied to every roll:
       // 1 pion movable → play it.
       if (_controller.phase == TurnPhase.moving) {
@@ -890,6 +902,19 @@ class BoardScreenState extends State<BoardScreen>
     final pending = autoMove;
     _openDrawnCardIfAny();
     if (pending != null) _scheduleAutoMove(pending);
+    // La main rendue par le lancer lui-même : on laisse le chiffre et la
+    // couleur du lanceur affichés le temps qu'il les lise, puis le dé
+    // passe au joueur suivant. L'ordinateur, lui, attend de toute façon
+    // [_aiRollDelay] — plus long que cette pause — avant de saisir le dé.
+    final held = passedFrom;
+    if (held != null) {
+      _diceReadTimer?.cancel();
+      _diceReadTimer = _after(_pace(_diceReadHold, ai: _isAiColor(held)), () {
+        if (!mounted) return;
+        if (_activeColorHold != held) return;
+        setState(() => _activeColorHold = null);
+      });
+    }
   }
 
   /// La carte IMMÉDIATE qui attend qu'on lui désigne un pion. Elle s'ouvre
