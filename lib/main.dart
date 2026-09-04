@@ -232,6 +232,11 @@ class BoardScreenState extends State<BoardScreen>
   /// device preset sizes for testing different aspect ratios.
   double? _boardWidthOverride;
 
+  /// Le centre de commandes est-il replié sur le côté ? Le chevron posé
+  /// entre le plateau et le panneau bascule cet état ; replié, toute la
+  /// largeur revient au plateau.
+  bool _panelCollapsed = false;
+
   /// Manual-mode selection: which color to play next and which dice value
   /// to force. Independent of the controller's natural turn rotation.
   PlayerColor _manualPlayer = PlayerColor.blue;
@@ -2124,8 +2129,14 @@ class BoardScreenState extends State<BoardScreen>
             // proportionally so we don't end up with min > max in clamp().
             final panelMax = w * 0.55;
             final panelMin = math.min(280.0, panelMax);
-            final panelWidth = (w * 0.39).clamp(panelMin, panelMax);
-            final boardArea = isNarrow ? w : (w - panelWidth).clamp(120.0, w);
+            final panelWidth = _panelCollapsed
+                ? 0.0
+                : (w * 0.39).clamp(panelMin, panelMax);
+            // La poignée à chevron mange sa propre largeur : sans ça, le
+            // plateau déborderait de la ligne.
+            final boardArea = isNarrow
+                ? w
+                : (w - panelWidth - _PanelHandle.width).clamp(120.0, w);
             // 15 px top + 15 px bottom breathing room around the board.
             const boardMarginV = 15.0;
             final maxBoardSquare = isNarrow
@@ -2401,14 +2412,75 @@ class BoardScreenState extends State<BoardScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 boardWidget,
-                SizedBox(
-                  width: panelWidth,
+                _PanelHandle(
+                  collapsed: _panelCollapsed,
                   height: h,
-                  child: panel,
+                  onTap: () =>
+                      setState(() => _panelCollapsed = !_panelCollapsed),
                 ),
+                if (!_panelCollapsed)
+                  SizedBox(
+                    width: panelWidth,
+                    height: h,
+                    child: panel,
+                  ),
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+/// La poignée posée entre le plateau et le centre de commandes : un liseré
+/// vertical portant un chevron. Un clic replie le panneau sur le côté, un
+/// autre le rouvre. Le chevron pointe TOUJOURS vers l'endroit où le clic
+/// va emmener le panneau.
+class _PanelHandle extends StatelessWidget {
+  const _PanelHandle({
+    required this.collapsed,
+    required this.height,
+    required this.onTap,
+  });
+
+  final bool collapsed;
+  final double height;
+  final VoidCallback onTap;
+
+  /// Assez large pour être visée à la souris, assez fine pour ne pas voler
+  /// de place au plateau.
+  static const double width = 18;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: width,
+      height: height,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          key: const Key('panel-handle'),
+          // opaque : le liseré tout entier est cliquable, pas seulement les
+          // quelques pixels peints par le chevron.
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Tooltip(
+            message: collapsed
+                ? 'Rouvrir le centre de commandes'
+                : 'Replier le centre de commandes sur le côté',
+            child: ColoredBox(
+              color: cs.surfaceContainerHighest,
+              child: Center(
+                child: Icon(
+                  collapsed ? Icons.chevron_left : Icons.chevron_right,
+                  size: 18,
+                  color: cs.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
