@@ -106,8 +106,9 @@ class BoardSpec {
 
   /// Somme à atteindre dans le couloir pour être sorti. Le couloir compte
   /// donc [exitGoal] rangs, numérotés à partir de 1, le dernier étant le
-  /// centre. Un tour complet vaut [lapLength] + [exitGoal] pas.
-  static const int exitGoal = 5;
+  /// centre. Un tour complet vaut [lapLength] + [exitGoal] pas, soit 56 —
+  /// le compte de Ludo King.
+  static const int exitGoal = 6;
 
   int get size => ring.length;
   CellSpec cell(int id) => ring[id];

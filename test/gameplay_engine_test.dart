@@ -507,17 +507,18 @@ void main() {
 
     test('le jet exact : dépasser le centre est illégal', () {
       final g = game();
-      final t = tok(g, TokenColor.blue)..enterExit(3);
+      // Un cran avant le centre : un 3 le depasserait forcement.
+      final t = tok(g, TokenColor.blue)..enterExit(BoardSpec.exitGoal - 1);
       tok(g, TokenColor.blue, 1).enterRing(20); // pour que le tour ne passe pas
-      g.roll(3); // 3 + 3 = 6 > 5
+      g.roll(3);
       expect(g.currentPlayer, TokenColor.blue);
       expect(g.canMove(t), isFalse);
     });
 
     test('le jet exact : la bonne valeur sort le pion', () {
       final g = game();
-      final t = tok(g, TokenColor.blue)..enterExit(3);
-      g.roll(2); // 3 + 2 = 5
+      final t = tok(g, TokenColor.blue)..enterExit(BoardSpec.exitGoal - 2);
+      g.roll(2); // pile le centre
       final ev = g.play(t);
       expect(t.isHome, isTrue);
       expect(types(ev), contains(EventType.home));
@@ -545,9 +546,9 @@ void main() {
       expect(safe.ringIndex, 2);
     });
 
-    test('un tour complet : 55 pas, et la case interdite jamais foulée', () {
+    test('un tour complet : 56 pas, et la case interdite jamais foulée', () {
       // Le parcours entier, dé de 1, pour chacune des quatre couleurs :
-      // 50 cases d'anneau puis 5 rangs de couloir.
+      // 50 cases d'anneau puis 6 rangs de couloir.
       for (final c in spec.colors) {
         final other = c == TokenColor.blue ? TokenColor.red : TokenColor.blue;
         final g = game(players: [c, other]);
@@ -579,7 +580,7 @@ void main() {
       for (var i = 0; i < 3; i++) {
         mine[i].enterExit(BoardSpec.exitGoal);
       }
-      final last = mine[3]..enterExit(4);
+      final last = mine[3]..enterExit(BoardSpec.exitGoal - 1);
       g.roll(1);
       final ev = g.play(last);
       expect(types(ev), contains(EventType.won));
