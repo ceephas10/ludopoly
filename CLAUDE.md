@@ -9,18 +9,22 @@
 | `LudoPoly` | `~/Desktop/LudoPoly` | Flutter / Dart | **Consomme** les anims |
 | `LudoPolyAnimations` | `~/Desktop/LudoPolyAnimation` | React + Vite + TS | **Produit** les anims |
 
-- Le **Studio Animations** conçoit/exporte toutes les anims (dés qui roulent, pions qui sautent, etc.) et dépose les sorties (PNG, GIF, WebP) dans son propre `AnimStock/`.
+- Le **Studio Animations** conçoit/exporte toutes les anims (dés qui roulent, pions qui sautent, etc.) et dépose les sorties (PNG, GIF, WebP) dans son propre `AnimStock/`. Elles sont ensuite **recopiées** dans le repo Flutter — voir plus bas.
 - Le **Flutter** ne fait que `Image.asset(...)` sur ces fichiers. **Aucune animation custom côté Flutter** (pas de CustomPaint animé, pas de particles) — toute anim manquante est une demande à passer au Studio.
 
-### Le lien `AnimStock/`
+### Le dossier `AnimStock/`
 
-À la racine du repo Flutter, `AnimStock/` est un **lien symbolique** (gitignoré) vers l'`AnimStock/` du repo Animations :
+À la racine du repo Flutter, `AnimStock/` est un **vrai dossier, commité** — 166 fichiers, 14 Mo. Ce fut un lien symbolique gitignoré vers le repo Animations (une *junction* sous Windows avant ça) ; ce n'est plus le cas.
+
+**Pourquoi le changement.** Un clone neuf n'héritait que d'un lien mort. Or Flutter **ne s'arrête pas** quand un dossier d'assets manque : il écrit six lignes `unable to find directory entry in pubspec.yaml`, puis termine par `✓ Built build/web`. Un déploiement passait donc au vert avec un jeu **sans pions, sans dés et sans sélecteurs**. Vérifié sur clone neuf : **0** image embarquée avant, **154** après.
+
+**Conséquence à connaître.** Une image modifiée dans `LudoPolyAnimation` ne se propage plus toute seule. Après un export du Studio, la recopier puis la commiter (scope `flutter:`) :
 
 ```bash
-cd ~/Desktop/LudoPoly && ln -sfn ~/Desktop/LudoPolyAnimation/AnimStock AnimStock
+cp -R ~/Desktop/LudoPolyAnimation/AnimStock/ ~/Desktop/LudoPoly/AnimStock/
 ```
 
-C'était une *junction* sous Windows. **Sans ce lien, tous les assets du `pubspec.yaml` manquent** et le build échoue — c'est la première chose à vérifier sur une nouvelle machine.
+Les `.DS_Store` restent ignorés : ce ne sont pas des assets.
 
 ### Convention des assets d'animation
 
@@ -83,6 +87,23 @@ npm run dev          # http://localhost:3000
 ### Sur cette machine
 
 Les deux serveurs sont déclarés dans `~/Desktop/.claude/launch.json` (noms `ludopoly-web` et `studio`) — `launch.json` est lu **au répertoire de travail racine**, pas dans les sous-projets.
+
+## Déploiement web (Vercel)
+
+Le site se déploie depuis **`ceephas10/ludopoly`**, branche `main`.
+
+| Champ Vercel | Valeur |
+|---|---|
+| Framework Preset | `Other` |
+| Root Directory | `./` |
+| Build Command | `git clone https://github.com/flutter/flutter.git --depth 1 -b stable _flutter && _flutter/bin/flutter config --enable-web && _flutter/bin/flutter build web --release` |
+| Output Directory | `build/web` |
+| Install Command | **vide** — il n'y a pas de `package.json` ; laisser la valeur par défaut fait échouer le build |
+| Variables d'environnement | **aucune** — le code n'en lit pas |
+
+Chaque champ possède un **interrupteur à activer** avant de pouvoir le saisir : tant qu'il est éteint, le texte gris n'est qu'un exemple, pas une valeur.
+
+Vercel n'a pas Flutter : c'est la `Build Command` qui l'installe. Sortie attendue : `build/web`, environ 54 Mo.
 
 ## Specs et docs
 
