@@ -6,6 +6,8 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ludopoly/game/game_controller.dart';
+import 'package:ludopoly/game/pawn.dart';
 import 'package:ludopoly/main.dart';
 
 import 'app_boot.dart';
@@ -126,6 +128,45 @@ void main() {
       expect(t.state<YardBlinkState>(find.byType(YardBlink)).animating,
           isTrue,
           reason: 'la reprise doit relancer le clignotement');
+
+      await shutdownApp(t);
+    });
+  });
+
+  group('🎲 Le dé reste lisible APRÈS le coup', () {
+    testWidgets('le chiffre et la couleur du joueur tiennent, puis passent',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      state.setAiSeats(const {}); // personne ne joue tout seul
+      await t.pump();
+
+      final me = state.currentColor;
+      // Un seul pion sur l'anneau : avec un 3, le coup est forcé et part
+      // tout seul.
+      final p = state.controller.state.pawnsByColor[me]![0];
+      p.location = PawnLocation.ring;
+      p.position =
+          (GameController.startIdx(me) + 10) % GameController.ringSize;
+
+      state.rollManualForTest(3);
+      // Pause d'affichage du dé (550 ms) puis le trajet (2 × 190 ms).
+      await t.pump(const Duration(milliseconds: 1400));
+
+      // Le moteur a passé la main…
+      expect(state.currentColor, isNot(me),
+          reason: 'un 3 sans capture doit passer la main');
+      // … mais le dé montre encore le 3 de CELUI QUI VIENT DE JOUER.
+      expect(diceAssets(t).single,
+          'AnimStock/Dices/PNG/Dice_3_${me.name}.png',
+          reason: 'sans cette retenue, le joueur ne lit jamais son propre '
+              'résultat : le dé basculerait à la couleur suivante dès que '
+              'le pion se pose');
+
+      // La pause écoulée, la main passe visuellement au suivant.
+      await t.pump(const Duration(milliseconds: 900));
+      expect(diceAssets(t).single,
+          'AnimStock/Dices/PNG/Dice_3_${state.currentColor.name}.png');
 
       await shutdownApp(t);
     });

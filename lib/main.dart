@@ -464,6 +464,13 @@ class BoardScreenState extends State<BoardScreen>
   /// jouable) ne parte. Sans cette pause on ne voit jamais le chiffre.
   static const Duration _dicePause = Duration(milliseconds: 550);
 
+  /// Temps pendant lequel le dé GARDE la couleur et le chiffre du joueur
+  /// qui vient de jouer, APRÈS que son pion s'est posé. Sans cette pause,
+  /// le dé passait au joueur suivant à la seconde même de l'arrivée : on
+  /// voyait l'ancien chiffre sous la nouvelle couleur, et celui qui venait
+  /// de lancer n'avait jamais le temps de lire son propre résultat.
+  static const Duration _diceReadHold = Duration(milliseconds: 750);
+
   /// Pause pendant laquelle l'attaquant ET le pion qu'il vient de capturer
   /// restent affichés ENSEMBLE sur la même case. Elle ne commence qu'une
   /// fois l'attaquant VISUELLEMENT arrivé ; le pion capturé n'a pas bougé
@@ -519,6 +526,9 @@ class BoardScreenState extends State<BoardScreen>
   /// et à l'annulation d'un coup. Suivis pour être coupés proprement.
   final Map<Pawn, Timer> _travelEndTimers = {};
   Timer? _explosionTimer;
+
+  /// Minuterie de [_diceReadHold] : elle rend la main au joueur suivant.
+  Timer? _diceReadTimer;
 
   /// Timers des retours à contre-sens des pions capturés, indexés par pion.
   /// Il peut y en avoir plusieurs en vol (deux pions mangés d'un coup), et
@@ -815,6 +825,11 @@ class BoardScreenState extends State<BoardScreen>
   /// is currently up).
   void _roll(int value, {PlayerColor? forPlayer}) {
     if (_controller.phase == TurnPhase.gameOver) return;
+    // Quelqu'un relance : la pause de lecture du coup précédent n'a plus
+    // lieu d'être, sinon le dé afficherait le nouveau chiffre sous
+    // l'ancienne couleur.
+    _diceReadTimer?.cancel();
+    _activeColorHold = null;
     // Point de retour : l'instantané est pris AVANT le lancer, donc le
     // bouton Retour annule le lancer ET le déplacement joué avec.
     _controller.pushHistory(
@@ -1712,9 +1727,17 @@ class BoardScreenState extends State<BoardScreen>
           _travelStep.remove(p);
           _travelEndTimers.remove(p);
         }
-        // Le pion est arrivé : c'est MAINTENANT que le dé prend la couleur
-        // du joueur suivant et que le clignotement passe à son Yard.
-        _activeColorHold = null;
+      });
+      // Le pion est arrivé — mais le dé RESTE sur sa couleur et son chiffre
+      // encore [_diceReadHold]. C'est seulement après que la main passe
+      // visuellement au joueur suivant, dé et Yard clignotant compris.
+      _diceReadTimer?.cancel();
+      _diceReadTimer = _after(_pace(_diceReadHold, ai: aiMove), () {
+        if (!mounted) return;
+        // Un autre trajet a pu commencer entre-temps : on ne lui vole pas
+        // sa couleur.
+        if (_activeColorHold != actor) return;
+        setState(() => _activeColorHold = null);
       });
       // La pause de la case spéciale, puis le pion rejoint sa vraie place.
       if (path.isNotEmpty &&
@@ -1978,6 +2001,7 @@ class BoardScreenState extends State<BoardScreen>
     _fastTimers.clear();
     _busySeats.clear();
     _explosionTimer?.cancel();
+    _diceReadTimer?.cancel();
     for (final t in _returnTimers.values) {
       t.cancel();
     }
