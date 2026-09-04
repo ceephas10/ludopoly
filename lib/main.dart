@@ -202,6 +202,14 @@ class BoardScreenState extends State<BoardScreen>
   @visibleForTesting
   PlayerColor get currentColor => _controller.currentColor;
 
+  /// Les deux durées de la passation de main, exposées aux tests : elles
+  /// portent un invariant qu'un réglage distrait casserait en silence.
+  @visibleForTesting
+  static Duration get diceReadHoldForTest => _diceReadHold;
+
+  @visibleForTesting
+  static Duration get aiRollDelayForTest => _aiRollDelay;
+
   @visibleForTesting
   set aiOpponents(bool v) => setAiSeats(
       v ? _controller.turnOrder.skip(1).toSet() : const {});
@@ -469,7 +477,12 @@ class BoardScreenState extends State<BoardScreen>
   /// le dé passait au joueur suivant à la seconde même de l'arrivée : on
   /// voyait l'ancien chiffre sous la nouvelle couleur, et celui qui venait
   /// de lancer n'avait jamais le temps de lire son propre résultat.
-  static const Duration _diceReadHold = Duration(milliseconds: 750);
+  ///
+  /// INVARIANT : [_aiRollDelay] doit rester PLUS LONG que cette pause.
+  /// Les deux minuteries sont armées au même instant ; si l'ordinateur
+  /// était le plus court, il relancerait le dé pendant que le joueur
+  /// précédent lit encore le sien.
+  static const Duration _diceReadHold = Duration(milliseconds: 1200);
 
   /// Pause pendant laquelle l'attaquant ET le pion qu'il vient de capturer
   /// restent affichés ENSEMBLE sur la même case. Elle ne commence qu'une
@@ -480,7 +493,11 @@ class BoardScreenState extends State<BoardScreen>
   /// Temps que prend une IA avant de saisir le dé. C'est aussi le blanc
   /// que l'on voit entre deux ordinateurs qui s'enchaînent : sans lui, les
   /// couleurs défilent d'un bloc et on ne suit plus qui joue.
-  static const Duration _aiRollDelay = Duration(milliseconds: 900);
+  ///
+  /// Il est délibérément plus long que [_diceReadHold] : l'adversaire ne
+  /// doit JAMAIS commencer son tour pendant que le joueur précédent lit
+  /// son propre résultat. Voir l'invariant décrit là-bas.
+  static const Duration _aiRollDelay = Duration(milliseconds: 1500);
 
   /// Reprise de l'IA après un Retour / Rejouer. Plus long que
   /// [_aiRollDelay] : il faut avoir le temps d'appuyer plusieurs fois de

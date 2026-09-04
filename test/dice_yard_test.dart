@@ -24,6 +24,15 @@ void main() {
   setUp(useLargeSurface);
   tearDown(resetSurface);
 
+  test('l\'ordinateur ne saisit jamais le dé avant la fin de la pause', () {
+    // Les deux minuteries partent au MÊME instant. Si celle de
+    // l'ordinateur était la plus courte, il relancerait le dé pendant que
+    // le joueur précédent lit encore son propre résultat — exactement ce
+    // que cette pause existe pour empêcher.
+    expect(BoardScreenState.aiRollDelayForTest,
+        greaterThan(BoardScreenState.diceReadHoldForTest));
+  });
+
   group('🎲 Le dé central porte la COULEUR du joueur au tour', () {
     testWidgets('au démarrage : un seul dé, à la couleur du premier joueur',
         (t) async {
@@ -61,7 +70,7 @@ void main() {
           reason: 'le dé doit rester sur le lanceur le temps de la lecture');
 
       // La pause écoulée, il prend la couleur du joueur suivant.
-      await t.pump(const Duration(milliseconds: 900));
+      await t.pump(const Duration(milliseconds: 1600));
       expect(diceAssets(t).single,
           'AnimStock/Dices/PNG/Dice_3_${state.currentColor.name}.png',
           reason: 'le dé garde la valeur sortie mais prend enfin la couleur '
@@ -105,7 +114,7 @@ void main() {
       expect(t.widget<YardBlink>(find.byType(YardBlink)).playerColor, before,
           reason: 'les deux indicateurs de tour doivent rester ensemble');
 
-      await t.pump(const Duration(milliseconds: 900));
+      await t.pump(const Duration(milliseconds: 1600));
       final blink = t.widget<YardBlink>(find.byType(YardBlink));
       expect(blink.playerColor, state.currentColor,
           reason: 'le halo est resté sur ${blink.playerColor.name} alors '
@@ -179,7 +188,7 @@ void main() {
               'le pion se pose');
 
       // La pause écoulée, la main passe visuellement au suivant.
-      await t.pump(const Duration(milliseconds: 900));
+      await t.pump(const Duration(milliseconds: 1600));
       expect(diceAssets(t).single,
           'AnimStock/Dices/PNG/Dice_3_${state.currentColor.name}.png');
 
