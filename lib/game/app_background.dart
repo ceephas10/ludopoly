@@ -9,11 +9,12 @@ import 'package:flutter/material.dart';
 /// Les deux fonds du jeu.
 enum AppBackground {
   /// Derrière le tableau de bord.
-  menu('AnimStock/Backgrounds/Background_Menu.png',
+  menu('AnimStock/Backgrounds/Background.jpg',
       [Color(0xFF16452C), Color(0xFF0E2A1C)]),
 
-  /// Derrière le plateau, pendant la partie.
-  board('AnimStock/Backgrounds/Background_Board.png',
+  /// Derrière le plateau, pendant la partie. Même image que le menu : il
+  /// n'y en a qu'une pour l'instant.
+  board('AnimStock/Backgrounds/Background.jpg',
       [Color(0xFF2A3A63), Color(0xFF141C33)]);
 
   const AppBackground(this.asset, this.fallback);

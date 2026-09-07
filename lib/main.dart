@@ -5505,6 +5505,37 @@ class BoardView extends StatelessWidget {
                 );
               }
 
+              // ---- Passe 1 bis : le HALO sous chaque pion. ----
+              // Un anneau de la couleur du pion, posé à ses pieds. Il le
+              // suit partout — anneau, couloir, base — et se dessine AVANT
+              // les pions pour rester dessous. Sans lui, un pion pose sur
+              // une case blanche n'a rien qui le rattache au plateau.
+              for (final pawn in list) {
+                final center =
+                    _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
+                // Les pieds : le bas du pion visible.
+                final feet = Offset(
+                  center.dx,
+                  center.dy + pawnHeight * (1 - _pawnVisibleCenterFrac) -
+                      pawnHeight * 0.10,
+                );
+                final r = cell * 0.30;
+                yield AnimatedPositioned(
+                  key: ValueKey('halo_${pawn.color.name}_${pawn.id}'),
+                  duration: moveDuration[pawn] ?? Duration.zero,
+                  curve: Curves.easeInOut,
+                  left: feet.dx - r,
+                  top: feet.dy - r,
+                  width: r * 2,
+                  height: r * 2,
+                  child: IgnorePointer(
+                    child: CustomPaint(
+                      painter: _PawnHalo(_colorOf(pawn.color)),
+                    ),
+                  ),
+                );
+              }
+
               // ---- Pass 2: pawn IMAGES (no hit-test, full bbox for visual).
               //  AnimatedPositioned interpolates left/top when the cell
               //  changes — Flutter handles the slide internally, no extra
@@ -6576,6 +6607,33 @@ class YardBlinkState extends State<YardBlink>
       ),
     );
   }
+}
+
+/// L'anneau posé aux pieds d'un pion, dans SA couleur. Un disque très
+/// pâle au centre, un anneau franc autour : le pion s'y pose au lieu de
+/// flotter sur la case.
+class _PawnHalo extends CustomPainter {
+  const _PawnHalo(this.rgb);
+
+  /// La couleur du pion, telle que le plateau la peint.
+  final Color rgb;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = Offset(size.width / 2, size.height / 2);
+    final r = size.width / 2;
+    canvas.drawCircle(c, r * 0.94, Paint()..color = rgb.withValues(alpha: 0.18));
+    canvas.drawCircle(
+        c,
+        r * 0.80,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(1.2, r * 0.22)
+          ..color = rgb.withValues(alpha: 0.85));
+  }
+
+  @override
+  bool shouldRepaint(covariant _PawnHalo old) => old.rgb != rgb;
 }
 
 class _DiceFace extends StatelessWidget {
