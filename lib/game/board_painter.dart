@@ -31,10 +31,12 @@ class BoardPainter extends CustomPainter {
   const BoardPainter({this.showVortex = false, this.showChance = false});
 
   // Palette tuned to feel like the original Ludo King board.
-  static const Color _red    = Color(0xFFE94B4B);
-  static const Color _green  = Color(0xFF4FAE5D);
-  static const Color _blue   = Color(0xFF3DA4EC);
-  static const Color _yellow = Color(0xFFFFCE2E);
+  // Couleurs relevées sur le plateau de référence : franches et saturées,
+  // là où les précédentes étaient délavées.
+  static const Color _red    = Color(0xFFED1C24);
+  static const Color _green  = Color(0xFF00A651);
+  static const Color _blue   = Color(0xFF29ABE2);
+  static const Color _yellow = Color(0xFFFFCB05);
   static const Color _gridLine = Color(0xFFAAAAAA);
   static const Color _bg     = Color(0xFF1A2541);
 
@@ -81,15 +83,19 @@ class BoardPainter extends CustomPainter {
       // couche qui les dessine.
       for (final sx in kBaseSlotsX) {
         final cx = (c0 + sx) * cell;
-        final cy = (r0 + kBaseSlotY - kBaseSlotSize / 2 + 0.1) * cell;
-        final half = kBaseSlotSize * cell / 2;
-        canvas.drawCircle(Offset(cx, cy), half, fill..color = color);
+        // Le socle se pose SOUS la pointe des pieds, pas derrière le pion :
+        // la pointe touche la case à `kBaseSlotY + 0.1`, le disque est
+        // centré juste là. Il est aussi plus petit que le pion — c'est un
+        // socle, pas un fond.
+        final cy = (r0 + kBaseSlotY + 0.1) * cell;
+        final r = kBaseSlotSize * cell * 0.30;
+        canvas.drawCircle(Offset(cx, cy), r, fill..color = color);
         canvas.drawCircle(
             Offset(cx, cy),
-            half * 0.86,
+            r * 0.82,
             Paint()
               ..style = PaintingStyle.stroke
-              ..strokeWidth = math.max(0.8, kBaseSlotSize * cell * 0.035)
+              ..strokeWidth = math.max(0.8, r * 0.10)
               ..color = Colors.white.withValues(alpha: 0.55));
       }
     }
