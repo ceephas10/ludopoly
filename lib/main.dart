@@ -13,24 +13,41 @@ import 'game/board_painter_5p.dart';
 import 'game/board_path.dart';
 import 'game/card_art.dart';
 import 'game/game_controller.dart';
+import 'game/game_setup.dart';
 import 'game/game_state.dart';
 import 'game/pawn.dart';
 import 'game/player_color.dart';
+import 'setup_screen.dart';
 import 'game/upgrades.dart';
 export 'game/player_color.dart';
 
 void main() => runApp(const LudoPolyApp());
 
-class LudoPolyApp extends StatelessWidget {
+class LudoPolyApp extends StatefulWidget {
   const LudoPolyApp({super.key});
 
   @override
+  State<LudoPolyApp> createState() => _LudoPolyAppState();
+}
+
+class _LudoPolyAppState extends State<LudoPolyApp> {
+  /// Nul tant que la partie n'a pas été lancée : on est alors sur l'écran
+  /// de réglages. Une fois rempli, le plateau prend la main.
+  GameSetup? _setup;
+
+  @override
   Widget build(BuildContext context) {
+    final setup = _setup;
     return MaterialApp(
       title: 'LudoPoly',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.indigo),
-      home: const BoardScreen(),
+      home: setup == null
+          ? SetupScreen(onStart: (s) => setState(() => _setup = s))
+          // La clé force un plateau NEUF si l'on revient un jour aux
+          // réglages : sans elle, Flutter réutiliserait l'état de la
+          // partie précédente.
+          : BoardScreen(key: ValueKey(setup), setup: setup),
     );
   }
 }
@@ -139,7 +156,11 @@ class Player {
 }
 
 class BoardScreen extends StatefulWidget {
-  const BoardScreen({super.key});
+  const BoardScreen({super.key, this.setup = const GameSetup()});
+
+  /// Les choix faits sur l'écran d'accueil. Appliqués une fois, au
+  /// démarrage. La valeur par défaut sert aux usages directs du plateau.
+  final GameSetup setup;
 
   static const players = <Player>[
     Player('Player 1', PlayerColor.blue),
@@ -645,6 +666,7 @@ class BoardScreenState extends State<BoardScreen>
   @override
   void initState() {
     super.initState();
+    _applySetup();
     _bootstrap();
     // Le dé change de couleur à chaque passage de main. Sans préchargement,
     // la 1re fois qu'une face (valeur × couleur) apparaît, Flutter doit
@@ -653,6 +675,26 @@ class BoardScreenState extends State<BoardScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) => _precacheDice());
     _startAiWatchdog();
     _applyAiSeatsFromUrl();
+  }
+
+  /// Applique les choix de l'écran d'accueil. Une seule fois, avant tout
+  /// le reste : le contrôleur doit connaître l'ordre des tours et les
+  /// sièges d'ordinateur avant que la moindre minuterie ne parte.
+  void _applySetup() {
+    final s = widget.setup;
+    _playerCount = s.playerCount;
+    _controller.turnOrder = _activeColors;
+    if (!_activeColors.contains(_manualPlayer)) {
+      _manualPlayer = _activeColors.first;
+    }
+    _aiSeats
+      ..clear()
+      ..addAll(s.aiSeats.where(_activeColors.contains));
+    _controller.aiDifficulty = s.difficulty;
+    _controller.teamMode = s.teamMode && s.playerCount == 4;
+    _controller.upgrades.vortexEnabled = s.vortex;
+    _controller.upgrades.chanceEnabled = s.chance;
+    _aiTurbo = s.aiTurbo;
   }
 
   /// Sièges IA depuis l'URL : `?ai=all` ou `?ai=red,green,yellow`.
@@ -955,7 +997,7 @@ class BoardScreenState extends State<BoardScreen>
 
   /// La carte de la main qu'on vient de RETOURNER pour la lire, avec son
   /// propriétaire. `null` = aucune carte ouverte à la main.
-  ({ChanceCard card, PlayerColor by})? _handCard;
+  ({ChanceCard card, PlayerColor by, int slot})? _handCard;
 
   /// La carte ouverte à la main, pour les tests.
   @visibleForTesting
@@ -1002,8 +1044,12 @@ class BoardScreenState extends State<BoardScreen>
     if (seat == null) return;
     final hand = _controller.upgrades.handOf(seat);
     if (slot < 0 || slot >= hand.length) return;
-    setState(() => _handCard = (card: hand[slot], by: seat));
+    setState(() => _handCard = (card: hand[slot], by: seat, slot: slot));
   }
+
+  /// Ouvre la carte du rang [slot], comme un clic sur son dos.
+  @visibleForTesting
+  void openHandCardForTest(int slot) => _openHandCard(slot);
 
   /// Referme la carte retournée sans la jouer.
   @visibleForTesting
@@ -2300,7 +2346,11 @@ class BoardScreenState extends State<BoardScreen>
                             child: _HandCardOverlay(
                               key: ValueKey('hand-${_handCard!.card.id}'),
                               card: _handCard!.card,
-                              ownerLabel: _frenchColor(_handCard!.by),
+                              // « Bleu · carte 2 » : on retrouve le
+                              // numéro peint sur le dos qu'on vient de
+                              // toucher.
+                              ownerLabel: '${_frenchColor(_handCard!.by)}'
+                                  ' · carte ${_handCard!.slot + 1}',
                               size: boardSide,
                               playable: _controller.canPlayDeferred(
                                   _handCard!.by, _handCard!.card),
@@ -4346,7 +4396,10 @@ class _DeferredHandCardState extends State<_DeferredHandCard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final card in widget.hand) () {
+        // Indexée, pas seulement parcourue : le numéro affiché ici doit
+        // être EXACTEMENT celui peint sur le dos de la carte, dans la base.
+        for (var slot = 0; slot < widget.hand.length; slot++) () {
+          final card = widget.hand[slot];
           final playable = widget.canPlay(card);
           final pawns = widget.pawnTargets(card);
           final players = widget.playerTargets(card);
@@ -4397,6 +4450,23 @@ class _DeferredHandCardState extends State<_DeferredHandCard> {
                                   style: theme.textTheme.labelSmall
                                       ?.copyWith(
                                           color: cs.onSecondaryContainer)),
+                            ),
+                            const SizedBox(width: 6),
+                            // Le même numéro que sur le dos, dans la base.
+                            Container(
+                              width: 16,
+                              height: 16,
+                              alignment: Alignment.center,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFFD4AF37),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Text('${slot + 1}',
+                                  style: const TextStyle(
+                                    color: Color(0xFF0A0A0A),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                  )),
                             ),
                             const SizedBox(width: 6),
                             Expanded(
@@ -5041,7 +5111,12 @@ class BoardView extends StatelessWidget {
                           );
                         }
                         final mine = p.color == tappableCardSeat;
-                        final back = CardBack(radius: cell * 0.10);
+                        // Numérotée à partir de 1 : c'est ce qui
+                        // permet de désigner « ma deuxième carte ».
+                        final back = CardBack(
+                          radius: cell * 0.10,
+                          number: slot + 1,
+                        );
                         if (!mine || onDeferredCardTap == null) {
                           return IgnorePointer(child: back);
                         }

@@ -41,6 +41,27 @@ Future<void> bootApp(WidgetTester t) async {
   // le test précédent ne s'y résout jamais. On repart d'un cache vide.
   resetPawnAnimationCache();
   await t.pumpWidget(const LudoPolyApp());
+  // L'application s'ouvre désormais sur l'écran de réglages. On lance la
+  // partie exactement comme le ferait un joueur — les tests traversent donc
+  // le vrai parcours, écran d'accueil compris.
+  await t.pump();
+  final play = find.byKey(const Key('setup-play'));
+  if (play.evaluate().isNotEmpty) {
+    await t.tap(play);
+    await t.pump();
+  }
+  await waitForBoard(t);
+}
+
+/// Attend la fin du sondage des assets, une fois la partie lancée.
+/// Séparé de [bootApp] pour les tests qui règlent eux-mêmes la partie
+/// avant d'appuyer sur « Jouer ».
+Future<void> waitForBoard(WidgetTester t) async {
+  // Un pompage d'abord : sans lui, un appel qui suit immédiatement le clic
+  // sur « Jouer » verrait encore l'écran de réglages, n'y trouverait pas
+  // « Loading tokens… » et repartirait aussitôt — le plateau n'aurait
+  // jamais été construit.
+  await t.pump();
   for (int i = 0; i < 3000; i++) {
     if (find.text('Loading tokens…').evaluate().isEmpty) return;
     await t.runAsync(
