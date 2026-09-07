@@ -20,7 +20,7 @@ const List<double> kBaseSlotsX = [1.5, 2.5, 3.5, 4.5];
 const double kBaseSlotY = 1.4;
 
 /// Côté du socle, en cases. C'est aussi la hauteur visible du pion.
-const double kBaseSlotSize = 1.0;
+const double kBaseSlotSize = 1.15;
 
 class BoardPainter extends CustomPainter {
   /// Améliorations LudoPoly : quand un interrupteur est allumé, les cases
@@ -74,8 +74,10 @@ class BoardPainter extends CustomPainter {
     //    leave room for the LudoPoly extension content).
     void drawBase(double c0, double r0, Color color) {
       canvas.drawRect(rect(c0, r0, c0 + 6, r0 + 6), fill..color = color);
+      // Bande de couleur élargie : le blanc intérieur se resserre de 0,5 à
+      // 0,85 case sur chaque bord.
       canvas.drawRect(
-          rect(c0 + 0.5, r0 + 0.5, c0 + 5.5, r0 + 5.5),
+          rect(c0 + 0.85, r0 + 0.85, c0 + 5.15, r0 + 5.15),
           fill..color = Colors.white);
       // Un socle par pion : sur le blanc de la base, les quatre pions
       // flottaient sans rien pour les poser. Chaque socle occupe
@@ -113,6 +115,37 @@ class BoardPainter extends CustomPainter {
     canvas.drawRect(rect(9, 7, 14, 8), fill);
     fill.color = _blue;
     canvas.drawRect(rect(7, 9, 8, 14), fill);
+
+    // 4 bis) La flèche d'ENTRÉE : sur la dernière case d'anneau de chaque
+    // couleur, elle montre par où le pion quitte l'anneau pour son couloir.
+    // Bleu sur la 50, rouge sur la 11, vert sur la 24, jaune sur la 37 —
+    // toutes à `départ + 50`.
+    void drawEntryArrow(int cellIndex, double dx, double dy, Color color) {
+      final c = ring[cellIndex].pos * cell;
+      final a = cell * 0.26; // demi-longueur de la flèche
+      final w = cell * 0.17; // demi-largeur de la base du triangle
+      final tip = Offset(c.dx + dx * a, c.dy + dy * a);
+      // Perpendiculaire au sens de la flèche.
+      final px = -dy, py = dx;
+      final b1 = Offset(c.dx - dx * a * 0.35 + px * w,
+                        c.dy - dy * a * 0.35 + py * w);
+      final b2 = Offset(c.dx - dx * a * 0.35 - px * w,
+                        c.dy - dy * a * 0.35 - py * w);
+      canvas.drawPath(
+          Path()
+            ..moveTo(tip.dx, tip.dy)
+            ..lineTo(b1.dx, b1.dy)
+            ..lineTo(b2.dx, b2.dy)
+            ..close(),
+          Paint()..color = color);
+    }
+
+    // Le sens suit le couloir de la couleur : le bleu monte, le rouge va à
+    // droite, le vert descend, le jaune va à gauche.
+    drawEntryArrow(50, 0, -1, _blue);
+    drawEntryArrow(11, 1, 0, _red);
+    drawEntryArrow(24, 0, 1, _green);
+    drawEntryArrow(37, -1, 0, _yellow);
 
     // 5) Start squares (cell just outside each base, colored).
     final starts = <_Start>[

@@ -5189,7 +5189,7 @@ class BoardView extends StatelessWidget {
         // sur les cases voisines et masquait la flèche de sélection.
         final pawnHeight = cell * kBaseSlotSize;
         // Aspect ≈ 0.7 — close to a typical idle WebP (64/93 = 0.69).
-        final pawnWidth = pawnHeight * 0.7;
+        final pawnWidth = pawnHeight * 0.8;
 
         return Stack(
           children: [
