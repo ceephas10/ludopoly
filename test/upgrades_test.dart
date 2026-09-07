@@ -751,7 +751,7 @@ void main() {
       expect(seen, {1, 2, 3, 4, 5, 6}, reason: 'dé redevenu entier');
     });
 
-    test('double-dé : DEUX dés indépendants, somme de 2 à 12', () {
+    test('double-dé : UNE face comptée deux fois, donc paire', () {
       final c = newGame();
       final rng = math.Random(7);
       // Le modificateur pèse sur CELUI QUI LANCE. On donne donc la main au
@@ -763,8 +763,12 @@ void main() {
       final seen = <int>{
         for (int i = 0; i < 600; i++) c.pickDiceValueFor(PlayerColor.red, rng),
       };
-      expect(seen, {for (int v = 2; v <= 12; v++) v},
-          reason: '36 combinaisons, pas six');
+      expect(seen, {for (int v = 1; v <= 6; v++) v * 2},
+          reason: 'six valeurs paires — c\'est ce qu\'écrit la carte');
+      // Et les deux faces MONTRÉES sont la même : c'est un dé doublé, pas
+      // deux dés. Sans quoi la carte serait « Deux dés ».
+      final two = c.upgrades.lastTwoDice!;
+      expect(two.a, two.b);
     });
 
     test('deux dés : sommes de 2 à 12, et le moteur SAIT jouer un 12', () {

@@ -605,20 +605,58 @@ const List<ChanceCard> kDeferredCards = [
 ];
 
 /// Le CODE d'une carte, celui qu'on lit sur sa face et dans la liste du
-/// panneau : `1`, `2`, `3`… pour les différées, `A`, `B`, `C`… pour les
-/// immédiates. Il désigne la carte elle-même, pas sa place dans une main —
+/// panneau : `A` à `L` pour les 12 IMMÉDIATES, `1` à `12` pour les 12
+/// DIFFÉRÉES. Il désigne la carte elle-même, pas sa place dans une main —
 /// deux joueurs qui tiennent la même carte lisent donc le même code.
 ///
 /// Le DOS, lui, ne le porte jamais : il révélerait ce qui doit rester
 /// caché tant qu'on n'a pas retourné la carte.
-String cardCode(ChanceCard c) {
-  final deck = c.kind == CardKind.immediate ? kImmediateCards : kDeferredCards;
-  final i = deck.indexWhere((x) => x.id == c.id);
-  if (i < 0) return '?';
-  return c.kind == CardKind.immediate
-      ? String.fromCharCode(65 + i) // A, B, C…
-      : '${i + 1}'; // 1, 2, 3…
-}
+///
+/// ── POURQUOI CETTE TABLE EST ÉCRITE À LA MAIN ──────────────────────────
+///
+/// Elle l'était auparavant par `indexWhere` sur le talon. Le code d'une
+/// carte suivait donc sa POSITION dans la liste : insérer une carte au
+/// milieu, ou seulement en déplacer une, renumérotait toutes les
+/// suivantes en silence. Or un joueur apprend ses cartes — « la 5 me fait
+/// jouer 2 », « la 11 saute le voisin de droite ». Un code qui bouge est
+/// un code qu'on ne peut pas apprendre.
+///
+/// La table ci-dessous fixe donc le code de chaque carte à SON
+/// IDENTIFIANT. Elle est verrouillée par `test/card_codes_test.dart`, qui
+/// vérifie aussi qu'aucune carte n'y manque et qu'aucun code n'y est en
+/// double. Ajouter une carte demande d'y ajouter une ligne — et le
+/// prochain code libre, jamais celui d'une carte existante.
+const Map<String, String> kCardCodes = {
+  // ── Les 12 IMMÉDIATES : A à L ───────────────────────────────────────
+  'IMM_PAWN_BACK_3': 'A',
+  'IMM_PAWN_FORWARD_3': 'B',
+  'IMM_ALL_PAWNS_OUT': 'C',
+  'IMM_PAWN_BEFORE_EXIT': 'D',
+  'IMM_PAWN_HOME': 'E',
+  'IMM_PAWN_INVULNERABLE': 'F',
+  'IMM_PAWN_FROZEN': 'G',
+  'IMM_CAPTURE_AHEAD': 'H',
+  'IMM_CAPTURE_BEHIND': 'I',
+  'IMM_DICE_HALF': 'J',
+  'IMM_DICE_DOUBLE': 'K',
+  'IMM_TWO_DICE': 'L',
+
+  // ── Les 12 DIFFÉRÉES : 1 à 12 ───────────────────────────────────────
+  'DEF_PAWN_INVULNERABLE': '1',
+  'DEF_OPPONENT_FROZEN': '2',
+  'DEF_OPPONENT_NO_EXIT': '3',
+  'DEF_DICE_1': '4',
+  'DEF_DICE_2': '5',
+  'DEF_DICE_3': '6',
+  'DEF_DICE_4': '7',
+  'DEF_DICE_5': '8',
+  'DEF_DICE_6': '9',
+  'DEF_CAPTURE_TO_MY_BOX': '10',
+  'DEF_SKIP_RIGHT': '11',
+  'DEF_SKIP_CHOSEN': '12',
+};
+
+String cardCode(ChanceCard c) => kCardCodes[c.id] ?? '?';
 
 /// Géométrie des cases spéciales. Les 4 index de départ sont ceux de
 /// [GameController] (bleu 0, rouge 13, vert 26, jaune 39) — verrouillés

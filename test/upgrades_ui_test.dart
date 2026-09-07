@@ -19,7 +19,7 @@ void main() {
   tearDown(resetSurface);
 
   Future<void> openRules(WidgetTester t) async {
-    await t.tap(find.text('Règles du jeu'));
+    await t.tap(find.text('Règles'));
     await t.pump(const Duration(milliseconds: 300));
   }
 
@@ -299,7 +299,7 @@ void main() {
     });
   });
 
-  group('🎴 Les cartes sont posées FACE CACHÉE dans les bases', () {
+  group('🎴 Le bloc de cartes posé dans chaque base', () {
     test('le bloc tient dans la base, sous les pions et au-dessus du nom',
         () {
       for (final color in PlayerColor.values) {
@@ -345,25 +345,34 @@ void main() {
       }
     });
 
-    testWidgets('une carte en main montre son DOS, jamais son instruction',
+    testWidgets('MA carte se reconnaît ; celles des autres restent des dos',
         (t) async {
       await bootApp(t);
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
       final c = state.controller;
       state.setChanceEnabled(true);
       final me = c.currentColor;
+      final other = c.turnOrder.firstWhere((x) => x != me);
 
       expect(find.byType(CardBack), findsNothing,
           reason: 'aucune carte, aucun dos');
+      expect(find.byType(CardMini), findsNothing);
 
       final card = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_6');
       c.upgrades.addToHand(me, card);
+      c.upgrades.addToHand(
+          other, kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_2'));
       await t.pump(const Duration(milliseconds: 300));
 
+      // La mienne : je dois savoir ce qu'elle fait sans la retourner.
+      expect(find.byType(CardMini), findsOneWidget,
+          reason: 'ma carte porte son pictogramme et son effet');
+      // Celle de l'adversaire : un dos, et rien de plus.
       expect(find.byType(CardBack), findsOneWidget,
-          reason: 'la carte est posée face cachée dans la base');
+          reason: 'la carte de l\'autre reste cachée');
+      // Dans les deux cas, l'instruction complète reste fermée.
       expect(find.byType(CardFace), findsNothing,
-          reason: 'sa face ne doit PAS être visible');
+          reason: 'la face pleine ne s\'ouvre qu\'au toucher');
 
       await shutdownApp(t);
     });
@@ -444,9 +453,10 @@ void main() {
       c.upgrades.addToHand(me, card);
       await t.pump(const Duration(milliseconds: 300));
 
-      expect(find.byType(CardBack), findsOneWidget, reason: 'le dos');
+      expect(find.byType(CardMini), findsOneWidget,
+          reason: 'ma carte, reconnaissable');
       expect(find.byType(CardFace), findsNothing,
-          reason: 'rien à voir tant qu\'on n\'a pas touché');
+          reason: 'l\'instruction complète attend qu\'on y touche');
       expect(state.openedHandCard, isNull);
 
       await shutdownApp(t);
@@ -806,7 +816,7 @@ void main() {
       await shutdownApp(t);
     });
 
-    testWidgets('le DOUBLE-dé montre deux dés INDÉPENDANTS', (t) async {
+    testWidgets('le DOUBLE-dé montre DEUX FOIS la même face', (t) async {
       await bootApp(t);
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
       final c = state.controller;
@@ -826,22 +836,21 @@ void main() {
       expect(board().twoDice, isNotNull,
           reason: 'un 8, un 10 ou un 12 ne tient pas sur une seule face');
 
-      // Deux dés INDÉPENDANTS : 36 combinaisons, somme de 2 à 12, et les
-      // deux faces ne sont pas toujours égales.
+      // UNE face, comptée deux fois : les deux dés montrent donc toujours
+      // le MÊME chiffre, et le total est toujours pair. C'est ce que dit
+      // la carte — « 2, 4, 6, 8, 10, 12 » — et c'est aussi ce qui la
+      // distingue de « Deux dés », qui en tire deux vrais.
       final totals = <int>{};
-      var everDifferent = false;
       for (int i = 0; i < 300; i++) {
         final total = c.pickDiceValueFor(me);
         final pair = c.upgrades.lastTwoDice!;
         expect(pair.a, inInclusiveRange(1, 6));
-        expect(pair.b, inInclusiveRange(1, 6));
+        expect(pair.a, pair.b,
+            reason: 'un dé DOUBLÉ montre deux fois la même face');
         expect(pair.a + pair.b, total);
-        if (pair.a != pair.b) everDifferent = true;
         totals.add(total);
       }
-      expect(everDifferent, isTrue,
-          reason: 'les deux dés ne donnent pas toujours la même face');
-      expect(totals, {for (int v = 2; v <= 12; v++) v});
+      expect(totals, {for (int v = 1; v <= 6; v++) v * 2});
 
       c.upgrades.onTurnCompleted(me);
       c.upgrades.onTurnCompleted(me);

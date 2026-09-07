@@ -1132,12 +1132,16 @@ class GameController {
       case CardDiceMode.limit:
         return r.nextInt(3) + 1;
       case CardDiceMode.double:
-        // DEUX dés bel et bien indépendants : 36 combinaisons, somme de 2
-        // à 12. Ils ne montrent donc pas la même face en même temps.
-        final a = r.nextInt(6) + 1;
-        final b = r.nextInt(6) + 1;
-        upgrades.lastTwoDice = (a: a, b: b);
-        return a + b;
+        // UN seul dé, COMPTÉ DEUX FOIS — c'est ce que dit la carte : « le
+        // dé ne produit que des valeurs paires : 2, 4, 6, 8, 10 ou 12 ».
+        //
+        // Il tirait auparavant deux dés indépendants, exactement comme
+        // « Deux dés » : la carte pouvait donc sortir 5 ou 7, que sa
+        // propre consigne interdit, et les deux cartes faisaient la même
+        // chose. Les deux faces montrées sont donc IDENTIQUES.
+        final v = r.nextInt(6) + 1;
+        upgrades.lastTwoDice = (a: v, b: v);
+        return v * 2;
       case CardDiceMode.twoDice:
         // Deux dés bien réels : on garde leurs deux faces pour les
         // MONTRER, et le moteur ne travaille que sur leur somme.

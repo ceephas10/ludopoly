@@ -13,6 +13,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'card_identity.dart';
 import 'upgrades.dart';
 
 /// Les deux ors et le noir profond du dos.
@@ -236,6 +237,106 @@ class _CardBackPainter extends CustomPainter {
       old.number != number;
 }
 
+/// La carte telle qu'on la voit DANS SA PROPRE MAIN, posée sur le plateau.
+///
+/// Le dos ne dit rien, et c'est voulu pour les adversaires. Mais son
+/// propriétaire, lui, doit reconnaître ses cartes sans les retourner une à
+/// une : « laquelle de mes trois cartes fait jouer 2 ? » doit se répondre
+/// d'un regard. Cette carte-ci porte donc, sur le fond noir et or du dos,
+/// le pictogramme de l'effet, le code de la carte, et son effet en trois
+/// mots quand la place le permet.
+///
+/// Les cartes des AUTRES joueurs restent des [CardBack] muets.
+class CardMini extends StatelessWidget {
+  const CardMini(
+      {super.key, required this.card, required this.number, this.radius = 6});
+
+  final ChanceCard card;
+
+  /// Le RANG dans la main, à partir de 1 — le même que porte un [CardBack],
+  /// et à la même place. C'est lui qui permet de dire « ma deuxième
+  /// carte » ; le pictogramme, lui, dit ce qu'elle fait. Les deux se
+  /// complètent, aucun ne remplace l'autre.
+  final int number;
+
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    final ident = cardIdentity(card);
+    return LayoutBuilder(builder: (context, c) {
+      final w = c.maxWidth;
+      final h = c.maxHeight;
+      // Sous ~34 px de large l'étiquette devient illisible : on ne garde
+      // alors que le pictogramme et le code, qui eux restent lisibles.
+      final roomy = w >= 34 && h >= 46;
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: _ink,
+            border: Border.all(color: ident.color, width: math.max(1.0, w * 0.045)),
+            borderRadius: BorderRadius.circular(radius),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color.lerp(_ink, ident.color, 0.26)!,
+                _ink,
+              ],
+            ),
+          ),
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: w * 0.06, vertical: h * 0.05),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                CardGlyph(card: card, size: w * 0.52, color: ident.color),
+                if (roomy)
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      ident.label,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: _goldPale,
+                        fontSize: 9,
+                        height: 1.05,
+                        letterSpacing: 0.2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                // Le rang, en pastille dorée, au même endroit que sur un
+                // dos : les deux se lisent de la même façon.
+                Container(
+                  width: w * 0.30,
+                  height: w * 0.30,
+                  alignment: Alignment.center,
+                  decoration: const BoxDecoration(
+                      color: _gold, shape: BoxShape.circle),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      '$number',
+                      style: const TextStyle(
+                        color: _ink,
+                        fontSize: 11,
+                        height: 1.0,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    });
+  }
+}
+
 /// La FACE d'une carte : le même cadre doré, mais ouverte — on y lit le
 /// moment d'utilisation, le nom et l'instruction à suivre.
 class CardFace extends StatelessWidget {
@@ -246,6 +347,7 @@ class CardFace extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final immediate = card.kind == CardKind.immediate;
+    final ident = cardIdentity(card);
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: DecoratedBox(
@@ -286,22 +388,51 @@ class CardFace extends StatelessWidget {
               // Le CODE de la carte : A, B, C… pour une immédiate, 1, 2,
               // 3… pour une différée. Il désigne la carte elle-même, donc
               // deux joueurs qui tiennent la même y lisent la même chose.
-              Center(
-                child: Container(
-                  width: 30,
-                  height: 30,
-                  alignment: Alignment.center,
-                  decoration: const BoxDecoration(
-                    color: _gold,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Text(
-                    cardCode(card),
-                    style: const TextStyle(
-                      color: _ink,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
+              // À sa droite, le PICTOGRAMME de l'effet : le code dit
+              // LAQUELLE, le pictogramme dit CE QU'ELLE FAIT.
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    alignment: Alignment.center,
+                    decoration: const BoxDecoration(
+                      color: _gold,
+                      shape: BoxShape.circle,
                     ),
+                    child: Text(
+                      cardCode(card),
+                      style: const TextStyle(
+                        color: _ink,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  CardGlyph(card: card, size: 30),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // L'effet en trois mots, dans la couleur de sa famille : ce
+              // qu'on lit AVANT le nom, et souvent au lieu du nom.
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: ident.color.withValues(alpha: 0.16),
+                  border: Border.all(color: ident.color, width: 1.4),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  ident.label,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: ident.color,
+                    fontSize: 13,
+                    letterSpacing: 0.6,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
               ),
@@ -311,7 +442,7 @@ class CardFace extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: _goldPale,
-                  fontSize: 17,
+                  fontSize: 15,
                   height: 1.2,
                   fontWeight: FontWeight.w800,
                 ),

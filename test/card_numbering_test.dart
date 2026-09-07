@@ -1,6 +1,10 @@
-// Les cartes différées portent un NUMÉRO. Les quatre dos sont identiques :
-// sans lui, on ne peut ni les distinguer dans sa base, ni désigner
-// laquelle on veut jouer dans le panneau.
+// Les cartes différées portent un NUMÉRO — leur rang dans la main. Sans
+// lui, on ne peut ni les distinguer dans sa base, ni désigner laquelle on
+// veut jouer dans le panneau.
+//
+// Le rang tient sa place que la carte soit montrée de dos (celles des
+// autres joueurs) ou reconnaissable (les siennes, cf. [CardMini]) : c'est
+// la MÊME pastille, au même endroit.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludopoly/game/card_art.dart';
@@ -31,6 +35,7 @@ void main() {
     final numbers = [
       for (final b in t.widgetList<CardBack>(find.byType(CardBack)))
         if (b.number != null) b.number!,
+      for (final m in t.widgetList<CardMini>(find.byType(CardMini))) m.number,
     ]..sort();
     expect(numbers, [1, 2, 3],
         reason: 'un dos par carte tenue, numéroté à partir de 1');

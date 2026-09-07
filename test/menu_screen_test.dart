@@ -40,16 +40,16 @@ void main() {
     expect(find.byType(BoardScreen), findsOneWidget);
     // Ni le panneau, ni le chevron qui l'ouvrirait : cet écran s'adresse au
     // joueur, qui ne doit même pas apercevoir la page des paramètres.
-    expect(find.text('Centre de commandes'), findsNothing);
-    expect(find.text('Règles du jeu'), findsNothing);
-    expect(find.text('Settings'), findsNothing);
+    expect(find.text('Commandes'), findsNothing);
+    expect(find.text('Règles'), findsNothing);
+    expect(find.text('Paramètres'), findsNothing);
     expect(find.byKey(const Key('panel-handle')), findsNothing,
         reason: 'aucun moyen d\'ouvrir les paramètres depuis « Jouer »');
 
     await shutdownApp(t);
   });
 
-  testWidgets('« Système » ne montre QUE les options, sans plateau',
+  testWidgets('« Système » montre les options ET le plateau, repliable',
       (t) async {
     resetPawnAnimationCache();
     await t.pumpWidget(const LudoPolyApp());
@@ -57,18 +57,18 @@ void main() {
     await t.tap(find.byKey(const Key('menu-system')));
     await waitForBoard(t);
 
-    // Les trois pages d'options, et elles seules.
-    expect(find.text('Centre de commandes'), findsOneWidget);
-    expect(find.text('Règles du jeu'), findsOneWidget);
-    expect(find.text('Settings'), findsOneWidget);
+    // Les trois pages d'options.
+    expect(find.text('Commandes'), findsOneWidget);
+    expect(find.text('Règles'), findsOneWidget);
+    expect(find.text('Paramètres'), findsOneWidget);
     expect(find.text('Setup'), findsOneWidget,
         reason: 'ouvert sur le centre de commandes');
 
-    // Pas de plateau : pas de pion à l'écran, donc pas de chevron non plus
-    // — il n'y a rien à replier.
-    expect(find.byType(BoardView), findsNothing,
-        reason: 'Système ne montre pas le jeu');
-    expect(find.byKey(const Key('panel-handle')), findsNothing);
+    // Et le plateau à côté : on règle en voyant l'effet. Le chevron est
+    // là pour replier le panneau quand on veut le plateau en grand.
+    expect(find.byType(BoardView), findsOneWidget,
+        reason: 'Système montre aussi le jeu');
+    expect(find.byKey(const Key('panel-handle')), findsOneWidget);
 
     await shutdownApp(t);
   });
@@ -86,7 +86,7 @@ void main() {
     // Une page de lecture : aucun plateau, aucun panneau de réglages.
     expect(find.byType(BoardScreen), findsNothing,
         reason: 'on vient y comprendre, pas y jouer');
-    expect(find.text('Centre de commandes'), findsNothing);
+    expect(find.text('Commandes'), findsNothing);
 
     // Et l'on en revient.
     await t.tap(find.byKey(const Key('how-home')));

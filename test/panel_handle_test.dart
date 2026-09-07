@@ -18,14 +18,14 @@ void main() {
 
     // Au départ : le panneau est ouvert, et le chevron montre la droite —
     // c'est là que le clic va l'emmener.
-    expect(find.text('Centre de commandes'), findsOneWidget);
+    expect(find.text('Commandes'), findsOneWidget);
     expect(find.byIcon(Icons.chevron_right), findsOneWidget);
 
     await t.tap(handle);
     await t.pump(const Duration(milliseconds: 300));
 
     // Replié : le panneau a disparu, le chevron s'est retourné.
-    expect(find.text('Centre de commandes'), findsNothing,
+    expect(find.text('Commandes'), findsNothing,
         reason: 'le panneau doit être replié');
     expect(find.byIcon(Icons.chevron_left), findsOneWidget);
     expect(handle, findsOneWidget, reason: 'la poignée, elle, reste');
@@ -33,7 +33,7 @@ void main() {
     await t.tap(handle);
     await t.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('Centre de commandes'), findsOneWidget,
+    expect(find.text('Commandes'), findsOneWidget,
         reason: 'un second clic le rouvre');
     expect(find.byIcon(Icons.chevron_right), findsOneWidget);
 

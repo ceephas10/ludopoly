@@ -32,7 +32,7 @@ void main() {
     await bootApp(tester);
 
     // Ouvre l'onglet « Règles du jeu ».
-    await tester.tap(find.text('Règles du jeu'));
+    await tester.tap(find.text('Règles'));
     // Pas de pumpAndSettle : les animations idle des pions ne se posent
     // jamais, il expirerait à coup sûr. Deux pompes suffisent pour l'onglet.
     await tester.pump();

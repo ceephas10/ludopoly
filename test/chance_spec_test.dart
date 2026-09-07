@@ -240,10 +240,17 @@ void main() {
     }
 
     diceCard('IMM_DICE_HALF', 'Demi-dé', {1, 2, 3});
-    // Le double-dé, c'est DEUX dés indépendants : 36 combinaisons, somme
-    // de 2 à 12 — et non une face comptée deux fois.
+    // Le double-dé, c'est UNE face comptée DEUX FOIS — donc uniquement
+    // des valeurs paires. C'est ce que la carte écrit noir sur blanc :
+    // « Double-dé pendant 2 tours (2, 4, 6, 8, 10, 12) », et sa
+    // description : « le dé ne produit que des valeurs paires ».
+    //
+    // Il tirait auparavant deux dés indépendants. Deux conséquences, les
+    // deux fausses : la carte sortait des valeurs impaires que sa propre
+    // consigne interdit, et elle devenait IDENTIQUE à « Deux dés » — deux
+    // cartes du talon pour un seul effet, impossibles à distinguer.
     diceCard('IMM_DICE_DOUBLE', 'Double-dé',
-        {for (int v = 2; v <= 12; v++) v});
+        {for (int v = 1; v <= 6; v++) v * 2});
     diceCard('IMM_TWO_DICE', 'Deux dés',
         {for (int v = 2; v <= 12; v++) v});
   });

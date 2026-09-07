@@ -22,7 +22,7 @@ void main() {
 
   /// Ouvre l'onglet « Règles du jeu » du panneau.
   Future<void> openRules(WidgetTester t) async {
-    await t.tap(find.text('Règles du jeu'));
+    await t.tap(find.text('Règles'));
     await t.pump(const Duration(milliseconds: 300));
   }
 
@@ -298,7 +298,7 @@ void main() {
       await t.pump(const Duration(milliseconds: 300));
       expect(state.aiDifficulty, AiDifficulty.imbattable);
 
-      await t.tap(find.text('Centre de commandes'));
+      await t.tap(find.text('Commandes'));
       await t.pump(const Duration(milliseconds: 300));
       await openRules(t);
 
