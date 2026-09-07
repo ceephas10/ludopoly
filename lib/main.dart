@@ -643,6 +643,12 @@ class BoardScreenState extends State<BoardScreen>
   bool _diceRolling = false;
   Timer? _diceThrowTimer;
 
+  /// Incrémenté à CHAQUE lancer. Il sert de clé à l'image du dé : sans lui,
+  /// rejouer la même couleur et la même valeur réutilise l'image déjà
+  /// décodée, qui reste figée sur sa dernière frame — l'animation ne
+  /// repartait donc pas d'un lancer à l'autre.
+  int _throwSeq = 0;
+
   /// Timers des retours à contre-sens des pions capturés, indexés par pion.
   /// Il peut y en avoir plusieurs en vol (deux pions mangés d'un coup), et
   /// ils survivent au tour suivant — c'est de l'habillage, ça ne bloque pas
@@ -970,6 +976,7 @@ class BoardScreenState extends State<BoardScreen>
     // ce minuteur ne fait que rendre la main au PNG net ensuite.
     _diceThrowTimer?.cancel();
     _diceRolling = true;
+    _throwSeq++;
     _diceThrowTimer = _after(_pace(_diceThrowDuration), () {
       if (!mounted) return;
       setState(() => _diceRolling = false);
@@ -2397,6 +2404,7 @@ class BoardScreenState extends State<BoardScreen>
                       playerCount: _playerCount,
                       diceValue: _shownDice,
                       diceRolling: _diceRolling,
+                      throwSeq: _throwSeq,
                       activeColor: _activeColor,
                       currentPlayerColor: _controller.currentColor,
                       paused: _paused,
@@ -2629,7 +2637,7 @@ class BoardScreenState extends State<BoardScreen>
                     children: [
                       boardWidget,
                       Positioned(
-                        left: 8,
+                        right: 8,
                         top: 8,
                         child: Tooltip(
                           message: 'Revenir au menu',
@@ -4840,6 +4848,10 @@ class BoardView extends StatelessWidget {
   /// lancer du Studio plutôt que la face fixe.
   final bool diceRolling;
 
+  /// Numéro du lancer en cours. Change à chaque lancer et force l'image
+  /// animée à repartir de sa première frame.
+  final int throwSeq;
+
   /// Couleur du siège ACTIF — celle du dé central ET du Yard qui
   /// clignote. Ce n'est PAS toujours [currentPlayerColor] : pendant qu'un
   /// pion compte ses cases, les deux indicateurs restent sur la couleur de
@@ -4917,6 +4929,7 @@ class BoardView extends StatelessWidget {
     required this.game,
     required this.diceValue,
     this.diceRolling = false,
+    this.throwSeq = 0,
     required this.activeColor,
     required this.currentPlayerColor,
     this.paused = false,
@@ -4958,7 +4971,7 @@ class BoardView extends StatelessWidget {
   // Horizontal X positions (in cell units relative to base top-left) of the
   // 4 pawn slots inside a base. Y is computed dynamically so the pawn bbox
   // is stuck to the top of the (enlarged) white inner area with a 3px margin.
-  static const List<double> _spotsX = [1.5, 2.5, 3.5, 4.5];
+  static const List<double> _spotsX = kBaseSlotsX;
 
   /// Le BLOC de cartes d'une base : sa rangée est posée dans la bande
   /// libre entre les pions — rangés en haut vers 1,1 — et l'étiquette du
@@ -5004,7 +5017,7 @@ class BoardView extends StatelessWidget {
   Offset _baseSlotCenter(PlayerColor color, int slot, double cell) {
     final corner = _baseCorner[color]!;
     final cx = (corner.dx + _spotsX[slot]) * cell;
-    final cy = (corner.dy + 1.1) * cell;
+    final cy = (corner.dy + kBaseSlotY) * cell;
     return Offset(cx, cy);
   }
 
@@ -5170,10 +5183,11 @@ class BoardView extends StatelessWidget {
         final side = c.biggest.shortestSide;
         final cell = side / 15.0;
 
-        // Visible token target ≈ 0.84 cells tall (≈30 % smaller than the
-        // previous 1.2 so the pion doesn't overflow neighbouring cells
-        // and no longer masks the gold-arrow selector behind it).
-        final pawnHeight = cell * 0.84;
+        // Hauteur visible du pion. Elle vaut exactement le côté du socle
+        // peint sous lui dans la base : les deux tombent donc l'un sur
+        // l'autre au pixel près. 1,2 était trop grand — le pion débordait
+        // sur les cases voisines et masquait la flèche de sélection.
+        final pawnHeight = cell * kBaseSlotSize;
         // Aspect ≈ 0.7 — close to a typical idle WebP (64/93 = 0.69).
         final pawnWidth = pawnHeight * 0.7;
 
@@ -5319,6 +5333,7 @@ class BoardView extends StatelessWidget {
                             value: diceValue,
                             playerColor: activeColor,
                             rolling: diceRolling,
+                            throwSeq: throwSeq,
                           )
                         : Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -6572,10 +6587,15 @@ class _DiceFace extends StatelessWidget {
   /// sur la valeur sortie.
   final bool rolling;
 
+  /// Numéro du lancer : il entre dans la clé de l'image pour que
+  /// l'animation REPARTE même si la couleur et la valeur n'ont pas changé.
+  final int throwSeq;
+
   const _DiceFace({
     required this.value,
     this.playerColor,
     this.rolling = false,
+    this.throwSeq = 0,
   });
 
   String get _assetPath {
@@ -6592,6 +6612,9 @@ class _DiceFace extends StatelessWidget {
       color: Colors.transparent,
       child: Image.asset(
         _assetPath,
+        // La clé change à chaque lancer : sans elle, Flutter réutilise
+        // l'image déjà décodée et l'animation ne rejoue pas.
+        key: ValueKey('$_assetPath#$throwSeq'),
         fit: BoxFit.contain,
         filterQuality: FilterQuality.high,
         // Le chemin change à chaque changement de couleur ou de valeur.

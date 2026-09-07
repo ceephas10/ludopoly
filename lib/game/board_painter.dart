@@ -11,6 +11,17 @@ import 'board_path.dart' show ring;
 import 'player_color.dart';
 import 'upgrades.dart' show SpecialCells;
 
+/// Les 4 emplacements de pion d'une base, en unités de case depuis son coin
+/// haut-gauche. Partagés entre le socle peint ici et le pion posé dessus
+/// par `main.dart` : une seule source, donc aucun risque de décalage.
+const List<double> kBaseSlotsX = [1.5, 2.5, 3.5, 4.5];
+
+/// Hauteur du centre de la CASE d'un emplacement, depuis le coin de la base.
+const double kBaseSlotY = 1.4;
+
+/// Côté du socle, en cases. C'est aussi la hauteur visible du pion.
+const double kBaseSlotSize = 1.0;
+
 class BoardPainter extends CustomPainter {
   /// Améliorations LudoPoly : quand un interrupteur est allumé, les cases
   /// correspondantes se dessinent par-dessus le plateau de base. Éteints
@@ -64,6 +75,23 @@ class BoardPainter extends CustomPainter {
       canvas.drawRect(
           rect(c0 + 0.5, r0 + 0.5, c0 + 5.5, r0 + 5.5),
           fill..color = Colors.white);
+      // Un socle par pion : sur le blanc de la base, les quatre pions
+      // flottaient sans rien pour les poser. Chaque socle occupe
+      // exactement la place du pion — mêmes constantes, partagées avec la
+      // couche qui les dessine.
+      for (final sx in kBaseSlotsX) {
+        final cx = (c0 + sx) * cell;
+        final cy = (r0 + kBaseSlotY - kBaseSlotSize / 2 + 0.1) * cell;
+        final half = kBaseSlotSize * cell / 2;
+        canvas.drawCircle(Offset(cx, cy), half, fill..color = color);
+        canvas.drawCircle(
+            Offset(cx, cy),
+            half * 0.86,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = math.max(0.8, kBaseSlotSize * cell * 0.035)
+              ..color = Colors.white.withValues(alpha: 0.55));
+      }
     }
     drawBase(0, 0, _red);     // top-left
     drawBase(9, 0, _green);   // top-right
