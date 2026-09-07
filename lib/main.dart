@@ -17,6 +17,7 @@ import 'game/game_setup.dart';
 import 'game/game_state.dart';
 import 'game/pawn.dart';
 import 'game/player_color.dart';
+import 'menu_screen.dart';
 import 'setup_screen.dart';
 import 'game/upgrades.dart';
 export 'game/player_color.dart';
@@ -31,24 +32,63 @@ class LudoPolyApp extends StatefulWidget {
 }
 
 class _LudoPolyAppState extends State<LudoPolyApp> {
-  /// Nul tant que la partie n'a pas été lancée : on est alors sur l'écran
-  /// de réglages. Une fois rempli, le plateau prend la main.
-  GameSetup? _setup;
+  /// Ce que l'on regarde : le menu, les réglages, ou une partie.
+  MenuChoice? _screen;
+
+  /// Les réglages de la partie. Ils SURVIVENT au retour au menu : on règle
+  /// une fois dans Options, puis on joue autant qu'on veut.
+  GameSetup _setup = const GameSetup();
+
+  /// Chaque départ de partie change cette clé, donc reconstruit un plateau
+  /// NEUF. Sans elle, revenir au menu puis rejouer reprendrait la partie
+  /// précédente là où elle en était.
+  int _game = 0;
+
+  void _goHome() => setState(() => _screen = null);
 
   @override
   Widget build(BuildContext context) {
-    final setup = _setup;
     return MaterialApp(
       title: 'LudoPoly',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.indigo),
-      home: setup == null
-          ? SetupScreen(onStart: (s) => setState(() => _setup = s))
-          // La clé force un plateau NEUF si l'on revient un jour aux
-          // réglages : sans elle, Flutter réutiliserait l'état de la
-          // partie précédente.
-          : BoardScreen(key: ValueKey(setup), setup: setup),
+      home: _body(),
     );
+  }
+
+  Widget _body() {
+    switch (_screen) {
+      case null:
+        return MenuScreen(onChoose: (c) {
+          setState(() {
+            _screen = c;
+            if (c != MenuChoice.options) _game++;
+          });
+        });
+
+      case MenuChoice.options:
+        return SetupScreen(
+          onStart: (s) => setState(() {
+            _setup = s;
+            _screen = null; // réglé : on revient au menu
+          }),
+        );
+
+      // « Jouer » : le plateau seul. « Système » : plateau et panneau, comme
+      // l'écran de travail. « Comment jouer » : le panneau, ouvert sur les
+      // règles.
+      case MenuChoice.play:
+      case MenuChoice.system:
+      case MenuChoice.howToPlay:
+        return BoardScreen(
+          key: ValueKey(_game),
+          setup: _setup,
+          panelOpen: _screen != MenuChoice.play,
+          initialPanelTab:
+              _screen == MenuChoice.howToPlay ? 'rules' : 'commandes',
+          onExit: _goHome,
+        );
+    }
   }
 }
 
@@ -156,11 +196,29 @@ class Player {
 }
 
 class BoardScreen extends StatefulWidget {
-  const BoardScreen({super.key, this.setup = const GameSetup()});
+  const BoardScreen({
+    super.key,
+    this.setup = const GameSetup(),
+    this.panelOpen = true,
+    this.initialPanelTab = 'commandes',
+    this.onExit,
+  });
 
-  /// Les choix faits sur l'écran d'accueil. Appliqués une fois, au
+  /// Les choix faits sur l'écran de réglages. Appliqués une fois, au
   /// démarrage. La valeur par défaut sert aux usages directs du plateau.
   final GameSetup setup;
+
+  /// Le centre de commandes est-il déplié au départ ? « Jouer » le laisse
+  /// fermé — le plateau et rien d'autre ; le chevron le rouvre à tout
+  /// moment.
+  final bool panelOpen;
+
+  /// L'onglet du panneau à l'ouverture : `commandes`, `rules` ou
+  /// `settings`.
+  final String initialPanelTab;
+
+  /// Retour au menu. `null` = pas de bouton de retour.
+  final VoidCallback? onExit;
 
   static const players = <Player>[
     Player('Player 1', PlayerColor.blue),
@@ -681,6 +739,8 @@ class BoardScreenState extends State<BoardScreen>
   /// le reste : le contrôleur doit connaître l'ordre des tours et les
   /// sièges d'ordinateur avant que la moindre minuterie ne parte.
   void _applySetup() {
+    _panelCollapsed = !widget.panelOpen;
+    _panelTab = widget.initialPanelTab;
     final s = widget.setup;
     _playerCount = s.playerCount;
     _controller.turnOrder = _activeColors;
@@ -2514,12 +2574,51 @@ class BoardScreenState extends State<BoardScreen>
                     onRestart: () => _confirmRestart(context),
                   );
 
+            // Le retour au menu, posé PAR-DESSUS le plateau plutôt que
+            // dans son arbre : la mise en page du plateau est déjà dense,
+            // et ce bouton n'a rien à y faire.
+            final board = widget.onExit == null
+                ? boardWidget
+                : Stack(
+                    children: [
+                      boardWidget,
+                      Positioned(
+                        left: 8,
+                        top: 8,
+                        child: Tooltip(
+                          message: 'Revenir au menu',
+                          child: Material(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest
+                                .withValues(alpha: 0.9),
+                            shape: const CircleBorder(),
+                            elevation: 1,
+                            child: InkWell(
+                              key: const Key('board-home'),
+                              customBorder: const CircleBorder(),
+                              onTap: widget.onExit,
+                              child: Padding(
+                                padding: const EdgeInsets.all(7),
+                                child: Icon(Icons.home_outlined,
+                                    size: 20,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+
             // ── Responsive root: stack on narrow screens, side-by-side
             //    on wide ones. ───────────────────────────────────────
             if (isNarrow) {
               return Column(
                 children: [
-                  boardWidget,
+                  board,
                   Expanded(child: panel),
                 ],
               );
@@ -2527,7 +2626,7 @@ class BoardScreenState extends State<BoardScreen>
             return Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                boardWidget,
+                board,
                 _PanelHandle(
                   collapsed: _panelCollapsed,
                   height: h,

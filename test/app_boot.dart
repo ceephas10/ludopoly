@@ -41,13 +41,13 @@ Future<void> bootApp(WidgetTester t) async {
   // le test précédent ne s'y résout jamais. On repart d'un cache vide.
   resetPawnAnimationCache();
   await t.pumpWidget(const LudoPolyApp());
-  // L'application s'ouvre désormais sur l'écran de réglages. On lance la
-  // partie exactement comme le ferait un joueur — les tests traversent donc
-  // le vrai parcours, écran d'accueil compris.
+  // L'application s'ouvre sur le menu. On entre par « Système » : c'est
+  // le mode plateau + centre de commandes, celui que la plupart des tests
+  // observent. Ils traversent donc le vrai parcours, menu compris.
   await t.pump();
-  final play = find.byKey(const Key('setup-play'));
-  if (play.evaluate().isNotEmpty) {
-    await t.tap(play);
+  final system = find.byKey(const Key('menu-system'));
+  if (system.evaluate().isNotEmpty) {
+    await t.tap(system);
     await t.pump();
   }
   await waitForBoard(t);
