@@ -72,20 +72,30 @@ void main() {
     await shutdownApp(t);
   });
 
-  testWidgets('« Comment jouer » ouvre le panneau sur les règles', (t) async {
+  testWidgets('« Comment jouer » ouvre la règle du jeu, sans plateau',
+      (t) async {
     resetPawnAnimationCache();
     await t.pumpWidget(const LudoPolyApp());
     await t.pump();
     await t.tap(find.byKey(const Key('menu-how')));
-    await waitForBoard(t);
+    await t.pump();
 
-    expect(find.text('Règles persistantes'), findsOneWidget,
-        reason: 'le panneau doit s\'ouvrir directement sur les règles');
+    expect(find.text('🎲 COMMENT JOUER À LUDOPOLY'), findsOneWidget);
+    expect(find.text('1. 🎯 Le but du jeu'), findsOneWidget);
+    // Une page de lecture : aucun plateau, aucun panneau de réglages.
+    expect(find.byType(BoardScreen), findsNothing,
+        reason: 'on vient y comprendre, pas y jouer');
+    expect(find.text('Centre de commandes'), findsNothing);
+
+    // Et l'on en revient.
+    await t.tap(find.byKey(const Key('how-home')));
+    await t.pump();
+    expect(find.text('LUDOPOLY'), findsOneWidget);
 
     await shutdownApp(t);
   });
 
-  testWidgets('une option activée dans Système suit jusqu\'à Comment jouer',
+  testWidgets('une option activée dans Système suit jusqu\'à la partie',
       (t) async {
     resetPawnAnimationCache();
     await t.pumpWidget(const LudoPolyApp());
@@ -99,14 +109,14 @@ void main() {
     sys.setChanceEnabled(true);
     await t.pump();
 
-    // Retour au menu, puis on entre par Comment jouer.
+    // Retour au menu, puis on entre par « Jouer ».
     await t.tap(find.byKey(const Key('board-home')));
     await t.pump();
-    await t.tap(find.byKey(const Key('menu-how')));
+    await t.tap(find.byKey(const Key('menu-play')));
     await waitForBoard(t);
 
-    final how = t.state<BoardScreenState>(find.byType(BoardScreen));
-    expect(how.controller.upgrades.chanceEnabled, isTrue,
+    final game = t.state<BoardScreenState>(find.byType(BoardScreen));
+    expect(game.controller.upgrades.chanceEnabled, isTrue,
         reason: 'ce qu\'on règle dans Système doit valoir pour les autres '
             'écrans, sinon le réglage ne sert à rien');
 

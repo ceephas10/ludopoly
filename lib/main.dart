@@ -18,6 +18,7 @@ import 'game/game_setup.dart';
 import 'game/game_state.dart';
 import 'game/pawn.dart';
 import 'game/player_color.dart';
+import 'how_to_play_screen.dart';
 import 'menu_screen.dart';
 import 'setup_screen.dart';
 import 'game/upgrades.dart';
@@ -73,12 +74,17 @@ class _LudoPolyAppState extends State<LudoPolyApp> {
           }),
         );
 
-      // « Jouer » : le plateau seul. « Système » : plateau et panneau, comme
-      // l'écran de travail. « Comment jouer » : le panneau, ouvert sur les
-      // règles.
+      // « Comment jouer » : la règle du jeu, sur sa propre page. Pas de
+      // plateau — on vient y comprendre, pas y jouer.
+      case MenuChoice.howToPlay:
+        return HowToPlayScreen(
+          background: _setup.background,
+          onExit: () => setState(() => _screen = null),
+        );
+
+      // « Jouer » : le plateau seul. « Système » : le panneau seul.
       case MenuChoice.play:
       case MenuChoice.system:
-      case MenuChoice.howToPlay:
         return BoardScreen(
           key: ValueKey(_game),
           setup: _setup,
@@ -87,8 +93,7 @@ class _LudoPolyAppState extends State<LudoPolyApp> {
           showPanel: _screen != MenuChoice.play,
           // « Système » ne montre QUE le panneau : pas de plateau.
           showBoard: _screen != MenuChoice.system,
-          initialPanelTab:
-              _screen == MenuChoice.howToPlay ? 'rules' : 'commandes',
+          initialPanelTab: 'commandes',
           // Les réglages changés dans le panneau reviennent ici : ils
           // s'appliquent donc aux écrans suivants, « Comment jouer »
           // compris.

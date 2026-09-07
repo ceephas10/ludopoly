@@ -76,7 +76,7 @@ class MenuScreen extends StatelessWidget {
                     _MenuTile(
                       key: const Key('menu-how'),
                       title: 'Comment jouer',
-                      subtitle: 'Les règles et les options de partie',
+                      subtitle: 'La règle du jeu, expliquée',
                       onTap: () => onChoose(MenuChoice.howToPlay),
                     ),
                     _MenuTile(
