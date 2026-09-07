@@ -17,7 +17,11 @@ import 'upgrades.dart' show SpecialCells;
 const List<double> kBaseSlotsX = [1.5, 2.5, 3.5, 4.5];
 
 /// Hauteur du centre de la CASE d'un emplacement, depuis le coin de la base.
-const double kBaseSlotY = 1.4;
+/// Calée pour que le HAUT du pion effleure la bande de couleur : le blanc
+/// intérieur commence à 0,85, le pion culmine à `kBaseSlotY + 0.1 -
+/// kBaseSlotSize` = 0,78. Il mord donc de sept centièmes de case sur la
+/// bande — il la touche, sans la chevaucher.
+const double kBaseSlotY = 1.83;
 
 /// Côté du socle, en cases. C'est aussi la hauteur visible du pion.
 const double kBaseSlotSize = 1.15;

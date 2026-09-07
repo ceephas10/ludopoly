@@ -553,6 +553,9 @@ class BoardScreenState extends State<BoardScreen>
   /// jouable) ne parte. Sans cette pause on ne voit jamais le chiffre.
   static const Duration _dicePause = Duration(milliseconds: 550);
 
+  /// Hauteur de la barre qui porte le retour au menu, au-dessus du plateau.
+  static const double _topBarHeight = 38;
+
   /// Durée de l'animation de lancer du Studio — MESURÉE sur les fichiers
   /// `Dice_<couleur>_throw_<valeur>.webp` : 15 images, 495 ms, sans
   /// répétition. Elles s'arrêtent d'elles-mêmes sur la face sortie ; on
@@ -2348,6 +2351,9 @@ class BoardScreenState extends State<BoardScreen>
             final panelMax = w * 0.55;
             final panelMin = math.min(280.0, panelMax);
             final showPanel = widget.showPanel;
+            // La barre du retour au menu prend sa hauteur SUR celle du
+            // plateau : sans ça la colonne dépasse de 38 px.
+            final barH = widget.onExit == null ? 0.0 : _topBarHeight;
             final panelWidth = (!showPanel || _panelCollapsed)
                 ? 0.0
                 : (w * 0.39).clamp(panelMin, panelMax);
@@ -2364,15 +2370,16 @@ class BoardScreenState extends State<BoardScreen>
                 // Sans panneau — le mode « Jouer » du téléphone — le plateau
                 // prend toute la hauteur qu'il peut. Avec panneau, il lui en
                 // laisse les deux tiers.
-                ? math.min(w, showPanel ? h * 0.6 : h - 2 * boardMarginV)
-                : (h - 2 * boardMarginV).clamp(0.0, boardArea);
+                ? math.min(
+                    w, showPanel ? h * 0.6 : h - 2 * boardMarginV - barH)
+                : (h - 2 * boardMarginV - barH).clamp(0.0, boardArea);
             final boardSide =
                 _boardWidthOverride?.clamp(120.0, maxBoardSquare) ??
                     maxBoardSquare;
 
             final boardWidget = SizedBox(
               width: boardArea,
-              height: isNarrow ? boardSide + 2 * boardMarginV : h,
+              height: isNarrow ? boardSide + 2 * boardMarginV : h - barH,
               child: Padding(
                 padding: const EdgeInsets.symmetric(
                     vertical: boardMarginV),
@@ -2628,42 +2635,45 @@ class BoardScreenState extends State<BoardScreen>
                     onRestart: () => _confirmRestart(context),
                   );
 
-            // Le retour au menu, posé PAR-DESSUS le plateau plutôt que
-            // dans son arbre : la mise en page du plateau est déjà dense,
-            // et ce bouton n'a rien à y faire.
+            // Le retour au menu est posé AU-DESSUS du plateau, pas dessus :
+            // sur le plateau il masquait un coin de base.
             final board = widget.onExit == null
                 ? boardWidget
-                : Stack(
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      boardWidget,
-                      Positioned(
-                        right: 8,
-                        top: 8,
-                        child: Tooltip(
-                          message: 'Revenir au menu',
-                          child: Material(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest
-                                .withValues(alpha: 0.9),
-                            shape: const CircleBorder(),
-                            elevation: 1,
-                            child: InkWell(
-                              key: const Key('board-home'),
-                              customBorder: const CircleBorder(),
-                              onTap: widget.onExit,
-                              child: Padding(
-                                padding: const EdgeInsets.all(7),
-                                child: Icon(Icons.home_outlined,
-                                    size: 20,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant),
+                      SizedBox(
+                        height: barH,
+                        width: boardArea,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: Tooltip(
+                            message: 'Revenir au menu',
+                            child: Material(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest
+                                  .withValues(alpha: 0.9),
+                              shape: const CircleBorder(),
+                              elevation: 1,
+                              child: InkWell(
+                                key: const Key('board-home'),
+                                customBorder: const CircleBorder(),
+                                onTap: widget.onExit,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(7),
+                                  child: Icon(Icons.home_outlined,
+                                      size: 20,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant),
+                                ),
                               ),
                             ),
                           ),
                         ),
                       ),
+                      boardWidget,
                     ],
                   );
 
