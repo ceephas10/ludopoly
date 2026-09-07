@@ -37,15 +37,18 @@ void main() {
     await waitForBoard(t);
 
     expect(find.byType(BoardScreen), findsOneWidget);
-    expect(find.text('Centre de commandes'), findsNothing,
-        reason: 'on ne doit voir que le jeu');
-    // La poignée reste : le panneau est repliable, pas supprimé.
-    expect(find.byKey(const Key('panel-handle')), findsOneWidget);
+    // Ni le panneau, ni le chevron qui l'ouvrirait : cet écran s'adresse au
+    // joueur, qui ne doit même pas apercevoir la page des paramètres.
+    expect(find.text('Centre de commandes'), findsNothing);
+    expect(find.text('Règles du jeu'), findsNothing);
+    expect(find.text('Settings'), findsNothing);
+    expect(find.byKey(const Key('panel-handle')), findsNothing,
+        reason: 'aucun moyen d\'ouvrir les paramètres depuis « Jouer »');
 
     await shutdownApp(t);
   });
 
-  testWidgets('« Système » donne le plateau ET le panneau', (t) async {
+  testWidgets('« Système » ramène le panneau ET son chevron', (t) async {
     resetPawnAnimationCache();
     await t.pumpWidget(const LudoPolyApp());
     await t.pump();
@@ -55,6 +58,8 @@ void main() {
     expect(find.text('Centre de commandes'), findsOneWidget);
     expect(find.text('Setup'), findsOneWidget,
         reason: 'le panneau est ouvert sur le centre de commandes');
+    expect(find.byKey(const Key('panel-handle')), findsOneWidget,
+        reason: 'ici le chevron existe : on peut replier puis rouvrir');
 
     await shutdownApp(t);
   });

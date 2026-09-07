@@ -83,7 +83,9 @@ class _LudoPolyAppState extends State<LudoPolyApp> {
         return BoardScreen(
           key: ValueKey(_game),
           setup: _setup,
-          panelOpen: _screen != MenuChoice.play,
+          // « Jouer » : aucun panneau, aucun chevron. Le joueur ne doit
+          // même pas apercevoir la page des paramètres.
+          showPanel: _screen != MenuChoice.play,
           initialPanelTab:
               _screen == MenuChoice.howToPlay ? 'rules' : 'commandes',
           onExit: _goHome,
@@ -199,7 +201,7 @@ class BoardScreen extends StatefulWidget {
   const BoardScreen({
     super.key,
     this.setup = const GameSetup(),
-    this.panelOpen = true,
+    this.showPanel = true,
     this.initialPanelTab = 'commandes',
     this.onExit,
   });
@@ -208,10 +210,10 @@ class BoardScreen extends StatefulWidget {
   /// démarrage. La valeur par défaut sert aux usages directs du plateau.
   final GameSetup setup;
 
-  /// Le centre de commandes est-il déplié au départ ? « Jouer » le laisse
-  /// fermé — le plateau et rien d'autre ; le chevron le rouvre à tout
-  /// moment.
-  final bool panelOpen;
+  /// Le centre de commandes existe-t-il seulement ? « Jouer » le retire
+  /// ENTIÈREMENT — ni panneau, ni chevron, aucun moyen de l'ouvrir : cet
+  /// écran s'adresse au joueur, pas à celui qui règle le jeu.
+  final bool showPanel;
 
   /// L'onglet du panneau à l'ouverture : `commandes`, `rules` ou
   /// `settings`.
@@ -739,7 +741,7 @@ class BoardScreenState extends State<BoardScreen>
   /// le reste : le contrôleur doit connaître l'ordre des tours et les
   /// sièges d'ordinateur avant que la moindre minuterie ne parte.
   void _applySetup() {
-    _panelCollapsed = !widget.panelOpen;
+    _panelCollapsed = false;
     _panelTab = widget.initialPanelTab;
     final s = widget.setup;
     _playerCount = s.playerCount;
@@ -2301,14 +2303,17 @@ class BoardScreenState extends State<BoardScreen>
             // proportionally so we don't end up with min > max in clamp().
             final panelMax = w * 0.55;
             final panelMin = math.min(280.0, panelMax);
-            final panelWidth = _panelCollapsed
+            final showPanel = widget.showPanel;
+            final panelWidth = (!showPanel || _panelCollapsed)
                 ? 0.0
                 : (w * 0.39).clamp(panelMin, panelMax);
-            // La poignée à chevron mange sa propre largeur : sans ça, le
-            // plateau déborderait de la ligne.
+            // La poignée à chevron mange sa propre largeur — mais seulement
+            // si elle existe : sans panneau, tout l'espace revient au
+            // plateau.
+            final handleWidth = showPanel ? _PanelHandle.width : 0.0;
             final boardArea = isNarrow
                 ? w
-                : (w - panelWidth - _PanelHandle.width).clamp(120.0, w);
+                : (w - panelWidth - handleWidth).clamp(120.0, w);
             // 15 px top + 15 px bottom breathing room around the board.
             const boardMarginV = 15.0;
             final maxBoardSquare = isNarrow
@@ -2619,7 +2624,7 @@ class BoardScreenState extends State<BoardScreen>
               return Column(
                 children: [
                   board,
-                  Expanded(child: panel),
+                  if (showPanel) Expanded(child: panel),
                 ],
               );
             }
@@ -2627,18 +2632,20 @@ class BoardScreenState extends State<BoardScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 board,
-                _PanelHandle(
-                  collapsed: _panelCollapsed,
-                  height: h,
-                  onTap: () =>
-                      setState(() => _panelCollapsed = !_panelCollapsed),
-                ),
-                if (!_panelCollapsed)
-                  SizedBox(
-                    width: panelWidth,
+                if (showPanel) ...[
+                  _PanelHandle(
+                    collapsed: _panelCollapsed,
                     height: h,
-                    child: panel,
+                    onTap: () =>
+                        setState(() => _panelCollapsed = !_panelCollapsed),
                   ),
+                  if (!_panelCollapsed)
+                    SizedBox(
+                      width: panelWidth,
+                      height: h,
+                      child: panel,
+                    ),
+                ],
               ],
             );
           },
