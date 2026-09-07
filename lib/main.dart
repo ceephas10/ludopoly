@@ -2388,6 +2388,9 @@ class BoardScreenState extends State<BoardScreen>
                     width: boardSide,
                     height: boardSide,
                     child: Stack(
+                      // Même raison : ce qui déborde du plateau par le haut
+                      // doit rester visible.
+                      clipBehavior: Clip.none,
                       children: [
                         Positioned.fill(child: BoardView(
                       players: _activePlayers,
@@ -5214,6 +5217,10 @@ class BoardView extends StatelessWidget {
         final pawnWidth = pawnHeight * 0.8;
 
         return Stack(
+          // Le corps d'un pion monte AU-DESSUS de sa case. Sur la rangée du
+          // haut — cases 23, 24, 25 — il sortait donc du plateau et se
+          // faisait couper net. On laisse déborder.
+          clipBehavior: Clip.none,
           children: [
             // Vector-drawn board: stays crisp at any size (no raster scaling).
             Positioned.fill(
