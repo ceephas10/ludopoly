@@ -1,60 +1,133 @@
-// Le fond des écrans : une image si le Studio en a fourni une, sinon un
-// dégradé.
+// Le décor des écrans, peint — pas une image.
 //
-// L'image n'est pas obligatoire. Tant qu'elle manque, `errorBuilder` fait
-// retomber sur le dégradé — l'écran reste correct, il est seulement uni.
+// Il suit la spécification « Ludo King Classic Blue » : un dégradé radial
+// saphir, des rayons diagonaux, un halo central cyan et un vignettage
+// sombre. Empilés dans cet ordre, ces quatre calques donnent la profondeur
+// qu'un aplat n'a pas.
+//
+// L'image d'`AnimStock/Backgrounds/` reste posée entre le dégradé et les
+// rayons, en filigrane : elle apporte sa texture sans manger la
+// lisibilité. Absente, tout le reste tient debout sans elle.
 
 import 'package:flutter/material.dart';
 
-/// Les deux fonds du jeu.
+/// La palette de fond de la spec, telle quelle.
+abstract final class BgPalette {
+  static const Color lightCenter = Color(0xFF1F6DB5);
+  static const Color midStop = Color(0xFF0E3D7A);
+  static const Color darkEdges = Color(0xFF071B3B);
+
+  /// Halo central, sous le plateau.
+  static const Color centerGlow = Color(0x73268EEB);
+
+  /// Rayon diagonal venant du haut-gauche.
+  static const Color lightRay = Color(0x294AAFFF);
+
+  /// Assombrissement des bords.
+  static const Color vignette = Color(0xBF000000);
+
+  // Accents repris par le menu.
+  static const Color amber = Color(0xFFFFB703);
+  static const Color cyan = Color(0xFF00B4D8);
+  static const Color tile = Color(0xFF123A6B);
+}
+
+/// Les deux fonds du jeu. Même décor, seule l'opacité du filigrane change :
+/// le plateau a besoin de plus de calme derrière lui que le menu.
 enum AppBackground {
-  /// Derrière le tableau de bord.
-  menu('AnimStock/Backgrounds/Background.jpg',
-      [Color(0xFF16452C), Color(0xFF0E2A1C)]),
+  menu(0.35),
+  board(0.18);
 
-  /// Derrière le plateau, pendant la partie. Même image que le menu : il
-  /// n'y en a qu'une pour l'instant.
-  board('AnimStock/Backgrounds/Background.jpg',
-      [Color(0xFF2A3A63), Color(0xFF141C33)]);
+  const AppBackground(this.textureOpacity);
 
-  const AppBackground(this.asset, this.fallback);
+  /// Force du filigrane : la part de l'image qui transparaît.
+  final double textureOpacity;
 
-  final String asset;
+  static const String _texture = 'AnimStock/Backgrounds/Background.jpg';
 
-  /// Les deux couleurs du dégradé de repli, du centre vers les bords.
-  final List<Color> fallback;
-
-  /// Le dégradé seul, sans image.
-  Widget get _gradient => DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment.center,
-            radius: 0.95,
-            colors: fallback,
-          ),
-        ),
-        child: const SizedBox.expand(),
-      );
-
-  /// Le fond, image comprise si elle existe. [child] est posé PAR-DESSUS —
-  /// c'est ce qui donne l'impression que le plateau flotte sur le décor.
+  /// Le décor, avec [child] posé PAR-DESSUS.
   Widget wrap(Widget child) => Stack(
         fit: StackFit.expand,
         children: [
-          _gradient,
-          Image.asset(
-            asset,
-            fit: BoxFit.cover,
-            // Absente ? On garde le dégradé, sans rien casser ni afficher
-            // d'icône d'erreur.
-            errorBuilder: (_, _, _) => const SizedBox.shrink(),
-          ),
-          // Un voile sombre : sans lui, un décor chargé mange la lisibilité
-          // du plateau et des boutons posés dessus.
+          // 1. Le dégradé saphir. L'ellipse est légèrement au-dessus du
+          //    centre — c'est là que le plateau se pose.
           const DecoratedBox(
-            decoration: BoxDecoration(color: Color(0x59000000)),
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: Alignment(0, -0.04),
+                radius: 0.95,
+                colors: [
+                  BgPalette.lightCenter,
+                  BgPalette.midStop,
+                  BgPalette.darkEdges,
+                ],
+                stops: [0.0, 0.45, 1.0],
+              ),
+            ),
             child: SizedBox.expand(),
           ),
+
+          // 2. La texture, en filigrane. Absente ? On n'affiche rien plutôt
+          //    qu'une icône d'erreur — le décor tient sans elle.
+          Opacity(
+            opacity: textureOpacity,
+            child: Image.asset(
+              _texture,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            ),
+          ),
+
+          // 3. Les rayons diagonaux, venus du haut-gauche.
+          const IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0x1FFFFFFF),
+                    BgPalette.lightRay,
+                    Colors.transparent,
+                  ],
+                  stops: [0.0, 0.25, 0.6],
+                ),
+              ),
+              child: SizedBox.expand(),
+            ),
+          ),
+
+          // 4. Le halo central : ce qui fait que le plateau semble éclairé
+          //    plutôt que posé sur un fond plat.
+          const IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment.center,
+                  radius: 0.55,
+                  colors: [BgPalette.centerGlow, Colors.transparent],
+                  stops: [0.0, 1.0],
+                ),
+              ),
+              child: SizedBox.expand(),
+            ),
+          ),
+
+          // 5. Le vignettage : les bords s'éteignent, le regard va au centre.
+          const IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment.center,
+                  radius: 0.95,
+                  colors: [Colors.transparent, BgPalette.vignette],
+                  stops: [0.4, 1.0],
+                ),
+              ),
+              child: SizedBox.expand(),
+            ),
+          ),
+
           child,
         ],
       );

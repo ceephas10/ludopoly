@@ -23,10 +23,11 @@ enum MenuChoice {
   options,
 }
 
-// Le dégradé de repli vit maintenant dans AppBackground.menu.
-const Color _tile = Color(0xFF1E4D33);
-const Color _accent = Color(0xFFE8B93B);
-const Color _mint = Color(0xFF4CC98A);
+// Les couleurs du menu sont celles du décor : le bleu saphir de la spec,
+// l'ambre pour l'entrée principale, le cyan pour le titre.
+const Color _tile = BgPalette.tile;
+const Color _accent = BgPalette.amber;
+const Color _mint = BgPalette.cyan;
 
 class MenuScreen extends StatelessWidget {
   const MenuScreen({super.key, required this.onChoose});
@@ -98,9 +99,9 @@ class _Logo extends StatelessWidget {
           width: 46,
           height: 46,
           decoration: BoxDecoration(
-            color: _tile,
+            color: _tile.withValues(alpha: 0.85),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: _mint.withValues(alpha: 0.5)),
+            border: Border.all(color: _mint.withValues(alpha: 0.6)),
           ),
           child: const Icon(Icons.casino, color: _accent, size: 26),
         ),
@@ -155,7 +156,9 @@ class _MenuTile extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
       child: Material(
-        color: bg,
+        // Les pavés secondaires laissent voir le décor : opaques, ils
+        // faisaient quatre rectangles morts sur un fond travaillé.
+        color: primary ? bg : bg.withValues(alpha: 0.72),
         borderRadius: BorderRadius.circular(10),
         elevation: primary ? 6 : 0,
         child: InkWell(
