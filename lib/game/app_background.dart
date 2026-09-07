@@ -47,10 +47,18 @@ enum AppBackground {
         DecoratedBox(
           decoration: BoxDecoration(
             gradient: RadialGradient(
-              center: const Alignment(0, -0.04),
-              radius: 0.95,
-              colors: [t.light, t.mid, t.dark],
-              stops: const [0.0, 0.45, 1.0],
+              center: const Alignment(0, -0.06),
+              radius: 1.05,
+              // Une quatrième teinte, plus claire que `light`, au tout
+              // centre : sans elle le dégradé démarre déjà à mi-hauteur
+              // et le fond paraît éteint sous le plateau.
+              colors: [
+                Color.lerp(t.light, Colors.white, 0.22)!,
+                t.light,
+                t.mid,
+                t.dark,
+              ],
+              stops: const [0.0, 0.22, 0.58, 1.0],
             ),
           ),
           child: const SizedBox.expand(),
@@ -77,11 +85,12 @@ enum AppBackground {
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    Colors.white.withValues(alpha: 0.16 * rays),
+                    Colors.white.withValues(alpha: 0.30 * rays),
+                    Colors.white.withValues(alpha: 0.11 * rays),
                     t.ray.withValues(alpha: t.ray.a * rays),
                     Colors.transparent,
                   ],
-                  stops: const [0.0, 0.25, 0.6],
+                  stops: const [0.0, 0.14, 0.32, 0.68],
                 ),
               ),
               child: const SizedBox.expand(),
@@ -109,14 +118,41 @@ enum AppBackground {
             child: DecoratedBox(
               decoration: BoxDecoration(
                 gradient: RadialGradient(
-                  center: Alignment.center,
-                  radius: 0.55,
-                  colors: [t.glow, Colors.transparent],
+                  center: const Alignment(0, -0.05),
+                  radius: 0.78,
+                  colors: [
+                    Color.lerp(t.glow, Colors.white, 0.30)!,
+                    t.glow,
+                    Colors.transparent,
+                  ],
+                  stops: const [0.0, 0.38, 1.0],
                 ),
               ),
               child: const SizedBox.expand(),
             ),
           ),
+
+        // 5 bis. La SOURCE : un soleil hors champ, en haut à gauche. Le
+        //   halo central éclaire le plateau ; celui-ci donne à tout
+        //   l'écran une DIRECTION de lumière — sans elle, les ombres du
+        //   plateau ne se raccordent à rien.
+        IgnorePointer(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(-0.72, -0.92),
+                radius: 0.95,
+                colors: [
+                  Colors.white.withValues(alpha: 0.22 * strength),
+                  Colors.white.withValues(alpha: 0.06 * strength),
+                  Colors.transparent,
+                ],
+                stops: const [0.0, 0.32, 1.0],
+              ),
+            ),
+            child: const SizedBox.expand(),
+          ),
+        ),
 
         // 6. Le vignettage : les bords s'éteignent, le regard va au centre.
         if (config.vignette)
@@ -125,9 +161,9 @@ enum AppBackground {
               decoration: BoxDecoration(
                 gradient: RadialGradient(
                   center: Alignment.center,
-                  radius: 0.95,
-                  colors: [Colors.transparent, Color(0xBF000000)],
-                  stops: [0.4, 1.0],
+                  radius: 1.02,
+                  colors: [Colors.transparent, Color(0x8C000000)],
+                  stops: [0.52, 1.0],
                 ),
               ),
               child: SizedBox.expand(),

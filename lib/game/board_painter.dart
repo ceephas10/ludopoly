@@ -50,6 +50,51 @@ class BoardPainter extends CustomPainter {
   static const Color _goldBright = Color(0xFFE8B923);
   static const Color _goldDeep   = Color(0xFF7A5B00);
 
+  // ── LA LUMIÈRE ────────────────────────────────────────────────────
+  //
+  // Un plateau peint en aplats est plat : chaque zone rend la même chose
+  // partout, donc rien n'accroche l'œil. Les plateaux de Ludo King, eux,
+  // semblent ÉCLAIRÉS — une source en haut à gauche, des couleurs qui
+  // s'éclaircissent vers elle et s'épaississent à l'opposé, un vernis qui
+  // glisse en diagonale.
+  //
+  // C'est ce que font ces trois fonctions : elles ne changent aucune
+  // couleur de la palette, elles la déclinent en clair et en dense autour
+  // de sa valeur d'origine.
+
+  /// La couleur remontée vers le blanc, sans virer : on ne touche qu'à la
+  /// luminosité, la teinte et la saturation restent celles de la palette.
+  static Color _lift(Color c, double amount) {
+    final h = HSLColor.fromColor(c);
+    return h
+        .withLightness((h.lightness + amount).clamp(0.0, 1.0))
+        .withSaturation((h.saturation * 1.06).clamp(0.0, 1.0))
+        .toColor();
+  }
+
+  /// La même, descendue vers l'ombre — et légèrement plus saturée, comme
+  /// une couleur l'est toujours dans sa partie sombre.
+  static Color _sink(Color c, double amount) {
+    final h = HSLColor.fromColor(c);
+    return h
+        .withLightness((h.lightness - amount).clamp(0.0, 1.0))
+        .withSaturation((h.saturation * 1.10).clamp(0.0, 1.0))
+        .toColor();
+  }
+
+  /// Un aplat ÉCLAIRÉ : clair du côté de la source, dense à l'opposé.
+  /// C'est ce dégradé, et lui seul, qui donne du relief au plateau.
+  static Paint _lit(Rect r, Color c,
+      {double up = 0.13, double down = 0.10}) {
+    return Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [_lift(c, up), c, _sink(c, down)],
+        stops: const [0.0, 0.52, 1.0],
+      ).createShader(r);
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     final cell = size.shortestSide / 15.0;
@@ -77,12 +122,19 @@ class BoardPainter extends CustomPainter {
     //    half a cell on each side compared to the standard Ludo layout, to
     //    leave room for the LudoPoly extension content).
     void drawBase(double c0, double r0, Color color) {
-      canvas.drawRect(rect(c0, r0, c0 + 6, r0 + 6), fill..color = color);
+      final outer = rect(c0, r0, c0 + 6, r0 + 6);
+      canvas.drawRect(outer, _lit(outer, color, up: 0.15, down: 0.12));
       // Bande de couleur élargie : le blanc intérieur se resserre de 0,5 à
       // 0,85 case sur chaque bord.
+      final inner = rect(c0 + 0.85, r0 + 0.85, c0 + 5.15, r0 + 5.15);
       canvas.drawRect(
-          rect(c0 + 0.85, r0 + 0.85, c0 + 5.15, r0 + 5.15),
-          fill..color = Colors.white);
+          inner,
+          Paint()
+            ..shader = LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: const [Color(0xFFFFFFFF), Color(0xFFEFF3F8)],
+            ).createShader(inner));
       // Un socle par pion : sur le blanc de la base, les quatre pions
       // flottaient sans rien pour les poser. Chaque socle occupe
       // exactement la place du pion — mêmes constantes, partagées avec la
@@ -95,7 +147,20 @@ class BoardPainter extends CustomPainter {
         // socle, pas un fond.
         final cy = (r0 + kBaseSlotY + 0.1) * cell;
         final r = kBaseSlotSize * cell * 0.30;
-        canvas.drawCircle(Offset(cx, cy), r, fill..color = color);
+        // Une ombre sous le socle : sans elle il est peint SUR le blanc,
+        // avec elle il est POSÉ dessus.
+        canvas.drawCircle(
+            Offset(cx, cy + r * 0.14),
+            r * 1.04,
+            Paint()
+              ..color = const Color(0x33000000)
+              ..maskFilter =
+                  MaskFilter.blur(BlurStyle.normal, math.max(0.6, r * 0.22)));
+        canvas.drawCircle(
+            Offset(cx, cy),
+            r,
+            _lit(Rect.fromCircle(center: Offset(cx, cy), radius: r), color,
+                up: 0.18, down: 0.14));
         canvas.drawCircle(
             Offset(cx, cy),
             r * 0.82,
@@ -111,14 +176,11 @@ class BoardPainter extends CustomPainter {
     drawBase(9, 9, _yellow);  // bottom-right
 
     // 4) Home stretches (5 colored cells per color leading to the center).
-    fill.color = _red;
-    canvas.drawRect(rect(1, 7, 6, 8), fill);
-    fill.color = _green;
-    canvas.drawRect(rect(7, 1, 8, 6), fill);
-    fill.color = _yellow;
-    canvas.drawRect(rect(9, 7, 14, 8), fill);
-    fill.color = _blue;
-    canvas.drawRect(rect(7, 9, 8, 14), fill);
+    void lane(Rect r, Color c) => canvas.drawRect(r, _lit(r, c));
+    lane(rect(1, 7, 6, 8), _red);
+    lane(rect(7, 1, 8, 6), _green);
+    lane(rect(9, 7, 14, 8), _yellow);
+    lane(rect(7, 9, 8, 14), _blue);
 
     // 4 bis) La flèche d'ENTRÉE : sur la dernière case d'anneau de chaque
     // couleur, elle montre par où le pion quitte l'anneau pour son couloir.
@@ -159,7 +221,8 @@ class BoardPainter extends CustomPainter {
       _Start(6, 13, _blue),
     ];
     for (final s in starts) {
-      canvas.drawRect(cr(s.col, s.row), fill..color = s.color);
+      final r = cr(s.col, s.row);
+      canvas.drawRect(r, _lit(r, s.color, up: 0.16, down: 0.10));
     }
 
     // 6) Center triangles converging at the middle.
@@ -174,6 +237,22 @@ class BoardPainter extends CustomPainter {
     _drawTri(canvas, fill, lt, rt, center, _green);
     _drawTri(canvas, fill, rt, rb, center, _yellow);
     _drawTri(canvas, fill, lb, rb, center, _blue);
+
+    // Le cœur du plateau : un halo blanc qui monte des quatre pointes.
+    // C'est le point d'arrivée du jeu, il doit rayonner.
+    canvas.drawCircle(
+        center,
+        cell * 1.10,
+        Paint()
+          ..shader = RadialGradient(
+            colors: [
+              Colors.white.withValues(alpha: 0.55),
+              Colors.white.withValues(alpha: 0.10),
+              Colors.transparent,
+            ],
+            stops: const [0.0, 0.45, 1.0],
+          ).createShader(Rect.fromCircle(center: center, radius: cell * 1.10))
+          ..blendMode = BlendMode.plus);
 
     // 7) Grid lines on every cell of the cross.
     void hline(double x0, double x1, double y) {
@@ -220,6 +299,66 @@ class BoardPainter extends CustomPainter {
         _drawTopHatSkull(canvas, b.dx * cell, b.dy * cell, cell, tint);
       }
     }
+
+    // 10) LA PASSE DE LUMIÈRE, par-dessus tout le reste.
+    //
+    // Trois couches, dans cet ordre : le vernis qui court en diagonale, le
+    // halo de la source, puis l'assombrissement des bords. Le plateau
+    // cesse d'être une image posée à plat : il est éclairé, et le regard
+    // va au centre parce que c'est là que ça brille.
+    final full = Rect.fromLTWH(0, 0, size.width, size.height);
+
+    // Le vernis : une bande claire glissée du coin haut-gauche vers le
+    // bas-droit, en ADDITIF pour éclaircir sans délaver la couleur.
+    canvas.drawRect(
+        full,
+        Paint()
+          ..blendMode = BlendMode.plus
+          ..shader = LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white.withValues(alpha: 0.17),
+              Colors.white.withValues(alpha: 0.045),
+              Colors.transparent,
+              Colors.transparent,
+            ],
+            stops: const [0.0, 0.24, 0.52, 1.0],
+          ).createShader(full));
+
+    // Le halo de la source, calé sur le coin haut-gauche du plateau.
+    final src = Offset(size.width * 0.24, size.height * 0.16);
+    final srcR = size.shortestSide * 0.78;
+    canvas.drawCircle(
+        src,
+        srcR,
+        Paint()
+          ..blendMode = BlendMode.plus
+          ..shader = RadialGradient(
+            colors: [
+              Colors.white.withValues(alpha: 0.13),
+              Colors.white.withValues(alpha: 0.03),
+              Colors.transparent,
+            ],
+            stops: const [0.0, 0.42, 1.0],
+          ).createShader(Rect.fromCircle(center: src, radius: srcR)));
+
+    // Les bords s'éteignent : c'est ce contraste qui fait « avancer » le
+    // centre du plateau vers le joueur.
+    canvas.drawRect(
+        full,
+        Paint()
+          ..shader = RadialGradient(
+            center: Alignment.center,
+            radius: 0.82,
+            colors: [
+              Colors.transparent,
+              Colors.transparent,
+              const Color(0x00000000).withValues(alpha: 0.10),
+              const Color(0x00000000).withValues(alpha: 0.30),
+            ],
+            stops: const [0.0, 0.55, 0.82, 1.0],
+          ).createShader(full));
   }
 
   /// Une paire d'ailes déployées, gravée sur une case.

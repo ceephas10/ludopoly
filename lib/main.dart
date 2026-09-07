@@ -14,6 +14,7 @@ import 'game/app_background.dart';
 import 'game/board_path.dart';
 import 'game/brand.dart';
 import 'game/card_art.dart';
+import 'game/card_identity.dart';
 import 'game/game_controller.dart';
 import 'game/game_setup.dart';
 import 'game/game_state.dart';
@@ -83,7 +84,8 @@ class _LudoPolyAppState extends State<LudoPolyApp> {
           onExit: () => setState(() => _screen = null),
         );
 
-      // « Jouer » : le plateau seul. « Système » : le panneau seul.
+      // « Jouer » : le plateau seul. « Système » : le plateau ET le
+      // panneau, avec le chevron pour replier ce dernier sur le côté.
       case MenuChoice.play:
       case MenuChoice.system:
         return BoardScreen(
@@ -92,8 +94,10 @@ class _LudoPolyAppState extends State<LudoPolyApp> {
           // « Jouer » : aucun panneau, aucun chevron. Le joueur ne doit
           // même pas apercevoir la page des paramètres.
           showPanel: _screen != MenuChoice.play,
-          // « Système » ne montre QUE le panneau : pas de plateau.
-          showBoard: _screen != MenuChoice.system,
+          // « Système » montre les deux : on règle en voyant l'effet sur
+          // le plateau, et le chevron replie le panneau quand on veut le
+          // plateau en grand.
+          showBoard: true,
           initialPanelTab: 'commandes',
           // Les réglages changés dans le panneau reviennent ici : ils
           // s'appliquent donc aux écrans suivants, « Comment jouer »
@@ -2585,6 +2589,8 @@ class BoardScreenState extends State<BoardScreen>
                         _controller.redoDepth > 0 && !_animating,
                     stepForwardLabel: _controller.nextRedoLabel,
                     panelTab: _panelTab,
+                    // « Système » : le panneau occupe tout l'écran.
+                    fullWidth: !widget.showBoard,
                     onChangePanelTab: (t) =>
                         setState(() => _panelTab = t),
                     ruleStartWith1TokenOut: _ruleStartWith1TokenOut,
@@ -2874,6 +2880,11 @@ class _ControlPanel extends StatelessWidget {
 
   // Tab + persistent rules
   final String panelTab;
+
+  /// Le panneau occupe-t-il TOUT l'écran ? En mode « Système » il n'a plus
+  /// de plateau à côté : ses cartes s'étirent alors sur toute la largeur et
+  /// deviennent illisibles. On les recentre dans une colonne de lecture.
+  final bool fullWidth;
   final ValueChanged<String> onChangePanelTab;
   final bool ruleStartWith1TokenOut;
   final ValueChanged<bool> onToggleRuleStartWith1TokenOut;
@@ -2968,6 +2979,7 @@ class _ControlPanel extends StatelessWidget {
     required this.canStepForward,
     required this.stepForwardLabel,
     required this.panelTab,
+    this.fullWidth = false,
     required this.onChangePanelTab,
     required this.ruleStartWith1TokenOut,
     required this.onToggleRuleStartWith1TokenOut,
@@ -3039,12 +3051,19 @@ class _ControlPanel extends StatelessWidget {
         final cs = theme.colorScheme;
         return Material(
           color: cs.surface,
-          child: SingleChildScrollView(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              // Plein écran, une carte étirée sur 1400 px est illisible :
+              // on borne la colonne, comme le fait la page Options.
+              constraints: BoxConstraints(
+                  maxWidth: fullWidth ? 760 : double.infinity),
+              child: SingleChildScrollView(
             padding: const EdgeInsets.all(12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // ---- Tab selector ----
+                // ---- Les trois pages du panneau ----
                 Padding(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 4, vertical: 8),
@@ -3052,17 +3071,17 @@ class _ControlPanel extends StatelessWidget {
                     segments: const [
                       ButtonSegment(
                         value: 'commandes',
-                        label: Text('Centre de commandes'),
+                        label: Text('Commandes'),
                         icon: Icon(Icons.tune, size: 18),
                       ),
                       ButtonSegment(
                         value: 'rules',
-                        label: Text('Règles du jeu'),
+                        label: Text('Règles'),
                         icon: Icon(Icons.rule, size: 18),
                       ),
                       ButtonSegment(
                         value: 'settings',
-                        label: Text('Settings'),
+                        label: Text('Paramètres'),
                         icon: Icon(Icons.settings, size: 18),
                       ),
                     ],
@@ -3275,28 +3294,48 @@ class _ControlPanel extends StatelessWidget {
                   ),
 
                 // ---- Two side-by-side cards: Jeu normal / Jeu manuel ----
-                IntrinsicHeight(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(flex: 1, child: _normalCard(theme, cs)),
-                      const SizedBox(width: 8),
-                      Expanded(flex: 3, child: _manualCard(theme, cs)),
-                      const SizedBox(width: 8),
-                      // ---- Les cartes Chance, à la main ----
-                      Expanded(
-                        flex: 3,
-                        child: _SectionCard(
-                          title: 'Cartes chance',
-                          child: _ManualCardsCard(
-                            player: manualPlayer,
-                            onApply: onApplyManualCard,
-                          ),
-                        ),
+                // Trois cartes côte à côte tant qu'il y a la place ; en
+                // dessous elles s'empilent. À l'étroit, « Jeu normal »
+                // débordait — un septième de la largeur ne suffit pas à
+                // « Tour : » et sa pastille de couleur.
+                LayoutBuilder(builder: (context, c) {
+                  final cards = <Widget>[
+                    _normalCard(theme, cs),
+                    _manualCard(theme, cs),
+                    _SectionCard(
+                      title: 'Cartes chance',
+                      child: _ManualCardsCard(
+                        player: manualPlayer,
+                        onApply: onApplyManualCard,
                       ),
+                    ),
+                  ];
+                  if (c.maxWidth < 620) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (final w in cards)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: w,
+                          ),
+                      ],
+                    );
+                  }
+                  // Sans IntrinsicHeight : forcer les trois cartes à la
+                  // même hauteur faisait déborder la plus chargée de
+                  // quelques pixels dès que sa colonne rétrécissait.
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(flex: 2, child: cards[0]),
+                      const SizedBox(width: 8),
+                      Expanded(flex: 3, child: cards[1]),
+                      const SizedBox(width: 8),
+                      Expanded(flex: 3, child: cards[2]),
                     ],
-                  ),
-                ),
+                  );
+                }),
 
                 const SizedBox(height: 12),
 
@@ -3439,6 +3478,8 @@ class _ControlPanel extends StatelessWidget {
               ],
             ),
           ),
+          ),
+        ),
         );
       }),
     );
@@ -4639,9 +4680,12 @@ class _DeferredHandCardState extends State<_DeferredHandCard> {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.style,
-                        size: 16,
-                        color: playable ? cs.primary : cs.onSurfaceVariant),
+                    // Le pictogramme de l'effet, pas une icône de carte
+                    // générique : la ligne se lit sans être parcourue.
+                    Opacity(
+                      opacity: playable ? 1.0 : 0.45,
+                      child: CardGlyph(card: card, size: 18),
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Tooltip(
@@ -4681,8 +4725,18 @@ class _DeferredHandCardState extends State<_DeferredHandCard> {
                                   )),
                             ),
                             const SizedBox(width: 6),
+                            // L'effet en trois mots, dans la couleur de
+                            // sa famille : c'est LUI qu'on lit d'abord.
+                            Text(cardIdentity(card).label,
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: cardIdentity(card).color,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0.3,
+                                )),
+                            const SizedBox(width: 6),
                             Expanded(
                               child: Text(card.nameFr,
+                                  overflow: TextOverflow.ellipsis,
                                   style: theme.textTheme.bodySmall),
                             ),
                           ],
@@ -5338,22 +5392,31 @@ class BoardView extends StatelessWidget {
                           );
                         }
                         final mine = p.color == tappableCardSeat;
-                        // Numérotée à partir de 1 : c'est ce qui
-                        // permet de désigner « ma deuxième carte ».
-                        final back = CardBack(
-                          radius: cell * 0.10,
-                          number: slot + 1,
-                        );
+                        // MES cartes se reconnaissent sans être
+                        // retournées : pictogramme de l'effet, code, et
+                        // l'effet en trois mots. Celles des autres
+                        // restent un dos muet, numéroté à partir de 1
+                        // pour qu'on puisse désigner « sa deuxième ».
+                        final art = mine
+                            ? CardMini(
+                                card: hand[slot],
+                                number: slot + 1,
+                                radius: cell * 0.10)
+                            : CardBack(
+                                radius: cell * 0.10,
+                                number: slot + 1,
+                              );
                         if (!mine || onDeferredCardTap == null) {
-                          return IgnorePointer(child: back);
+                          return IgnorePointer(child: art);
                         }
                         // C'est MA carte et c'est mon tour : je peux la
-                        // retourner pour lire son instruction.
+                        // retourner pour lire son instruction en entier.
                         return MouseRegion(
                           cursor: SystemMouseCursors.click,
-                          child: GestureDetector(
-                            onTap: () => onDeferredCardTap!(slot),
-                            child: back,
+                          child: Listener(
+                            behavior: HitTestBehavior.opaque,
+                            onPointerDown: (_) => onDeferredCardTap!(slot),
+                            child: art,
                           ),
                         );
                       }(),
@@ -5383,8 +5446,14 @@ class BoardView extends StatelessWidget {
                           : SystemMouseCursors.basic),
                   onEnter: (_) => onDiceHover?.call(true),
                   onExit: (_) => onDiceHover?.call(false),
-                  child: GestureDetector(
-                    onTap: clickable ? onRollDice : null,
+                  // `Listener` et non `GestureDetector` : `onTap` attend
+                  // le RELÂCHEMENT du doigt, et l'arbitrage des gestes
+                  // peut encore le retarder ou l'annuler si le doigt
+                  // glisse d'un cheveu. `onPointerDown` part à l'instant
+                  // où le doigt se pose — c'est ce qu'on veut d'un dé.
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: clickable ? (_) => onRollDice() : null,
                     child: pair == null
                         ? _DiceFace(
                             value: diceValue,
@@ -5637,10 +5706,13 @@ class BoardView extends StatelessWidget {
               // ---- Pass 3: HIT zones (tight square around the visible
               //              token only — no more giant bbox swallowing
               //              the empty halo around the sprite). ----
-              // Hit zone is cell × 1.0 centered on the visible token anchor.
-              // Visible token spans cell×0.776 vertically inside its bbox, so
-              // cell×1.0 wraps it tightly with a tiny margin.
-              final hitSize = cell * 1.0;
+              // Zone de touche : cell × 1.34, centrée sur le pion visible.
+              // Le pion n'occupe que cell×0.776 en hauteur ; à la souris
+              // un carré serré suffisait, mais un doigt est large de
+              // 8 mm et se pose rarement au pixel près. On élargit donc
+              // au-delà du sprite — les zones voisines ne se recouvrent
+              // pas pour autant, les pions étant à une case d'écart.
+              final hitSize = cell * 1.34;
               for (final pawn in list) {
                 final center =
                     _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
@@ -5670,12 +5742,17 @@ class BoardView extends StatelessWidget {
                       waitDuration: const Duration(milliseconds: 150),
                       preferBelow: true,
                       verticalOffset: 18,
-                      child: GestureDetector(
-                        // Without `opaque`, an invisible SizedBox doesn't
-                        // absorb taps → clicks on the pawn would fall
-                        // through to the parent, breaking `onPawnTap`.
+                      child: Listener(
+                        // Sans `opaque`, un SizedBox invisible n'absorbe
+                        // pas les touches → elles traverseraient jusqu'au
+                        // parent et `onPawnTap` ne partirait jamais.
+                        //
+                        // `onPointerDown` plutôt que `onTap` : le pion
+                        // part dès que le doigt se pose, sans attendre
+                        // qu'il se relève ni que l'arbitrage tranche.
                         behavior: HitTestBehavior.opaque,
-                        onTap: isMovable ? () => onPawnTap(pawn) : null,
+                        onPointerDown:
+                            isMovable ? (_) => onPawnTap(pawn) : null,
                         child: const SizedBox.expand(),
                       ),
                     ),
