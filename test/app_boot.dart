@@ -40,16 +40,11 @@ Future<void> bootApp(WidgetTester t) async {
   // Chaque test a sa propre zone asynchrone : une future mise en cache par
   // le test précédent ne s'y résout jamais. On repart d'un cache vide.
   resetPawnAnimationCache();
-  await t.pumpWidget(const LudoPolyApp());
-  // L'application s'ouvre sur le menu. On entre par « Système » : c'est
-  // le mode plateau + centre de commandes, celui que la plupart des tests
-  // observent. Ils traversent donc le vrai parcours, menu compris.
-  await t.pump();
-  final system = find.byKey(const Key('menu-system'));
-  if (system.evaluate().isNotEmpty) {
-    await t.tap(system);
-    await t.pump();
-  }
+  // On monte le PLATEAU directement, dans son mode complet : plateau +
+  // centre de commandes. Passer par le menu ne conviendrait plus — aucune
+  // de ses entrées ne donne cette combinaison depuis que « Système »
+  // n'affiche que le panneau. Le menu, lui, a ses propres tests.
+  await t.pumpWidget(const MaterialApp(home: BoardScreen()));
   await waitForBoard(t);
 }
 

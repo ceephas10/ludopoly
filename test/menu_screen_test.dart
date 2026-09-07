@@ -48,18 +48,26 @@ void main() {
     await shutdownApp(t);
   });
 
-  testWidgets('« Système » ramène le panneau ET son chevron', (t) async {
+  testWidgets('« Système » ne montre QUE les options, sans plateau',
+      (t) async {
     resetPawnAnimationCache();
     await t.pumpWidget(const LudoPolyApp());
     await t.pump();
     await t.tap(find.byKey(const Key('menu-system')));
     await waitForBoard(t);
 
+    // Les trois pages d'options, et elles seules.
     expect(find.text('Centre de commandes'), findsOneWidget);
+    expect(find.text('Règles du jeu'), findsOneWidget);
+    expect(find.text('Settings'), findsOneWidget);
     expect(find.text('Setup'), findsOneWidget,
-        reason: 'le panneau est ouvert sur le centre de commandes');
-    expect(find.byKey(const Key('panel-handle')), findsOneWidget,
-        reason: 'ici le chevron existe : on peut replier puis rouvrir');
+        reason: 'ouvert sur le centre de commandes');
+
+    // Pas de plateau : pas de pion à l'écran, donc pas de chevron non plus
+    // — il n'y a rien à replier.
+    expect(find.byType(BoardView), findsNothing,
+        reason: 'Système ne montre pas le jeu');
+    expect(find.byKey(const Key('panel-handle')), findsNothing);
 
     await shutdownApp(t);
   });
@@ -73,6 +81,34 @@ void main() {
 
     expect(find.text('Règles persistantes'), findsOneWidget,
         reason: 'le panneau doit s\'ouvrir directement sur les règles');
+
+    await shutdownApp(t);
+  });
+
+  testWidgets('une option activée dans Système suit jusqu\'à Comment jouer',
+      (t) async {
+    resetPawnAnimationCache();
+    await t.pumpWidget(const LudoPolyApp());
+    await t.pump();
+
+    // Dans Système, on allume les cartes chance.
+    await t.tap(find.byKey(const Key('menu-system')));
+    await waitForBoard(t);
+    final sys = t.state<BoardScreenState>(find.byType(BoardScreen));
+    expect(sys.controller.upgrades.chanceEnabled, isFalse);
+    sys.setChanceEnabled(true);
+    await t.pump();
+
+    // Retour au menu, puis on entre par Comment jouer.
+    await t.tap(find.byKey(const Key('board-home')));
+    await t.pump();
+    await t.tap(find.byKey(const Key('menu-how')));
+    await waitForBoard(t);
+
+    final how = t.state<BoardScreenState>(find.byType(BoardScreen));
+    expect(how.controller.upgrades.chanceEnabled, isTrue,
+        reason: 'ce qu\'on règle dans Système doit valoir pour les autres '
+            'écrans, sinon le réglage ne sert à rien');
 
     await shutdownApp(t);
   });

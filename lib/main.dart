@@ -45,8 +45,6 @@ class _LudoPolyAppState extends State<LudoPolyApp> {
   /// précédente là où elle en était.
   int _game = 0;
 
-  void _goHome() => setState(() => _screen = null);
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -87,9 +85,17 @@ class _LudoPolyAppState extends State<LudoPolyApp> {
           // « Jouer » : aucun panneau, aucun chevron. Le joueur ne doit
           // même pas apercevoir la page des paramètres.
           showPanel: _screen != MenuChoice.play,
+          // « Système » ne montre QUE le panneau : pas de plateau.
+          showBoard: _screen != MenuChoice.system,
           initialPanelTab:
               _screen == MenuChoice.howToPlay ? 'rules' : 'commandes',
-          onExit: _goHome,
+          // Les réglages changés dans le panneau reviennent ici : ils
+          // s'appliquent donc aux écrans suivants, « Comment jouer »
+          // compris.
+          onExit: (s) => setState(() {
+            _setup = s;
+            _screen = null;
+          }),
         );
     }
   }
@@ -203,6 +209,7 @@ class BoardScreen extends StatefulWidget {
     super.key,
     this.setup = const GameSetup(),
     this.showPanel = true,
+    this.showBoard = true,
     this.initialPanelTab = 'commandes',
     this.onExit,
   });
@@ -220,8 +227,14 @@ class BoardScreen extends StatefulWidget {
   /// `settings`.
   final String initialPanelTab;
 
-  /// Retour au menu. `null` = pas de bouton de retour.
-  final VoidCallback? onExit;
+  /// Le plateau est-il affiché ? « Système » ne montre QUE le panneau :
+  /// centre de commandes, règles du jeu, paramètres.
+  final bool showBoard;
+
+  /// Retour au menu. Reçoit les réglages TELS QU'ILS SONT à cet instant :
+  /// ce qu'on a changé dans le panneau survit donc au retour et s'applique
+  /// aux écrans suivants. `null` = pas de bouton de retour.
+  final ValueChanged<GameSetup>? onExit;
 
   static const players = <Player>[
     Player('Player 1', PlayerColor.blue),
@@ -759,6 +772,19 @@ class BoardScreenState extends State<BoardScreen>
     _startAiWatchdog();
     _applyAiSeatsFromUrl();
   }
+
+  /// Les réglages TELS QU'ILS SONT maintenant. Relus sur le moteur, pas
+  /// sur `widget.setup` : c'est ce qui permet à un changement fait dans le
+  /// panneau de survivre au retour au menu.
+  GameSetup get _currentSetup => GameSetup(
+        playerCount: _playerCount,
+        aiSeats: Set<PlayerColor>.from(_aiSeats),
+        difficulty: _controller.aiDifficulty,
+        teamMode: _controller.teamMode,
+        vortex: _controller.upgrades.vortexEnabled,
+        chance: _controller.upgrades.chanceEnabled,
+        aiTurbo: _aiTurbo,
+      );
 
   /// Applique les choix de l'écran d'accueil. Une seule fois, avant tout
   /// le reste : le contrôleur doit connaître l'ordre des tours et les
@@ -2662,7 +2688,9 @@ class BoardScreenState extends State<BoardScreen>
                       Positioned(
                         top: 6,
                         left: 0,
-                        width: boardArea,
+                        // Sans plateau, le bouton se cale sur toute la
+                        // largeur de l'écran.
+                        width: widget.showBoard ? boardArea : w,
                         child: Align(
                           alignment: Alignment.centerRight,
                           child: Padding(
@@ -2676,7 +2704,8 @@ class BoardScreenState extends State<BoardScreen>
                                 child: InkWell(
                                   key: const Key('board-home'),
                                   customBorder: const CircleBorder(),
-                                  onTap: widget.onExit,
+                                  onTap: () =>
+                                      widget.onExit?.call(_currentSetup),
                                   child: const Padding(
                                     padding: EdgeInsets.all(7),
                                     child: Icon(Icons.home_outlined,
@@ -2693,6 +2722,11 @@ class BoardScreenState extends State<BoardScreen>
 
             // ── Responsive root: stack on narrow screens, side-by-side
             //    on wide ones. ───────────────────────────────────────
+            // « Système » : le panneau seul, plein écran. Aucun plateau,
+            // donc rien à disposer à côté.
+            if (!widget.showBoard) {
+              return withHome(SizedBox(width: w, height: h, child: panel));
+            }
             if (isNarrow) {
               // Sans panneau, rien ne pousse le plateau vers le bas : il
               // restait collé en haut, avec un grand vide sous lui.
