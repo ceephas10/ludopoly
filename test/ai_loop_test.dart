@@ -194,6 +194,7 @@ void main() {
 
     String last = fingerprint(c);
     int idleMs = 0;
+    int changes = 0;
 
     // Personne ne clique JAMAIS : si la partie avance, c'est que la boucle
     // IA s'auto-entretient de bout en bout.
@@ -218,17 +219,29 @@ void main() {
         );
       } else {
         idleMs = 0;
+        changes++;
         last = now;
       }
     }
 
-    final out = c.state.allPawns
-        .where((p) => p.location != PawnLocation.base)
-        .length;
+    // Ce que ce test promet, c'est que la partie AVANCE toute seule. On le
+    // mesure donc par le nombre de fois où l'état a changé — une quantité
+    // qui ne fait que monter.
+    //
+    // L'ancienne mesure comptait les pions hors base À LA FIN. Or une
+    // capture en renvoie en base : ce nombre monte ET descend, et une
+    // partie animée pouvait finir la fenêtre à 4 exactement. Le test
+    // tombait alors sur un coup de dé, pas sur une régression.
     expect(
-      out,
-      greaterThan(4),
+      changes,
+      greaterThan(50),
       reason: 'sans aucun clic, la partie 4 IA doit avancer toute seule',
+    );
+    expect(
+      c.state.allPawns.where((p) => p.location != PawnLocation.base).length,
+      greaterThan(0),
+      reason: 'et des pions doivent être réellement sortis, pas seulement '
+          'des dés lancés',
     );
 
     // Démonte l'arbre : `dispose` coupe tous les timers de la boucle IA

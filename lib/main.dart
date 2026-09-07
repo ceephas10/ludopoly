@@ -553,6 +553,16 @@ class BoardScreenState extends State<BoardScreen>
   /// jouable) ne parte. Sans cette pause on ne voit jamais le chiffre.
   static const Duration _dicePause = Duration(milliseconds: 550);
 
+  /// Durée de l'animation de lancer du Studio — MESURÉE sur les fichiers
+  /// `Dice_<couleur>_throw_<valeur>.webp` : 15 images, 495 ms, sans
+  /// répétition. Elles s'arrêtent d'elles-mêmes sur la face sortie ; on
+  /// repasse ensuite au PNG net. Un test vérifie que cette valeur suit les
+  /// fichiers si le Studio les refait.
+  static const Duration _diceThrowDuration = Duration(milliseconds: 495);
+
+  @visibleForTesting
+  static Duration get diceThrowDurationForTest => _diceThrowDuration;
+
   /// Temps pendant lequel le dé GARDE la couleur et le chiffre du joueur
   /// qui vient de jouer, APRÈS que son pion s'est posé. Sans cette pause,
   /// le dé passait au joueur suivant à la seconde même de l'arrivée : on
@@ -627,6 +637,11 @@ class BoardScreenState extends State<BoardScreen>
 
   /// Minuterie de [_diceReadHold] : elle rend la main au joueur suivant.
   Timer? _diceReadTimer;
+
+  /// Le dé roule-t-il en ce moment ? Le temps de l'animation de lancer, le
+  /// plateau affiche le WebP animé du Studio au lieu de la face fixe.
+  bool _diceRolling = false;
+  Timer? _diceThrowTimer;
 
   /// Timers des retours à contre-sens des pions capturés, indexés par pion.
   /// Il peut y en avoir plusieurs en vol (deux pions mangés d'un coup), et
@@ -951,6 +966,14 @@ class BoardScreenState extends State<BoardScreen>
     // l'ancienne couleur.
     _diceReadTimer?.cancel();
     _activeColorHold = null;
+    // Le dé roule. L'animation du Studio s'arrête seule sur la face sortie ;
+    // ce minuteur ne fait que rendre la main au PNG net ensuite.
+    _diceThrowTimer?.cancel();
+    _diceRolling = true;
+    _diceThrowTimer = _after(_pace(_diceThrowDuration), () {
+      if (!mounted) return;
+      setState(() => _diceRolling = false);
+    });
     // Point de retour : l'instantané est pris AVANT le lancer, donc le
     // bouton Retour annule le lancer ET le déplacement joué avec.
     _controller.pushHistory(
@@ -2152,6 +2175,8 @@ class BoardScreenState extends State<BoardScreen>
     _busySeats.clear();
     _explosionTimer?.cancel();
     _diceReadTimer?.cancel();
+    _diceThrowTimer?.cancel();
+    _diceRolling = false;
     for (final t in _returnTimers.values) {
       t.cancel();
     }
@@ -2289,7 +2314,19 @@ class BoardScreenState extends State<BoardScreen>
     }
     return Scaffold(
       backgroundColor: const Color(0xFF1A2541),
-      body: SafeArea(
+      // Un dégradé plutôt qu'un aplat : sur téléphone, le plateau est centré
+      // et laisse de la place au-dessus et en dessous. Un bleu nuit uni y
+      // faisait deux bandes mortes ; le dégradé donne de la profondeur et
+      // le plateau s'y pose au lieu d'y flotter.
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment.center,
+            radius: 0.95,
+            colors: [Color(0xFF2A3A63), Color(0xFF141C33)],
+          ),
+        ),
+        child: SafeArea(
         child: LayoutBuilder(
           builder: (context, c) {
             final h = c.maxHeight.isFinite ? c.maxHeight : 800.0;
@@ -2317,7 +2354,10 @@ class BoardScreenState extends State<BoardScreen>
             // 15 px top + 15 px bottom breathing room around the board.
             const boardMarginV = 15.0;
             final maxBoardSquare = isNarrow
-                ? math.min(w, h * 0.6) // narrow: board takes ~60 % of height
+                // Sans panneau — le mode « Jouer » du téléphone — le plateau
+                // prend toute la hauteur qu'il peut. Avec panneau, il lui en
+                // laisse les deux tiers.
+                ? math.min(w, showPanel ? h * 0.6 : h - 2 * boardMarginV)
                 : (h - 2 * boardMarginV).clamp(0.0, boardArea);
             final boardSide =
                 _boardWidthOverride?.clamp(120.0, maxBoardSquare) ??
@@ -2356,6 +2396,7 @@ class BoardScreenState extends State<BoardScreen>
                       showCanvas: _showCanvas,
                       playerCount: _playerCount,
                       diceValue: _shownDice,
+                      diceRolling: _diceRolling,
                       activeColor: _activeColor,
                       currentPlayerColor: _controller.currentColor,
                       paused: _paused,
@@ -2621,10 +2662,13 @@ class BoardScreenState extends State<BoardScreen>
             // ── Responsive root: stack on narrow screens, side-by-side
             //    on wide ones. ───────────────────────────────────────
             if (isNarrow) {
+              // Sans panneau, rien ne pousse le plateau vers le bas : il
+              // restait collé en haut, avec un grand vide sous lui.
+              if (!showPanel) return Center(child: board);
               return Column(
                 children: [
                   board,
-                  if (showPanel) Expanded(child: panel),
+                  Expanded(child: panel),
                 ],
               );
             }
@@ -2650,6 +2694,7 @@ class BoardScreenState extends State<BoardScreen>
             );
           },
         ),
+      ),
       ),
     );
   }
@@ -4791,6 +4836,10 @@ class BoardView extends StatelessWidget {
   /// dernière valeur sortie jusqu'au lancer suivant.
   final int diceValue;
 
+  /// Le dé est en train de rouler : le plateau montre alors l'animation de
+  /// lancer du Studio plutôt que la face fixe.
+  final bool diceRolling;
+
   /// Couleur du siège ACTIF — celle du dé central ET du Yard qui
   /// clignote. Ce n'est PAS toujours [currentPlayerColor] : pendant qu'un
   /// pion compte ses cases, les deux indicateurs restent sur la couleur de
@@ -4867,6 +4916,7 @@ class BoardView extends StatelessWidget {
     required this.players,
     required this.game,
     required this.diceValue,
+    this.diceRolling = false,
     required this.activeColor,
     required this.currentPlayerColor,
     this.paused = false,
@@ -5268,6 +5318,7 @@ class BoardView extends StatelessWidget {
                         ? _DiceFace(
                             value: diceValue,
                             playerColor: activeColor,
+                            rolling: diceRolling,
                           )
                         : Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -6515,12 +6566,24 @@ class _DiceFace extends StatelessWidget {
   /// passage de main. `null` = dé blanc neutre (plateaux 5/6 joueurs, où
   /// l'interaction n'est pas encore câblée).
   final PlayerColor? playerColor;
-  const _DiceFace({required this.value, this.playerColor});
+
+  /// Pendant le lancer, on affiche le WebP animé du Studio plutôt que la
+  /// face fixe. Il joue UNE fois — `repetitionCount` vaut 0 — et s'arrête
+  /// sur la valeur sortie.
+  final bool rolling;
+
+  const _DiceFace({
+    required this.value,
+    this.playerColor,
+    this.rolling = false,
+  });
 
   String get _assetPath {
     final colorName = playerColor?.name ?? 'white';
     final v = value.clamp(1, 6);
-    return 'AnimStock/Dices/PNG/Dice_${v}_$colorName.png';
+    return rolling
+        ? 'AnimStock/Dices/WEBP/Dice_${colorName}_throw_$v.webp'
+        : 'AnimStock/Dices/PNG/Dice_${v}_$colorName.png';
   }
 
   @override

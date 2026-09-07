@@ -57,7 +57,9 @@ void main() {
       // lancer lui-même — la couleur « avant » se lit donc avant de lancer.
       final before = state.currentColor;
       state.rollManualForTest(3);
-      await t.pump(const Duration(milliseconds: 200));
+      // Au-delà de l'animation de lancer du Studio (495 ms) : avant, le dé
+      // affiche le WebP animé et non la face fixe.
+      await t.pump(const Duration(milliseconds: 600));
 
       expect(state.currentColor, isNot(before),
           reason: 'un 3 sans coup jouable doit passer la main');
