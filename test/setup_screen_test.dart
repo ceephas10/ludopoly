@@ -8,6 +8,19 @@ import 'package:ludopoly/main.dart';
 
 import 'app_boot.dart';
 
+/// La page des réglages est longue : son bouton « Jouer » vit au fond
+/// d'une ListView, qui ne construit que ce qui est à l'écran. On y descend
+/// avant de cliquer.
+Future<void> tapPlay(WidgetTester t) async {
+  await t.scrollUntilVisible(
+    find.byKey(const Key('setup-play')),
+    300,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await t.tap(find.byKey(const Key('setup-play')));
+  await t.pump();
+}
+
 void main() {
   setUp(useLargeSurface);
   tearDown(resetSurface);
@@ -23,14 +36,12 @@ void main() {
 
     expect(find.text('Nombre de joueurs'), findsOneWidget);
     expect(find.text('Qui joue ?'), findsOneWidget);
-    expect(find.byKey(const Key('setup-play')), findsOneWidget);
     expect(find.byType(BoardScreen), findsNothing,
         reason: 'le plateau ne doit apparaître qu\'après « Jouer »');
 
     // « Jouer » depuis les réglages ramène au MENU : on a réglé, on
     // choisit ensuite comment entrer.
-    await t.tap(find.byKey(const Key('setup-play')));
-    await t.pump();
+    await tapPlay(t);
     expect(find.byKey(const Key('menu-play')), findsOneWidget);
 
     await shutdownApp(t);
@@ -55,8 +66,7 @@ void main() {
     await t.pump();
 
     // On valide les réglages, puis on entre par « Système ».
-    await t.tap(find.byKey(const Key('setup-play')));
-    await t.pump();
+    await tapPlay(t);
     await t.tap(find.byKey(const Key('menu-system')));
     await waitForBoard(t);
 
@@ -88,8 +98,7 @@ void main() {
     expect(find.byKey(const Key('setup-difficulty')), findsOneWidget);
 
     // On valide les réglages, puis on entre par « Système ».
-    await t.tap(find.byKey(const Key('setup-play')));
-    await t.pump();
+    await tapPlay(t);
     await t.tap(find.byKey(const Key('menu-system')));
     await waitForBoard(t);
 

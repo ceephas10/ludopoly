@@ -5,6 +5,7 @@
 
 import 'package:flutter/material.dart';
 
+import 'background_options.dart';
 import 'game/ai_difficulty.dart';
 import 'game/game_setup.dart';
 import 'game/player_color.dart';
@@ -175,6 +176,16 @@ class _SetupScreenState extends State<SetupScreen> {
                           onChanged: (v) => _set(_s.copyWith(aiTurbo: v)),
                         ),
                     ],
+                  ),
+                ),
+
+                // ─── Arrière-plan ───
+                _Section(
+                  title: 'Arrière-plan',
+                  subtitle: 'Le décor du menu et du plateau.',
+                  child: BackgroundOptions(
+                    config: _s.background,
+                    onChanged: (b) => _set(_s.copyWith(background: b)),
                   ),
                 ),
 

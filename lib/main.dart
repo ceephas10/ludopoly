@@ -58,7 +58,7 @@ class _LudoPolyAppState extends State<LudoPolyApp> {
   Widget _body() {
     switch (_screen) {
       case null:
-        return MenuScreen(onChoose: (c) {
+        return MenuScreen(background: _setup.background, onChoose: (c) {
           setState(() {
             _screen = c;
             if (c != MenuChoice.options) _game++;
@@ -784,6 +784,9 @@ class BoardScreenState extends State<BoardScreen>
         vortex: _controller.upgrades.vortexEnabled,
         chance: _controller.upgrades.chanceEnabled,
         aiTurbo: _aiTurbo,
+        // Le décor n'est pas réglable depuis le plateau : on rend celui
+        // qu'on a reçu, sans le perdre au passage.
+        background: widget.setup.background,
       );
 
   /// Applique les choix de l'écran d'accueil. Une seule fois, avant tout
@@ -2361,6 +2364,7 @@ class BoardScreenState extends State<BoardScreen>
       // dégradé sinon. Le plateau est posé PAR-DESSUS — c'est ce qui lui
       // donne l'air de flotter sur le fond plutôt que d'y être collé.
       body: AppBackground.board.wrap(
+        config: widget.setup.background,
         SafeArea(
         child: LayoutBuilder(
           builder: (context, c) {

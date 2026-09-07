@@ -7,6 +7,7 @@
 import 'package:flutter/material.dart';
 
 import 'game/app_background.dart';
+import 'game/background_config.dart';
 
 /// Ce que le menu peut lancer.
 enum MenuChoice {
@@ -30,9 +31,16 @@ const Color _accent = BgPalette.amber;
 const Color _mint = BgPalette.cyan;
 
 class MenuScreen extends StatelessWidget {
-  const MenuScreen({super.key, required this.onChoose});
+  const MenuScreen({
+    super.key,
+    required this.onChoose,
+    this.background = const BackgroundConfig(),
+  });
 
   final ValueChanged<MenuChoice> onChoose;
+
+  /// Le décor choisi dans Options : le menu le porte aussi.
+  final BackgroundConfig background;
 
   @override
   Widget build(BuildContext context) {
@@ -40,6 +48,7 @@ class MenuScreen extends StatelessWidget {
       // Même décor que le plateau : image du Studio si elle existe,
       // dégradé sinon.
       body: AppBackground.menu.wrap(
+        config: background,
         SafeArea(
           child: Center(
             child: SingleChildScrollView(

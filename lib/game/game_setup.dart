@@ -6,6 +6,7 @@
 // l'ordinateur, et quelles options sont de la partie.
 
 import 'ai_difficulty.dart';
+import 'background_config.dart';
 import 'player_color.dart';
 
 class GameSetup {
@@ -17,6 +18,7 @@ class GameSetup {
     this.vortex = false,
     this.chance = false,
     this.aiTurbo = false,
+    this.background = const BackgroundConfig(),
   });
 
   /// De 1 à 4. L'ordre des couleurs en découle : bleu, puis rouge, vert et
@@ -41,6 +43,9 @@ class GameSetup {
   /// Accélérateur : raccourcit les temps d'attente de l'ordinateur.
   final bool aiTurbo;
 
+  /// Le décor : style, palette et effets d'ambiance.
+  final BackgroundConfig background;
+
   GameSetup copyWith({
     int? playerCount,
     Set<PlayerColor>? aiSeats,
@@ -49,6 +54,7 @@ class GameSetup {
     bool? vortex,
     bool? chance,
     bool? aiTurbo,
+    BackgroundConfig? background,
   }) =>
       GameSetup(
         playerCount: playerCount ?? this.playerCount,
@@ -58,6 +64,7 @@ class GameSetup {
         vortex: vortex ?? this.vortex,
         chance: chance ?? this.chance,
         aiTurbo: aiTurbo ?? this.aiTurbo,
+        background: background ?? this.background,
       );
 
   /// Les couleurs de la partie, dans l'ordre des tours. Même découpage que
