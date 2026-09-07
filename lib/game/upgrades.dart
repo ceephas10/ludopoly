@@ -604,6 +604,22 @@ const List<ChanceCard> kDeferredCards = [
   ),
 ];
 
+/// Le CODE d'une carte, celui qu'on lit sur sa face et dans la liste du
+/// panneau : `1`, `2`, `3`… pour les différées, `A`, `B`, `C`… pour les
+/// immédiates. Il désigne la carte elle-même, pas sa place dans une main —
+/// deux joueurs qui tiennent la même carte lisent donc le même code.
+///
+/// Le DOS, lui, ne le porte jamais : il révélerait ce qui doit rester
+/// caché tant qu'on n'a pas retourné la carte.
+String cardCode(ChanceCard c) {
+  final deck = c.kind == CardKind.immediate ? kImmediateCards : kDeferredCards;
+  final i = deck.indexWhere((x) => x.id == c.id);
+  if (i < 0) return '?';
+  return c.kind == CardKind.immediate
+      ? String.fromCharCode(65 + i) // A, B, C…
+      : '${i + 1}'; // 1, 2, 3…
+}
+
 /// Géométrie des cases spéciales. Les 4 index de départ sont ceux de
 /// [GameController] (bleu 0, rouge 13, vert 26, jaune 39) — verrouillés
 /// des deux côtés par les tests.

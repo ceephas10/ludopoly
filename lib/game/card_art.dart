@@ -282,7 +282,30 @@ class CardFace extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
+              // Le CODE de la carte : A, B, C… pour une immédiate, 1, 2,
+              // 3… pour une différée. Il désigne la carte elle-même, donc
+              // deux joueurs qui tiennent la même y lisent la même chose.
+              Center(
+                child: Container(
+                  width: 30,
+                  height: 30,
+                  alignment: Alignment.center,
+                  decoration: const BoxDecoration(
+                    color: _gold,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    cardCode(card),
+                    style: const TextStyle(
+                      color: _ink,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
               Text(
                 card.nameFr,
                 textAlign: TextAlign.center,

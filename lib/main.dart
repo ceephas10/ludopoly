@@ -1273,6 +1273,14 @@ class BoardScreenState extends State<BoardScreen>
     if (notices.isNotEmpty) _autoNotice = notices.join('\n');
   }
 
+  /// Un demi-tour pour les joueurs du HAUT du plateau. Rouge et vert sont
+  /// assis en haut : une carte dessinée dans le sens de l'écran leur
+  /// arriverait à l'envers. Bleu et jaune, en bas, la lisent telle quelle.
+  Widget _facing(PlayerColor c, Widget card) =>
+      (c == PlayerColor.red || c == PlayerColor.green)
+          ? RotatedBox(quarterTurns: 2, child: card)
+          : card;
+
   /// La carte qui vient d'être tirée sur une case Chance et qui doit
   /// S'OUVRIR : le joueur voit son dos, puis elle se retourne sur sa vraie
   /// face et son instruction. `null` = aucune carte à montrer.
@@ -2430,7 +2438,9 @@ class BoardScreenState extends State<BoardScreen>
                         // joueur désigne SON pion avant qu'elle n'agisse.
                         if (_pendingChoice != null)
                           Positioned.fill(
-                            child: _HandCardOverlay(
+                            child: _facing(
+                              _pendingChoice!.onPawn.color,
+                              _HandCardOverlay(
                               key: ValueKey(
                                   'choice-${_pendingChoice!.card.id}'),
                               card: _pendingChoice!.card,
@@ -2451,12 +2461,15 @@ class BoardScreenState extends State<BoardScreen>
                                   resolvePendingChoice(targetPawn),
                               defaultPawn: _pendingChoice!.onPawn,
                             ),
+                            ),
                           ),
                         // La carte que le joueur vient de RETOURNER dans
                         // sa base : il lit l'instruction et l'applique.
                         if (_handCard != null)
                           Positioned.fill(
-                            child: _HandCardOverlay(
+                            child: _facing(
+                              _handCard!.by,
+                              _HandCardOverlay(
                               key: ValueKey('hand-${_handCard!.card.id}'),
                               card: _handCard!.card,
                               // « Bleu · carte 2 » : on retrouve le
@@ -2475,16 +2488,20 @@ class BoardScreenState extends State<BoardScreen>
                               onClose: closeHandCard,
                               onPlay: _playOpenedHandCard,
                             ),
+                            ),
                           ),
                         if (_revealed != null)
                           Positioned.fill(
-                            child: _CardReveal(
+                            child: _facing(
+                              _revealed!.by,
+                              _CardReveal(
                               key: ValueKey(
                                   '${_revealed!.card.id}-${_revealed!.by.name}'),
                               card: _revealed!.card,
                               ownerLabel: _frenchColor(_revealed!.by),
                               onDismiss: closeCard,
                               size: boardSide,
+                            ),
                             ),
                           ),
                       ],
@@ -4615,7 +4632,8 @@ class _DeferredHandCardState extends State<_DeferredHandCard> {
                                           color: cs.onSecondaryContainer)),
                             ),
                             const SizedBox(width: 6),
-                            // Le même numéro que sur le dos, dans la base.
+                            // Le CODE de la carte — 1, 2, 3… pour une
+                            // différée — le même que sur sa face.
                             Container(
                               width: 16,
                               height: 16,
@@ -4624,7 +4642,7 @@ class _DeferredHandCardState extends State<_DeferredHandCard> {
                                 color: Color(0xFFD4AF37),
                                 shape: BoxShape.circle,
                               ),
-                              child: Text('${slot + 1}',
+                              child: Text(cardCode(card),
                                   style: const TextStyle(
                                     color: Color(0xFF0A0A0A),
                                     fontSize: 10,
