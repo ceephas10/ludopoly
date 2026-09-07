@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ludopoly/game/brand.dart';
 import 'package:ludopoly/main.dart';
 
 import 'app_boot.dart';
@@ -17,7 +18,7 @@ void main() {
     await t.pumpWidget(const LudoPolyApp());
     await t.pump();
 
-    expect(find.text('LUDOPOLY'), findsOneWidget);
+    expect(find.byType(LudoPolyLogo), findsOneWidget);
     for (final k in ['menu-play', 'menu-system', 'menu-how', 'menu-options']) {
       expect(find.byKey(Key(k)), findsOneWidget, reason: k);
     }
@@ -90,7 +91,7 @@ void main() {
     // Et l'on en revient.
     await t.tap(find.byKey(const Key('how-home')));
     await t.pump();
-    expect(find.text('LUDOPOLY'), findsOneWidget);
+    expect(find.byType(LudoPolyLogo), findsOneWidget);
 
     await shutdownApp(t);
   });
@@ -133,7 +134,7 @@ void main() {
     await t.tap(find.byKey(const Key('board-home')));
     await t.pump();
 
-    expect(find.text('LUDOPOLY'), findsOneWidget);
+    expect(find.byType(LudoPolyLogo), findsOneWidget);
     expect(find.byType(BoardScreen), findsNothing,
         reason: 'sans ce retour, « Jouer » enferme dans la partie');
 

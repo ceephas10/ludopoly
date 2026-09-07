@@ -11,6 +11,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ludopoly/game/brand.dart';
 import 'package:ludopoly/main.dart';
 
 /// Surface de rendu des tests. La surface par défaut (800×600) est trop
@@ -58,7 +59,9 @@ Future<void> waitForBoard(WidgetTester t) async {
   // jamais été construit.
   await t.pump();
   for (int i = 0; i < 3000; i++) {
-    if (find.text('Loading tokens…').evaluate().isEmpty) return;
+    // On guette l'ÉCRAN de chargement, pas son texte : le libellé a déjà
+    // changé une fois, et un test ne doit pas tomber pour si peu.
+    if (find.byType(LoadingScreen).evaluate().isEmpty) return;
     await t.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 20)),
     );

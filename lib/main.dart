@@ -12,6 +12,7 @@ import 'game/board_painter.dart';
 import 'game/board_painter_5p.dart';
 import 'game/app_background.dart';
 import 'game/board_path.dart';
+import 'game/brand.dart';
 import 'game/card_art.dart';
 import 'game/game_controller.dart';
 import 'game/game_setup.dart';
@@ -2336,31 +2337,10 @@ class BoardScreenState extends State<BoardScreen>
   @override
   Widget build(BuildContext context) {
     if (!_assetsReady) {
-      return Scaffold(
-        backgroundColor: const Color(0xFF1A2541),
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(color: Colors.white70),
-              const SizedBox(height: 16),
-              const Text(
-                'Loading tokens…',
-                style: TextStyle(color: Colors.white70, fontSize: 14),
-              ),
-              const SizedBox(height: 6),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 460),
-                child: Text(
-                  _loadingStatus,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      color: Colors.white54, fontSize: 12),
-                ),
-              ),
-            ],
-          ),
-        ),
+      // Le décor et le logo, pas un fond vide en anglais.
+      return LoadingScreen(
+        status: _loadingStatus,
+        background: widget.setup.background,
       );
     }
     return Scaffold(
@@ -2400,14 +2380,19 @@ class BoardScreenState extends State<BoardScreen>
                 ? w
                 : (w - panelWidth - handleWidth).clamp(120.0, w);
             // 15 px top + 15 px bottom breathing room around the board.
-            const boardMarginV = 8.0;
+            // Une marge tout autour du plateau : sans elle il touche les
+            // bords et le décor ne se voit plus derrière lui.
+            const boardMarginV = 14.0;
+            const boardMarginH = 14.0;
             final maxBoardSquare = isNarrow
                 // Sans panneau — le mode « Jouer » du téléphone — le plateau
                 // prend toute la hauteur qu'il peut. Avec panneau, il lui en
                 // laisse les deux tiers.
                 ? math.min(
-                    w, showPanel ? h * 0.6 : h - 2 * boardMarginV - barH)
-                : (h - 2 * boardMarginV - barH).clamp(0.0, boardArea);
+                    w - 2 * boardMarginH,
+                    showPanel ? h * 0.6 : h - 2 * boardMarginV - barH)
+                : (h - 2 * boardMarginV - barH)
+                    .clamp(0.0, boardArea - 2 * boardMarginH);
             final boardSide =
                 _boardWidthOverride?.clamp(120.0, maxBoardSquare) ??
                     maxBoardSquare;
@@ -5587,7 +5572,12 @@ class BoardView extends StatelessWidget {
                   center.dy + pawnHeight * (1 - _pawnVisibleCenterFrac) -
                       pawnHeight * 0.10,
                 );
-                final r = cell * 0.30;
+                // En base, le halo doit tenir DANS le socle peint sous le
+                // pion : sinon deux cercles de même taille se superposent
+                // et l'on ne distingue plus lequel est lequel.
+                final r = pawn.location == PawnLocation.base
+                    ? kBaseSlotSize * cell * 0.30 * 0.62
+                    : cell * 0.30;
                 yield AnimatedPositioned(
                   key: ValueKey('halo_${pawn.color.name}_${pawn.id}'),
                   duration: moveDuration[pawn] ?? Duration.zero,
