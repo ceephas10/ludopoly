@@ -24,20 +24,29 @@ const Color _ink = Color(0xFF0A0A0A);
 /// lotus. Identique pour toutes les cartes.
 class CardBack extends StatelessWidget {
   final double radius;
-  const CardBack({super.key, this.radius = 6});
+
+  /// Le rang de la carte dans la main, à partir de 1. Affiché en pastille
+  /// dorée sous le médaillon : les quatre dos étant identiques, c'est la
+  /// SEULE chose qui permette de les distinguer et d'en désigner une.
+  /// `null` = pas de numéro, pour un dos montré seul.
+  final int? number;
+
+  const CardBack({super.key, this.radius = 6, this.number});
 
   @override
   Widget build(BuildContext context) => ClipRRect(
         borderRadius: BorderRadius.circular(radius),
         child: CustomPaint(
-          painter: const _CardBackPainter(),
+          painter: _CardBackPainter(number: number),
           size: Size.infinite,
         ),
       );
 }
 
 class _CardBackPainter extends CustomPainter {
-  const _CardBackPainter();
+  const _CardBackPainter({this.number});
+
+  final int? number;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -126,6 +135,37 @@ class _CardBackPainter extends CustomPainter {
     // --- le lotus ---------------------------------------------------------
     _drawLotus(canvas, Offset(cx, cy), r * 0.78, u);
 
+    // --- le numéro de la carte -------------------------------------------
+    // Posé SOUS le médaillon, entre les rinceaux et le liseré : la seule
+    // bande libre du dessin. Repéré depuis le bord BAS, pour rester à sa
+    // place quelle que soit la hauteur de la carte.
+    final n = number;
+    if (n != null) {
+      final br = u * 0.115;
+      final bc = Offset(cx, h - u * 0.205);
+      canvas.drawCircle(bc, br, Paint()..color = _gold);
+      canvas.drawCircle(
+          bc,
+          br,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = math.max(0.5, u * 0.014)
+            ..color = _goldPale);
+      final tp = TextPainter(
+        text: TextSpan(
+          text: '$n',
+          style: TextStyle(
+            color: _ink,
+            fontSize: br * 1.45,
+            fontWeight: FontWeight.w800,
+            height: 1.0,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, bc - Offset(tp.width / 2, tp.height / 2));
+    }
+
     // --- rinceaux au-dessus et au-dessous du médaillon --------------------
     line
       ..strokeWidth = math.max(0.5, u * 0.013)
@@ -190,7 +230,10 @@ class _CardBackPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _CardBackPainter old) => false;
+  // Le dessin ne dépend que du numéro : sans ce test, une carte jouée
+  // laisserait le dos de la précédente avec son ancien chiffre.
+  bool shouldRepaint(covariant _CardBackPainter old) =>
+      old.number != number;
 }
 
 /// La FACE d'une carte : le même cadre doré, mais ouverte — on y lit le

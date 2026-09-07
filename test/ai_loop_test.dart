@@ -197,7 +197,13 @@ void main() {
 
     // Personne ne clique JAMAIS : si la partie avance, c'est que la boucle
     // IA s'auto-entretient de bout en bout.
-    for (int step = 0; step < 1500; step++) {
+    //
+    // Le budget est du temps SIMULÉ, pas un nombre de tours : quand les
+    // temporisations de l'ordinateur s'allongent — la pause de lecture du
+    // dé les a portées à 1,5 s — il tient moins de tours dans la même
+    // fenêtre. Rallongé d'autant, sinon la partie n'a pas le temps de
+    // sortir ses pions et le test devient capricieux sous charge.
+    for (int step = 0; step < 2200; step++) {
       if (c.phase == TurnPhase.gameOver) break;
       await tester.pump(const Duration(milliseconds: 100));
       final now = fingerprint(c);
