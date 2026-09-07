@@ -6,6 +6,8 @@
 
 import 'package:flutter/material.dart';
 
+import 'game/app_background.dart';
+
 /// Ce que le menu peut lancer.
 enum MenuChoice {
   /// Le plateau seul, sans le panneau : on joue, rien d'autre.
@@ -21,8 +23,7 @@ enum MenuChoice {
   options,
 }
 
-const Color _deep = Color(0xFF0E2A1C);
-const Color _mid = Color(0xFF16452C);
+// Le dégradé de repli vit maintenant dans AppBackground.menu.
 const Color _tile = Color(0xFF1E4D33);
 const Color _accent = Color(0xFFE8B93B);
 const Color _mint = Color(0xFF4CC98A);
@@ -35,15 +36,10 @@ class MenuScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: DecoratedBox(
-        decoration: const BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment(0, -0.35),
-            radius: 1.1,
-            colors: [_mid, _deep],
-          ),
-        ),
-        child: SafeArea(
+      // Même décor que le plateau : image du Studio si elle existe,
+      // dégradé sinon.
+      body: AppBackground.menu.wrap(
+        SafeArea(
           child: Center(
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(vertical: 28),

@@ -10,6 +10,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'game/ai_difficulty.dart';
 import 'game/board_painter.dart';
 import 'game/board_painter_5p.dart';
+import 'game/app_background.dart';
 import 'game/board_path.dart';
 import 'game/card_art.dart';
 import 'game/game_controller.dart';
@@ -553,8 +554,6 @@ class BoardScreenState extends State<BoardScreen>
   /// jouable) ne parte. Sans cette pause on ne voit jamais le chiffre.
   static const Duration _dicePause = Duration(milliseconds: 550);
 
-  /// Hauteur de la barre qui porte le retour au menu, au-dessus du plateau.
-  static const double _topBarHeight = 38;
 
   /// Durée de l'animation de lancer du Studio — MESURÉE sur les fichiers
   /// `Dice_<couleur>_throw_<valeur>.webp` : 15 images, 495 ms, sans
@@ -2324,19 +2323,11 @@ class BoardScreenState extends State<BoardScreen>
     }
     return Scaffold(
       backgroundColor: const Color(0xFF1A2541),
-      // Un dégradé plutôt qu'un aplat : sur téléphone, le plateau est centré
-      // et laisse de la place au-dessus et en dessous. Un bleu nuit uni y
-      // faisait deux bandes mortes ; le dégradé donne de la profondeur et
-      // le plateau s'y pose au lieu d'y flotter.
-      body: DecoratedBox(
-        decoration: const BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment.center,
-            radius: 0.95,
-            colors: [Color(0xFF2A3A63), Color(0xFF141C33)],
-          ),
-        ),
-        child: SafeArea(
+      // Le décor derrière le plateau : image du Studio si elle existe,
+      // dégradé sinon. Le plateau est posé PAR-DESSUS — c'est ce qui lui
+      // donne l'air de flotter sur le fond plutôt que d'y être collé.
+      body: AppBackground.board.wrap(
+        SafeArea(
         child: LayoutBuilder(
           builder: (context, c) {
             final h = c.maxHeight.isFinite ? c.maxHeight : 800.0;
@@ -2351,9 +2342,10 @@ class BoardScreenState extends State<BoardScreen>
             final panelMax = w * 0.55;
             final panelMin = math.min(280.0, panelMax);
             final showPanel = widget.showPanel;
-            // La barre du retour au menu prend sa hauteur SUR celle du
-            // plateau : sans ça la colonne dépasse de 38 px.
-            final barH = widget.onExit == null ? 0.0 : _topBarHeight;
+            // Le retour au menu est posé PAR-DESSUS, en haut à droite de
+            // la zone du plateau : il ne prend donc aucune hauteur, et se
+            // trouve au même endroit en portrait comme en paysage.
+            const barH = 0.0;
             final panelWidth = (!showPanel || _panelCollapsed)
                 ? 0.0
                 : (w * 0.39).clamp(panelMin, panelMax);
@@ -2365,7 +2357,7 @@ class BoardScreenState extends State<BoardScreen>
                 ? w
                 : (w - panelWidth - handleWidth).clamp(120.0, w);
             // 15 px top + 15 px bottom breathing room around the board.
-            const boardMarginV = 15.0;
+            const boardMarginV = 8.0;
             final maxBoardSquare = isNarrow
                 // Sans panneau — le mode « Jouer » du téléphone — le plateau
                 // prend toute la hauteur qu'il peut. Avec panneau, il lui en
@@ -2637,43 +2629,45 @@ class BoardScreenState extends State<BoardScreen>
 
             // Le retour au menu est posé AU-DESSUS du plateau, pas dessus :
             // sur le plateau il masquait un coin de base.
-            final board = widget.onExit == null
-                ? boardWidget
-                : Column(
-                    mainAxisSize: MainAxisSize.min,
+            final board = boardWidget;
+
+            /// Le retour au menu, en haut à droite de la zone du plateau.
+            /// Sur téléphone cette zone occupe toute la largeur : il tombe
+            /// donc en haut à droite de l'écran, portrait compris.
+            Widget withHome(Widget layout) => widget.onExit == null
+                ? layout
+                : Stack(
                     children: [
-                      SizedBox(
-                        height: barH,
+                      layout,
+                      Positioned(
+                        top: 6,
+                        left: 0,
                         width: boardArea,
                         child: Align(
                           alignment: Alignment.centerRight,
-                          child: Tooltip(
-                            message: 'Revenir au menu',
-                            child: Material(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest
-                                  .withValues(alpha: 0.9),
-                              shape: const CircleBorder(),
-                              elevation: 1,
-                              child: InkWell(
-                                key: const Key('board-home'),
-                                customBorder: const CircleBorder(),
-                                onTap: widget.onExit,
-                                child: Padding(
-                                  padding: const EdgeInsets.all(7),
-                                  child: Icon(Icons.home_outlined,
-                                      size: 20,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant),
+                          child: Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: Tooltip(
+                              message: 'Revenir au menu',
+                              child: Material(
+                                color: Colors.black.withValues(alpha: 0.45),
+                                shape: const CircleBorder(),
+                                elevation: 2,
+                                child: InkWell(
+                                  key: const Key('board-home'),
+                                  customBorder: const CircleBorder(),
+                                  onTap: widget.onExit,
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(7),
+                                    child: Icon(Icons.home_outlined,
+                                        size: 20, color: Colors.white),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
                         ),
                       ),
-                      boardWidget,
                     ],
                   );
 
@@ -2682,15 +2676,15 @@ class BoardScreenState extends State<BoardScreen>
             if (isNarrow) {
               // Sans panneau, rien ne pousse le plateau vers le bas : il
               // restait collé en haut, avec un grand vide sous lui.
-              if (!showPanel) return Center(child: board);
-              return Column(
+              if (!showPanel) return withHome(Center(child: board));
+              return withHome(Column(
                 children: [
                   board,
                   Expanded(child: panel),
                 ],
-              );
+              ));
             }
-            return Row(
+            return withHome(Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 board,
@@ -2709,7 +2703,7 @@ class BoardScreenState extends State<BoardScreen>
                     ),
                 ],
               ],
-            );
+            ));
           },
         ),
       ),

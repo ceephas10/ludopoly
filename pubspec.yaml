@@ -64,6 +64,7 @@ flutter:
     - AnimStock/Dices/WEBP/
     - AnimStock/Selectors/WEBP/
     - AnimStock/Selectors/PNG/
+    - AnimStock/Backgrounds/
     - Documentation/Board4_Nomenclature.png
     - Documentation/Token_Nomenclature.png
     # Le squelette du gameplay : le JSON que le moteur lit et auquel il obéit.
