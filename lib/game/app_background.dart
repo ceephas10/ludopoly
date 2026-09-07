@@ -35,15 +35,18 @@ abstract final class BgPalette {
 /// Les deux fonds du jeu. Même décor, seule l'opacité du filigrane change :
 /// le plateau a besoin de plus de calme derrière lui que le menu.
 enum AppBackground {
-  menu(0.35),
-  board(0.18);
+  menu(1.0),
+  board(0.92);
 
   const AppBackground(this.textureOpacity);
 
-  /// Force du filigrane : la part de l'image qui transparaît.
+  /// Force de l'image. Elle est le décor, pas un filigrane : le dégradé
+  /// n'est là que pour combler ce qu'elle ne couvre pas, et pour tenir
+  /// debout si elle disparaît. À peine adoucie derrière le plateau, qui a
+  /// besoin d'un peu plus de calme que le menu.
   final double textureOpacity;
 
-  static const String _texture = 'AnimStock/Backgrounds/Background.jpg';
+  static const String _texture = 'AnimStock/Backgrounds/Background.png';
 
   /// Le décor, avec [child] posé PAR-DESSUS.
   Widget wrap(Widget child) => Stack(
@@ -78,7 +81,8 @@ enum AppBackground {
             ),
           ),
 
-          // 3. Les rayons diagonaux, venus du haut-gauche.
+          // 3. Le rayon diagonal, très adouci : l'image porte déjà son
+          //    propre éclairage, un voile appuyé la délaverait.
           const IgnorePointer(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -86,8 +90,8 @@ enum AppBackground {
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    Color(0x1FFFFFFF),
-                    BgPalette.lightRay,
+                    Color(0x0FFFFFFF),
+                    Color(0x0A4AAFFF),
                     Colors.transparent,
                   ],
                   stops: [0.0, 0.25, 0.6],
@@ -97,23 +101,7 @@ enum AppBackground {
             ),
           ),
 
-          // 4. Le halo central : ce qui fait que le plateau semble éclairé
-          //    plutôt que posé sur un fond plat.
-          const IgnorePointer(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: RadialGradient(
-                  center: Alignment.center,
-                  radius: 0.55,
-                  colors: [BgPalette.centerGlow, Colors.transparent],
-                  stops: [0.0, 1.0],
-                ),
-              ),
-              child: SizedBox.expand(),
-            ),
-          ),
-
-          // 5. Le vignettage : les bords s'éteignent, le regard va au centre.
+          // 4. Le vignettage : les bords s'éteignent, le regard va au centre.
           const IgnorePointer(
             child: DecoratedBox(
               decoration: BoxDecoration(
