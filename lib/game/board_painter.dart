@@ -271,19 +271,25 @@ class BoardPainter extends CustomPainter {
     _drawTri(canvas, fill, lb, rb, center, _blue);
 
     // Le cœur du plateau : un halo blanc qui monte des quatre pointes.
-    // C'est le point d'arrivée du jeu, il doit rayonner.
+    //
+    // Il était trois fois plus fort, et posé EXACTEMENT sous le dé. Au
+    // moindre trou d'affichage du dé — le temps d'un décodage — on ne
+    // voyait plus que ce blanc : le « flash » constaté à chaque lancer.
+    // Le trou est corrigé ailleurs, mais le halo n'avait aucune raison
+    // d'être aussi fort à cet endroit précis. Il éclaire encore le
+    // centre, il ne l'éblouit plus.
     canvas.drawCircle(
         center,
-        cell * 1.10,
+        cell * 1.30,
         Paint()
           ..shader = RadialGradient(
             colors: [
-              Colors.white.withValues(alpha: 0.55),
               Colors.white.withValues(alpha: 0.10),
+              Colors.white.withValues(alpha: 0.05),
               Colors.transparent,
             ],
             stops: const [0.0, 0.45, 1.0],
-          ).createShader(Rect.fromCircle(center: center, radius: cell * 1.10))
+          ).createShader(Rect.fromCircle(center: center, radius: cell * 1.30))
           ..blendMode = BlendMode.plus);
 
     // 7) Grid lines on every cell of the cross.

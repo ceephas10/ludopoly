@@ -77,7 +77,11 @@ void main() {
         int idleMs = 0;
         bool rewound = false;
 
-        for (int step = 0; step < 3000; step++) {
+        // Budget rallongé avec la SORTIE DE BASE, passée de 220 à
+        // 480 ms : chaque pion qui entre en jeu coûte un quart de seconde
+        // de plus, et c'est précisément le nombre de pions sortis que ce
+        // test mesure.
+        for (int step = 0; step < 3900; step++) {
           if (c.phase == TurnPhase.gameOver) break;
 
           // Une fois la partie lancée, on appuie sur « Retour » pendant le tour
@@ -204,7 +208,12 @@ void main() {
     // dé les a portées à 1,5 s — il tient moins de tours dans la même
     // fenêtre. Rallongé d'autant, sinon la partie n'a pas le temps de
     // sortir ses pions et le test devient capricieux sous charge.
-    for (int step = 0; step < 2200; step++) {
+    //
+    // Rallongé une seconde fois quand la SORTIE DE BASE est passée de 220
+    // à 480 ms : chaque pion qui entre en jeu coûte désormais un quart de
+    // seconde de plus, et la marge s'était réduite au point que le test
+    // tombait sous charge tout en passant seul.
+    for (int step = 0; step < 2800; step++) {
       if (c.phase == TurnPhase.gameOver) break;
       await tester.pump(const Duration(milliseconds: 100));
       final now = fingerprint(c);
