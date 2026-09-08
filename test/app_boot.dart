@@ -38,6 +38,10 @@ void resetSurface() {
 /// fichiers de test en parallèle, et le sondage peut prendre nettement
 /// plus longtemps quand plusieurs s'exécutent en même temps.
 Future<void> bootApp(WidgetTester t) async {
+  // Le déclic de chaque case passe par un canal de plateforme. Il n'a
+  // rien à prouver ici, et quelques centaines d'appels par suite de tests
+  // ne font que du bruit.
+  BoardScreenState.muteStepSounds = true;
   // Chaque test a sa propre zone asynchrone : une future mise en cache par
   // le test précédent ne s'y résout jamais. On repart d'un cache vide.
   resetPawnAnimationCache();

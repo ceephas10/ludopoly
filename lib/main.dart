@@ -6,7 +6,8 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart'
+    show rootBundle, HapticFeedback, SystemSound, SystemSoundType;
 import 'game/ai_difficulty.dart';
 import 'game/board_painter.dart';
 import 'game/board_painter_5p.dart';
@@ -645,6 +646,32 @@ class BoardScreenState extends State<BoardScreen>
   /// position réelle (le moteur, lui, a déjà appliqué tout le coup).
   final Map<Pawn, PawnStep> _travelStep = {};
 
+  /// Combien de SAUTS ce pion a faits. Le compteur ne sert qu'à dire « une
+  /// nouvelle case » à l'animation de saut : elle repart de zéro dès qu'il
+  /// change, et n'a besoin de rien d'autre.
+  final Map<Pawn, int> _hopSeq = {};
+
+  /// Le pion se pose sur une case : un déclic et une petite secousse.
+  ///
+  /// Pas de fichier son ni de greffon : `SystemSound` et `HapticFeedback`
+  /// sont dans Flutter. Sur Android — la cible réelle du jeu — les deux
+  /// répondent ; sur le web ils ne font rien, et le jeu ne s'en trouve pas
+  /// plus mal. Un vrai son enregistré demanderait `audioplayers` et ses
+  /// 39 dépendances, dont un greffon natif.
+  void _stepBeat() {
+    if (_muted) return;
+    SystemSound.play(SystemSoundType.click);
+    HapticFeedback.selectionClick();
+  }
+
+  /// Coupe le son des pas. Les tests le lèvent : `SystemSound` passe par
+  /// un canal de plateforme, et 400 déclics par suite de tests ne prouvent
+  /// rien.
+  static bool _muted = false;
+
+  @visibleForTesting
+  static set muteStepSounds(bool v) => _muted = v;
+
   /// Pions capturés mais visiblement encore à leur ancienne position. Le moteur
   /// a déjà rendu le pion capturé, mais on le MONTRE en train de se faire
   /// capturer — à sa place d'avant la capture — pendant que le pion attaquant
@@ -712,6 +739,18 @@ class BoardScreenState extends State<BoardScreen>
   /// qu'il n'est pas arrivé, sinon celle du joueur dont c'est le tour.
   /// Elle commande les DEUX indicateurs de tour : la couleur du dé
   /// central et le Yard qui clignote.
+  /// Sort du cache d'images l'animation de lancer sur le point d'être
+  /// jouée, pour qu'elle reparte de sa première frame. Voir le long
+  /// commentaire dans [_roll].
+  void _evictThrowAnimation(PlayerColor c, int value) {
+    final v = value.clamp(1, 6);
+    // La couleur affichée peut être celle qu'on retient encore du coup
+    // précédent : on évince les deux, c'est deux entrées de cache.
+    for (final name in {c.name, _activeColor.name}) {
+      AssetImage('AnimStock/Dices/WEBP/Dice_${name}_throw_$v.webp').evict();
+    }
+  }
+
   PlayerColor get _activeColor =>
       _activeColorHold ?? _controller.currentColor;
 
@@ -1020,6 +1059,22 @@ class BoardScreenState extends State<BoardScreen>
     // Le dé roule. L'animation du Studio s'arrête seule sur la face sortie ;
     // ce minuteur ne fait que rendre la main au PNG net ensuite.
     _diceThrowTimer?.cancel();
+    // ── POURQUOI ON VIDE LE CACHE ICI ────────────────────────────────
+    //
+    // Le WebP de lancer a `repetitionCount == 0` : il joue UNE fois puis
+    // s'arrête. Flutter le garde ensuite dans son `ImageCache`, TERMINÉ.
+    // Redemander le même fichier rend ce flux déjà fini : l'image
+    // apparaît directement sur sa dernière frame, sans animation.
+    //
+    // La `ValueKey` posée sur le widget n'y change rien — elle recrée
+    // l'État, pas le flux, et c'est le flux qui est épuisé. D'où le bug
+    // constaté : le dé s'animait quand la valeur ou la couleur changeait
+    // (autre fichier, donc autre entrée de cache) et restait figé dès
+    // qu'on retombait sur la même face de la même couleur.
+    //
+    // On évince donc l'entrée avant chaque lancer. L'éviction se règle en
+    // une microtâche, donc bien avant la frame que `setState` déclenche.
+    _evictThrowAnimation(forPlayer ?? _controller.currentColor, value);
     _diceRolling = true;
     _throwSeq++;
     _diceThrowTimer = _after(_pace(_diceThrowDuration), () {
@@ -1986,7 +2041,9 @@ class BoardScreenState extends State<BoardScreen>
       // On force l'affichage sur la 1re case du trajet ; le pion glissera
       // ensuite de case en case jusqu'à sa position réelle.
       if (path.length > 1) _travelStep[p] = path.first;
+      _hopSeq[p] = (_hopSeq[p] ?? 0) + 1;
     });
+    _stepBeat();
 
     // Une étape par tick : le pion s'arrête visiblement sur chaque case.
     if (path.length > 1) {
@@ -1997,7 +2054,9 @@ class BoardScreenState extends State<BoardScreen>
           return;
         }
         idx++;
+        _stepBeat();
         setState(() {
+          _hopSeq[p] = (_hopSeq[p] ?? 0) + 1;
           if (idx >= path.length - 1) {
             // Dernière case = position réelle du pion : on retire l'override.
             _travelStep.remove(p);
@@ -2472,8 +2531,14 @@ class BoardScreenState extends State<BoardScreen>
             // 15 px top + 15 px bottom breathing room around the board.
             // Une marge tout autour du plateau : sans elle il touche les
             // bords et le décor ne se voit plus derrière lui.
-            const boardMarginV = 14.0;
-            const boardMarginH = 14.0;
+            //
+            // Sur téléphone la marge se paie cher : le plateau est carré et
+            // borné par la LARGEUR, donc chaque pixel de marge horizontale
+            // est un pixel retiré aux quinze cases. On la réduit de moitié
+            // là où elle coûte, on la garde entière sur grand écran où elle
+            // ne coûte rien.
+            final boardMarginV = isNarrow ? 8.0 : 14.0;
+            final boardMarginH = isNarrow ? 7.0 : 14.0;
             final maxBoardSquare = isNarrow
                 // Sans panneau — le mode « Jouer » du téléphone — le plateau
                 // prend toute la hauteur qu'il peut. Avec panneau, il lui en
@@ -2491,8 +2556,7 @@ class BoardScreenState extends State<BoardScreen>
               width: boardArea,
               height: isNarrow ? boardSide + 2 * boardMarginV : h - barH,
               child: Padding(
-                padding: const EdgeInsets.symmetric(
-                    vertical: boardMarginV),
+                padding: EdgeInsets.symmetric(vertical: boardMarginV),
                 child: Center(
                   child: SizedBox(
                     width: boardSide,
@@ -2549,6 +2613,7 @@ class BoardScreenState extends State<BoardScreen>
                       showDetails: _showDetails,
                       moveDuration: _moveDuration,
                       travelStep: _travelStep,
+                      hopSeq: _hopSeq,
                       captureOverride: _captureOverride,
                       explosions: _explosions,
                         )),
@@ -2880,9 +2945,55 @@ class BoardScreenState extends State<BoardScreen>
               return withHome(SizedBox(width: w, height: h, child: panel));
             }
             if (isNarrow) {
-              // Sans panneau, rien ne pousse le plateau vers le bas : il
-              // restait collé en haut, avec un grand vide sous lui.
-              if (!showPanel) return withHome(Center(child: board));
+              // ── LES BANDES VIDES DU TÉLÉPHONE ──────────────────────
+              //
+              // Le plateau est CARRÉ et borné par la largeur : sur un
+              // écran de téléphone il occupe 96 % de la largeur mais à
+              // peine 44 % de la hauteur. Plus de la moitié de l'écran
+              // reste vide au-dessus et au-dessous, et aucun réglage de
+              // marge n'y changera rien — un carré ne s'étire pas.
+              //
+              // Ludo King remplit ces deux bandes avec les joueurs : ceux
+              // d'en haut au-dessus, ceux d'en bas au-dessous, chacun avec
+              // son dé. On fait pareil, et l'écran cesse d'être un plateau
+              // posé dans du vide.
+              final top = <Player>[
+                for (final p in _activePlayers)
+                  if (p.color == PlayerColor.red ||
+                      p.color == PlayerColor.green)
+                    p,
+              ];
+              final bottom = <Player>[
+                for (final p in _activePlayers)
+                  if (p.color == PlayerColor.blue ||
+                      p.color == PlayerColor.yellow)
+                    p,
+              ];
+              Widget strip(List<Player> seats, {required bool flip}) =>
+                  _SeatStrip(
+                    seats: seats,
+                    current: _activeColor,
+                    diceValue: _controller.diceValue,
+                    flip: flip,
+                    homeCount: {
+                      for (final p in seats)
+                        p.color: _controller.state.pawnsByColor[p.color]!
+                            .where((x) => x.location == PawnLocation.home)
+                            .length,
+                    },
+                  );
+
+              if (!showPanel) {
+                return withHome(Column(
+                  children: [
+                    // Les joueurs d'EN HAUT sont assis de l'autre côté :
+                    // leur bandeau se lit retourné, comme leurs cartes.
+                    Expanded(child: Center(child: strip(top, flip: true))),
+                    board,
+                    Expanded(child: Center(child: strip(bottom, flip: false))),
+                  ],
+                ));
+              }
               return withHome(Column(
                 children: [
                   board,
@@ -4401,6 +4512,246 @@ class _CardRevealState extends State<_CardReveal>
   }
 }
 
+/// Le bandeau des joueurs, posé au-dessus et au-dessous du plateau sur
+/// téléphone.
+///
+/// Il n'existe que là, et pour une raison précise : le plateau est carré
+/// et borné par la largeur de l'écran, si bien qu'en portrait il ne
+/// remplit qu'un peu plus de deux cinquièmes de la hauteur. Ces bandeaux
+/// occupent le reste — et y mettent ce qu'on cherche du regard pendant une
+/// partie : à qui est le tour, et où en est chacun.
+///
+/// Le siège de celui qui joue s'allume, sa valeur de dé apparaît. Les
+/// autres restent en retrait.
+class _SeatStrip extends StatelessWidget {
+  const _SeatStrip({
+    required this.seats,
+    required this.current,
+    required this.diceValue,
+    required this.homeCount,
+    required this.flip,
+  });
+
+  final List<Player> seats;
+
+  /// La couleur qui a la main.
+  final PlayerColor current;
+
+  /// La valeur du dé, montrée sur le seul siège actif. 0 = pas encore lancé.
+  final int diceValue;
+
+  /// Pions rentrés, par couleur : le seul chiffre qui dit qui gagne.
+  final Map<PlayerColor, int> homeCount;
+
+  /// Les joueurs d'en haut lisent le plateau à l'envers : leur bandeau se
+  /// retourne, comme leurs cartes et comme le dé.
+  final bool flip;
+
+  static const Map<PlayerColor, Color> _tint = {
+    PlayerColor.red: Color(0xFFED1C24),
+    PlayerColor.green: Color(0xFF00A651),
+    PlayerColor.blue: Color(0xFF29ABE2),
+    PlayerColor.yellow: Color(0xFFFFCB05),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    if (seats.isEmpty) return const SizedBox.shrink();
+    final row = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          for (final p in seats)
+            Flexible(
+              child: _SeatTile(
+                player: p,
+                tint: _tint[p.color] ?? Colors.white,
+                active: p.color == current,
+                diceValue: diceValue,
+                home: homeCount[p.color] ?? 0,
+              ),
+            ),
+        ],
+      ),
+    );
+    return flip ? RotatedBox(quarterTurns: 2, child: row) : row;
+  }
+}
+
+class _SeatTile extends StatelessWidget {
+  const _SeatTile({
+    required this.player,
+    required this.tint,
+    required this.active,
+    required this.diceValue,
+    required this.home,
+  });
+
+  final Player player;
+  final Color tint;
+  final bool active;
+  final int diceValue;
+  final int home;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      margin: const EdgeInsets.symmetric(horizontal: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: Color.lerp(const Color(0xCC0B1220), tint, active ? 0.30 : 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: active ? tint : tint.withValues(alpha: 0.35),
+          width: active ? 2.0 : 1.0,
+        ),
+        boxShadow: active
+            ? [BoxShadow(color: tint.withValues(alpha: 0.45), blurRadius: 14)]
+            : null,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(color: tint, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 7),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  player.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: active ? Colors.white : const Color(0xCCE8EEF7),
+                    fontSize: 12,
+                    fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  '$home/4 rentrés',
+                  style: const TextStyle(
+                      color: Color(0x99E8EEF7), fontSize: 10, height: 1.1),
+                ),
+              ],
+            ),
+          ),
+          // Le dé n'apparaît que sur le siège qui joue, et seulement une
+          // fois lancé : un dé affiché partout ne dit plus rien.
+          if (active && diceValue > 0) ...[
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: CustomPaint(
+                painter: MiniDieFace(value: diceValue, color: tint),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// LE SAUT du pion, d'une case à la suivante.
+///
+/// Le pion GLISSAIT : `AnimatedPositioned` interpole sa position, et rien
+/// de plus. On voyait un jeton traîné sur le plateau, pas un pion qui
+/// avance. Ici il décolle, passe au-dessus de la ligne, et retombe — un
+/// arc par case, comme une main qui déplace le pion.
+///
+/// L'arc est un demi-sinus : nul aux deux bouts, maximal au milieu. Le
+/// pion part donc du sol et y revient exactement, sans saut d'image entre
+/// deux cases.
+///
+/// Il s'y ajoute un écrasement à l'atterrissage — le pion se tasse d'un
+/// dixième puis reprend sa taille. C'est peu, et c'est ce peu qui fait
+/// qu'on SENT le contact au lieu de le déduire.
+class _PawnHop extends StatefulWidget {
+  const _PawnHop({
+    required this.seq,
+    required this.duration,
+    required this.height,
+    required this.child,
+  });
+
+  /// Change à chaque case franchie. C'est le seul signal : le saut repart
+  /// de zéro dès qu'il bouge.
+  final int seq;
+
+  /// Le temps d'une case. Le saut dure exactement ça, sinon le pion
+  /// arriverait avant ou après s'être posé.
+  final Duration duration;
+
+  /// Hauteur du bond, en pixels.
+  final double height;
+
+  final Widget child;
+
+  @override
+  State<_PawnHop> createState() => _PawnHopState();
+}
+
+class _PawnHopState extends State<_PawnHop>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: widget.duration == Duration.zero
+        ? const Duration(milliseconds: 220)
+        : widget.duration,
+  );
+
+  @override
+  void didUpdateWidget(covariant _PawnHop old) {
+    super.didUpdateWidget(old);
+    if (widget.seq != old.seq) {
+      _c.duration = widget.duration == Duration.zero
+          ? const Duration(milliseconds: 220)
+          : widget.duration;
+      _c.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      // L'enfant est construit UNE fois : le pion porte une animation
+      // WebP, la reconstruire à chaque frame la ferait repartir.
+      child: widget.child,
+      builder: (context, child) {
+        final t = _c.value;
+        final lift = math.sin(t * math.pi) * widget.height;
+        // L'écrasement ne vit que sur le dernier sixième, au contact.
+        final squash = t < 0.84 ? 0.0 : math.sin((t - 0.84) / 0.16 * math.pi);
+        return Transform.translate(
+          offset: Offset(0, -lift),
+          child: Transform(
+            alignment: Alignment.bottomCenter,
+            transform: Matrix4.diagonal3Values(
+                1 + squash * 0.07, 1 - squash * 0.10, 1),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// Retourne [child] pour les joueurs assis EN HAUT du plateau.
 ///
 /// Rouge et vert regardent le plateau depuis l'autre bord : ce qui est
@@ -5378,6 +5729,10 @@ class BoardView extends StatelessWidget {
   /// réelle — c'est ce qui permet de le voir passer case par case.
   final Map<Pawn, PawnStep> travelStep;
 
+  /// Le compteur de sauts, par pion : il change à chaque case franchie et
+  /// c'est ce changement — rien d'autre — qui relance le saut.
+  final Map<Pawn, int> hopSeq;
+
   /// Pions en train de se faire capturer : affichés à leur ancienne position
   /// le temps du trajet du pion attaquant.
   final Map<Pawn, PawnStep> captureOverride;
@@ -5445,6 +5800,7 @@ class BoardView extends StatelessWidget {
     this.showRing = false,
     this.moveDuration = const {},
     this.travelStep = const {},
+    this.hopSeq = const {},
     this.captureOverride = const {},
     this.explosions = const [],
     this.showGrid = false,
@@ -5689,7 +6045,11 @@ class BoardView extends StatelessWidget {
         // peint sous lui dans la base : les deux tombent donc l'un sur
         // l'autre au pixel près. 1,2 était trop grand — le pion débordait
         // sur les cases voisines et masquait la flèche de sélection.
-        final pawnHeight = cell * kBaseSlotSize;
+        // Le pion déborde volontairement de sa case : sur un plateau de
+        // téléphone une case fait 24 px, un pion à sa taille exacte y est
+        // un timbre. Il empiète donc sur ses voisines — sans jamais les
+        // masquer, la silhouette étant étroite et le bas transparent.
+        final pawnHeight = cell * kBaseSlotSize * 1.18;
         // Aspect ≈ 0.7 — close to a typical idle WebP (64/93 = 0.69).
         final pawnWidth = pawnHeight * 0.8;
 
@@ -6101,7 +6461,11 @@ class BoardView extends StatelessWidget {
                   width: pawnWidth,
                   height: pawnHeight,
                   child: IgnorePointer(
-                    child: _PawnAnimatedGif(
+                    child: _PawnHop(
+                      seq: hopSeq[pawn] ?? 0,
+                      duration: moveDuration[pawn] ?? Duration.zero,
+                      height: cell * 0.42,
+                      child: _PawnAnimatedGif(
                       key: ValueKey('${pawn.color.name}_${pawn.id}'),
                       asset: pawnAsset(pawn),
                       sequentialStartDelayMs: delayOf(pawn),
@@ -6110,6 +6474,7 @@ class BoardView extends StatelessWidget {
                       // others stay on their rest frame so the board
                       // doesn't get visually overloaded.
                       paused: paused || pawn.color != currentPlayerColor,
+                    ),
                     ),
                   ),
                 );
@@ -6149,7 +6514,19 @@ class BoardView extends StatelessWidget {
               // 8 mm et se pose rarement au pixel près. On élargit donc
               // au-delà du sprite — les zones voisines ne se recouvrent
               // pas pour autant, les pions étant à une case d'écart.
-              final hitSize = cell * 1.34;
+              // La zone couvre le pion ENTIER, tête comprise.
+              //
+              // C'était un carré centré sur l'ancre du pion — donc sur son
+              // milieu. Le doigt posé sur la TÊTE, la partie qu'on vise
+              // spontanément parce que c'est elle qu'on voit, tombait au
+              // bord de la zone ou dehors. D'où le pion qui « ne répond
+              // pas ». La zone est maintenant plus haute que large et
+              // remontée : elle englobe la tête, le corps et le socle.
+              final hitW = cell * 1.30;
+              final hitH = pawnHeight + cell * 0.55;
+              // De combien remonter : l'ancre est au milieu du pion, la
+              // tête au-dessus.
+              final hitUp = pawnHeight * _pawnVisibleCenterFrac + cell * 0.30;
               // En mode désignation, c'est la liste des cibles qui commande
               // — pas les coups possibles. Un pion adverse n'est jamais
               // « jouable », et c'est pourtant lui qu'on vient désigner.
@@ -6162,10 +6539,10 @@ class BoardView extends StatelessWidget {
                     : movablePawns.contains(pawn);
                 yield Positioned(
                   key: ValueKey('hit_${pawn.color.name}_${pawn.id}'),
-                  left: center.dx - hitSize / 2,
-                  top:  center.dy - hitSize / 2,
-                  width: hitSize,
-                  height: hitSize,
+                  left: center.dx - hitW / 2,
+                  top:  center.dy - hitUp,
+                  width: hitW,
+                  height: hitH,
                   child: MouseRegion(
                     cursor: showDetails
                         ? SystemMouseCursors.help
