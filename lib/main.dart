@@ -566,7 +566,11 @@ class BoardScreenState extends State<BoardScreen>
 
   /// Sortie de base : le pion est téléporté du bac à sa case départ, ce
   /// n'est pas un parcours — un saut court suffit.
-  static const Duration _baseExitDuration = Duration(milliseconds: 220);
+  /// La SORTIE DE BASE. Plus long qu'un pas ordinaire, et volontairement :
+  /// c'est le seul moment où un pion quitte sa boîte pour entrer en jeu,
+  /// et il traverse une grande diagonale pour y arriver. Expédié en 220 ms
+  /// il téléportait ; en 480 ms il se déplace.
+  static const Duration _baseExitDuration = Duration(milliseconds: 480);
 
   /// Temps pendant lequel un pion RESTE VISIBLE sur la case spéciale qui
   /// vient de l'emporter — vortex, trou noir ou carte. Sans cette pause on
@@ -650,6 +654,11 @@ class BoardScreenState extends State<BoardScreen>
   /// nouvelle case » à l'animation de saut : elle repart de zéro dès qu'il
   /// change, et n'a besoin de rien d'autre.
   final Map<Pawn, int> _hopSeq = {};
+
+  /// Les pions en train de SORTIR DE LEUR BASE. Leur trajet n'est pas un
+  /// pas : c'est une entrée en scène, et le plateau la dessine autrement
+  /// — arc plus haut, freinage plus long.
+  final Set<Pawn> _baseExit = {};
 
   /// Le pion se pose sur une case : un déclic et une petite secousse.
   ///
@@ -2042,8 +2051,19 @@ class BoardScreenState extends State<BoardScreen>
       // ensuite de case en case jusqu'à sa position réelle.
       if (path.length > 1) _travelStep[p] = path.first;
       _hopSeq[p] = (_hopSeq[p] ?? 0) + 1;
+      if (oldLoc == PawnLocation.base) {
+        _baseExit.add(p);
+      } else {
+        _baseExit.remove(p);
+      }
     });
     _stepBeat();
+    // La sortie finie, le pion redevient un pion ordinaire.
+    if (oldLoc == PawnLocation.base) {
+      _after(stepDur, () {
+        if (mounted && _baseExit.remove(p)) setState(() {});
+      });
+    }
 
     // Une étape par tick : le pion s'arrête visiblement sur chaque case.
     if (path.length > 1) {
@@ -2383,6 +2403,7 @@ class BoardScreenState extends State<BoardScreen>
     }
     _returnTimers.clear();
     _travelStep.clear();
+    _baseExit.clear();
     _activeColorHold = null;
     _captureOverride.clear();
     _animating = false;
@@ -2614,6 +2635,7 @@ class BoardScreenState extends State<BoardScreen>
                       moveDuration: _moveDuration,
                       travelStep: _travelStep,
                       hopSeq: _hopSeq,
+                      baseExit: _baseExit,
                       captureOverride: _captureOverride,
                       explosions: _explosions,
                         )),
@@ -4681,6 +4703,7 @@ class _PawnHop extends StatefulWidget {
     required this.duration,
     required this.height,
     required this.child,
+    this.glide = false,
   });
 
   /// Change à chaque case franchie. C'est le seul signal : le saut repart
@@ -4693,6 +4716,12 @@ class _PawnHop extends StatefulWidget {
 
   /// Hauteur du bond, en pixels.
   final double height;
+
+  /// Un GLISSÉ plutôt qu'un bond : la sortie de base. L'arc est le même,
+  /// mais il s'ouvre lentement et retombe vite — le pion s'élève de sa
+  /// boîte, plane, et se pose. Un demi-sinus symétrique donnerait un
+  /// petit saut nerveux, pas une entrée.
+  final bool glide;
 
   final Widget child;
 
@@ -4735,7 +4764,11 @@ class _PawnHopState extends State<_PawnHop>
       child: widget.child,
       builder: (context, child) {
         final t = _c.value;
-        final lift = math.sin(t * math.pi) * widget.height;
+        // Le glissé décale le sommet de l'arc vers le DÉBUT : le pion
+        // monte franchement en quittant sa boîte, puis redescend en
+        // planant sur les deux tiers du trajet.
+        final u = widget.glide ? math.pow(t, 0.62).toDouble() : t;
+        final lift = math.sin(u * math.pi) * widget.height;
         // L'écrasement ne vit que sur le dernier sixième, au contact.
         final squash = t < 0.84 ? 0.0 : math.sin((t - 0.84) / 0.16 * math.pi);
         return Transform.translate(
@@ -5733,6 +5766,10 @@ class BoardView extends StatelessWidget {
   /// c'est ce changement — rien d'autre — qui relance le saut.
   final Map<Pawn, int> hopSeq;
 
+  /// Les pions qui SORTENT de leur base en ce moment. Leur trajet reçoit
+  /// un arc plus ample et un freinage, au lieu du petit saut d'un pas.
+  final Set<Pawn> baseExit;
+
   /// Pions en train de se faire capturer : affichés à leur ancienne position
   /// le temps du trajet du pion attaquant.
   final Map<Pawn, PawnStep> captureOverride;
@@ -5801,6 +5838,7 @@ class BoardView extends StatelessWidget {
     this.moveDuration = const {},
     this.travelStep = const {},
     this.hopSeq = const {},
+    this.baseExit = const {},
     this.captureOverride = const {},
     this.explosions = const [],
     this.showGrid = false,
@@ -6422,18 +6460,34 @@ class BoardView extends StatelessWidget {
                   center.dy + pawnHeight * (1 - _pawnVisibleCenterFrac) -
                       pawnHeight * 0.10,
                 );
-                final r = cell * 0.30;
+                // Le halo dépasse un peu la case : c'est ce qui le fait
+                // lire comme un cerceau posé autour du pion, et non comme
+                // une pastille dessous.
+                final r = cell * 0.36;
                 yield AnimatedPositioned(
                   key: ValueKey('halo_${pawn.color.name}_${pawn.id}'),
                   duration: moveDuration[pawn] ?? Duration.zero,
-                  curve: Curves.easeInOut,
+                  // MÊME courbe que le pion : c'est la condition pour que
+                  // l'ombre reste sous lui d'un bout à l'autre du trajet.
+                  curve: baseExit.contains(pawn)
+                      ? Curves.easeOutCubic
+                      : Curves.easeInOut,
                   left: feet.dx - r,
                   top: feet.dy - r,
                   width: r * 2,
                   height: r * 2,
                   child: IgnorePointer(
-                    child: CustomPaint(
-                      painter: _PawnHalo(_colorOf(pawn.color)),
+                    child: _PawnHaloView(
+                      color: _colorOf(pawn.color),
+                      // Le halo TOURNE pour la couleur qui a la main : il
+                      // devient un cercle de tirets qui file. C'est ce qui
+                      // désigne « c'est à ce camp de jouer » sans un mot.
+                      spinning: pawn.color == currentPlayerColor,
+                      // Et il est piloté par la MÊME horloge que le saut :
+                      // même compteur, même durée. Il ne peut donc plus
+                      // traîner derrière le pion.
+                      hopSeq: hopSeq[pawn] ?? 0,
+                      hopDuration: moveDuration[pawn] ?? Duration.zero,
                     ),
                   ),
                 );
@@ -6455,7 +6509,13 @@ class BoardView extends StatelessWidget {
                   // un autre — les pions semblaient s'échanger.
                   key: ValueKey('pawn_${pawn.color.name}_${pawn.id}'),
                   duration: moveDuration[pawn] ?? Duration.zero,
-                  curve: Curves.easeInOut,
+                  // La SORTIE DE BASE freine au lieu de s'arrêter : le pion
+                  // part vite de sa boîte et se pose en douceur sur sa case
+                  // de départ. C'est ce freinage, et lui seul, qui fait la
+                  // différence entre un pion posé et un pion téléporté.
+                  curve: baseExit.contains(pawn)
+                      ? Curves.easeOutCubic
+                      : Curves.easeInOut,
                   left: bboxLeft,
                   top:  bboxTop,
                   width: pawnWidth,
@@ -6464,7 +6524,11 @@ class BoardView extends StatelessWidget {
                     child: _PawnHop(
                       seq: hopSeq[pawn] ?? 0,
                       duration: moveDuration[pawn] ?? Duration.zero,
-                      height: cell * 0.42,
+                      // La sortie de base est une entrée en scène : le pion
+                      // s'élève de deux cases au lieu d'une demie.
+                      height:
+                          cell * (baseExit.contains(pawn) ? 1.05 : 0.42),
+                      glide: baseExit.contains(pawn),
                       child: _PawnAnimatedGif(
                       key: ValueKey('${pawn.color.name}_${pawn.id}'),
                       asset: pawnAsset(pawn),
@@ -7570,28 +7634,208 @@ class YardBlinkState extends State<YardBlink>
 /// L'anneau posé aux pieds d'un pion, dans SA couleur. Un disque très
 /// pâle au centre, un anneau franc autour : le pion s'y pose au lieu de
 /// flotter sur la case.
+/// LE HALO du pion : le cerceau posé à ses pieds.
+///
+/// Il fait trois choses, et chacune répond à un moment du jeu.
+///
+///   * AU REPOS, c'est un anneau plein : le pion est rattaché au plateau,
+///     il ne flotte pas sur la case blanche.
+///   * QUAND C'EST À SA COULEUR DE JOUER, il devient un cercle de TIRETS
+///     et se met à tourner. Rien d'autre sur le plateau ne tourne : on
+///     voit d'un coup d'œil quel camp a la main, sans le lire.
+///   * PENDANT LE SAUT, il se resserre et pâlit — c'est une ombre, et une
+///     ombre rétrécit quand ce qui la projette s'élève.
+///
+/// Ce dernier point vient d'un défaut observé : le halo glissait sur sa
+/// propre interpolation pendant que le pion bondissait sur la sienne, et
+/// l'on voyait le pion arriver avant son halo. Les deux partagent
+/// désormais LE MÊME compteur de sauts et LA MÊME durée. Ils ne peuvent
+/// plus se désaccorder — c'est la même horloge.
+class _PawnHaloView extends StatefulWidget {
+  const _PawnHaloView({
+    required this.color,
+    required this.spinning,
+    required this.hopSeq,
+    required this.hopDuration,
+  });
+
+  final Color color;
+
+  /// C'est au tour de cette couleur : l'anneau passe en tirets tournants.
+  final bool spinning;
+
+  /// Change à chaque case franchie — le signal du saut.
+  final int hopSeq;
+
+  /// La durée d'une case, celle du saut du pion.
+  final Duration hopDuration;
+
+  @override
+  State<_PawnHaloView> createState() => _PawnHaloViewState();
+}
+
+class _PawnHaloViewState extends State<_PawnHaloView>
+    with TickerProviderStateMixin {
+  /// La rotation des tirets : elle tourne en boucle, sans fin.
+  late final AnimationController _spin = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  );
+
+  /// Le saut : une passe de 0 à 1 par case franchie.
+  late final AnimationController _hop = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+  );
+
+  /// L'ouverture des tirets : l'anneau plein s'AJOURE quand le tour
+  /// arrive, et se referme quand il repart. Sans cette transition, le
+  /// halo changerait de nature d'une image à l'autre.
+  late final AnimationController _open = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 260),
+    value: widget.spinning ? 1.0 : 0.0,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.spinning) _spin.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant _PawnHaloView old) {
+    super.didUpdateWidget(old);
+    if (widget.spinning != old.spinning) {
+      if (widget.spinning) {
+        _spin.repeat();
+        _open.forward();
+      } else {
+        _open.reverse().whenComplete(() {
+          if (mounted && !widget.spinning) _spin.stop();
+        });
+      }
+    }
+    if (widget.hopSeq != old.hopSeq) {
+      _hop.duration = widget.hopDuration == Duration.zero
+          ? const Duration(milliseconds: 220)
+          : widget.hopDuration;
+      _hop.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _spin.dispose();
+    _hop.dispose();
+    _open.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([_spin, _hop, _open]),
+      builder: (context, _) => CustomPaint(
+        painter: _PawnHalo(
+          rgb: widget.color,
+          turn: _spin.value,
+          // Le pion est en l'air au milieu du saut : c'est là que son
+          // ombre est la plus petite et la plus pâle.
+          lift: math.sin(_hop.value * math.pi),
+          dashed: Curves.easeOut.transform(_open.value),
+        ),
+      ),
+    );
+  }
+}
+
 class _PawnHalo extends CustomPainter {
-  const _PawnHalo(this.rgb);
+  const _PawnHalo({
+    required this.rgb,
+    this.turn = 0.0,
+    this.lift = 0.0,
+    this.dashed = 0.0,
+  });
 
   /// La couleur du pion, telle que le plateau la peint.
   final Color rgb;
 
+  /// Rotation des tirets, de 0 à 1 pour un tour complet.
+  final double turn;
+
+  /// Hauteur du pion au-dessus du sol, de 0 (posé) à 1 (au sommet).
+  final double lift;
+
+  /// 0 = anneau plein, 1 = cercle de tirets.
+  final double dashed;
+
+  /// Nombre de tirets. Douze : assez pour que la rotation se lise, assez
+  /// peu pour qu'ils ne se touchent pas à la taille d'une case.
+  static const int _dashes = 12;
+
   @override
   void paint(Canvas canvas, Size size) {
     final c = Offset(size.width / 2, size.height / 2);
-    final r = size.width / 2;
-    canvas.drawCircle(c, r * 0.94, Paint()..color = rgb.withValues(alpha: 0.18));
+    final r0 = size.width / 2;
+    // L'ombre rétrécit et pâlit à mesure que le pion monte.
+    final k = 1.0 - 0.34 * lift;
+    final fade = 1.0 - 0.45 * lift;
+    final r = r0 * k;
+
+    // Le disque : il reste, ajouré ou non. C'est lui qui pose le pion.
     canvas.drawCircle(
-        c,
-        r * 0.80,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = math.max(1.2, r * 0.22)
-          ..color = rgb.withValues(alpha: 0.85));
+        c, r * 0.94, Paint()..color = rgb.withValues(alpha: 0.18 * fade));
+
+    final rr = r * 0.80;
+    final stroke = math.max(1.2, r0 * 0.20);
+
+    if (dashed < 0.02) {
+      canvas.drawCircle(
+          c,
+          rr,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = stroke
+            ..color = rgb.withValues(alpha: 0.85 * fade));
+      return;
+    }
+
+    // L'anneau AJOURÉ. Chaque tiret est un arc ; l'écart entre eux s'ouvre
+    // de 0 à sa pleine valeur, ce qui fait passer du plein au pointillé
+    // sans que rien ne saute.
+    final step = 2 * math.pi / _dashes;
+    final gap = step * 0.42 * dashed;
+    final sweep = step - gap;
+    final start = turn * 2 * math.pi;
+    final rect = Rect.fromCircle(center: c, radius: rr);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.round
+      ..color = rgb.withValues(alpha: 0.92 * fade);
+    for (var i = 0; i < _dashes; i++) {
+      canvas.drawArc(rect, start + i * step, sweep, false, paint);
+    }
+
+    // Un liseré clair par-dessus : sur les quatre couleurs de base, un
+    // anneau de la même couleur que la case se perdrait dedans.
+    final halo = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke * 0.34
+      ..strokeCap = StrokeCap.round
+      ..color = Colors.white.withValues(alpha: 0.55 * dashed * fade);
+    for (var i = 0; i < _dashes; i++) {
+      canvas.drawArc(rect, start + i * step, sweep, false, halo);
+    }
   }
 
   @override
-  bool shouldRepaint(covariant _PawnHalo old) => old.rgb != rgb;
+  bool shouldRepaint(covariant _PawnHalo old) =>
+      old.rgb != rgb ||
+      old.turn != turn ||
+      old.lift != lift ||
+      old.dashed != dashed;
 }
 
 class _DiceFace extends StatelessWidget {
