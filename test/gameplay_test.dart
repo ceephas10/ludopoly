@@ -239,18 +239,46 @@ void main() {
 
   // ─────────────────────────────────────────────────────────────────
   group('§9 Série de trois 6', () {
-    test('6, 6, 6 → tour annulé et dernier pion renvoyé en base', () {
+    // La sanction est la PERTE DU TOUR, et rien d'autre. Le pion joué
+    // pendant la série ne repart PAS en base : ce n'est pas la règle du
+    // Ludo, et le joueur qui venait de sortir sur le 1er 6 puis
+    // d'avancer sur le 2e voyait ce pion revenir à la case départ —
+    // c'est le renvoi « sur deux 6 » qui a été signalé.
+    test('6, 6, 6 → le tour est perdu, MAIS le pion reste en place', () {
       final c = newGame();
       playTurn(c, 6); // sortie
       final p = outOfBase(c).single;
       expect(c.consecutiveSixes, 1);
       playTurn(c, 6); // avance
+      final where = p.position; // sa case AVANT le 3e lancer
       expect(c.consecutiveSixes, 2);
       expect(c.currentColor, PlayerColor.blue);
       c.roll(6); // 3e → sanction
       expect(c.currentColor, PlayerColor.red, reason: 'le tour est perdu');
-      expect(p.location, PawnLocation.base);
+      expect(p.location, PawnLocation.ring,
+          reason: 'AUCUN renvoi en base : la sanction est le tour, pas le pion');
+      expect(p.position, where, reason: 'le pion n\'a pas bougé non plus');
       expect(c.consecutiveSixes, 0, reason: 'compteur remis à zéro');
+    });
+
+    // Deux 6 ne sanctionnent RIEN. C'est la plainte exacte : « rouge fait
+    // deux 6 et il retourne dans la case de base ». Le test le vérifie
+    // sur les quatre couleurs — la règle n'appartient à aucune d'elles.
+    test('deux 6 ne renvoient personne, quelle que soit la couleur', () {
+      for (final color in PlayerColor.values) {
+        final c = newGame();
+        c.currentPlayerIdx = c.turnOrder.indexOf(color);
+        if (c.currentPlayerIdx < 0) continue;
+        c.roll(6);
+        final p = c.movablePawns().first;
+        c.movePawn(p); // sortie
+        expect(c.currentColor, color, reason: 'un 6 rend la main');
+        c.roll(6);
+        c.movePawn(p); // avance de 6
+        expect(p.location, PawnLocation.ring,
+            reason: '$color : deux 6 laissent le pion sur le plateau');
+        expect(c.consecutiveSixes, 2, reason: '$color : deux, pas trois');
+      }
     });
 
     test('6, 6, 2 → pas de sanction, la série retombe', () {

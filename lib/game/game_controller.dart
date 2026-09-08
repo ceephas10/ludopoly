@@ -331,12 +331,20 @@ class GameController {
     if (value == 6) {
       consecutiveSixes++;
       if (consecutiveSixes >= 3) {
-        // 3 sixes in a row: cancel the turn and send the pawn most recently
-        // moved during this streak back to base.
-        if (lastMovedThisTurn != null &&
-            lastMovedThisTurn!.color == currentColor) {
-          _returnPawnToBase(lastMovedThisTurn!);
-        }
+        // TROIS 6 D'AFFILÉE : le tour est PERDU, et rien de plus.
+        //
+        // Le troisième 6 renvoyait EN PLUS le dernier pion joué dans sa
+        // base. Ce n'est ni la règle du Ludo ni ce que fait Ludo King :
+        // la sanction est la perte du tour, le pion reste où il est.
+        //
+        // Cette double peine se lisait comme un renvoi « sur deux 6 » :
+        // le pion venait de sortir sur le premier 6 et d'avancer sur le
+        // deuxième, et c'est LUI que le troisième renvoyait — on voyait
+        // deux 6 joués, puis le pion revenir à la case départ.
+        //
+        // `lib/gameplay/engine.dart` appliquait déjà la règle ainsi. Les
+        // deux moteurs disent enfin la même chose, pour TOUTES les
+        // couleurs : la règle ne dépend d'aucune d'entre elles.
         _nextPlayer();
         return;
       }

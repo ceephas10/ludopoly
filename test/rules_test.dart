@@ -80,7 +80,9 @@ void main() {
   });
 
   group('🔄 Trois 6 consécutifs', () {
-    test('3 × 6 → tour perdu et pion renvoyé à la base', () {
+    // La sanction est la PERTE DU TOUR. Le pion ne repart pas en base :
+    // le Ludo ne connaît pas cette double peine, et Ludo King non plus.
+    test('3 × 6 → le tour est perdu, le pion ne bouge pas', () {
       final c = newGame();
       c.roll(6);
       final p = c.movablePawns().first;
@@ -88,9 +90,12 @@ void main() {
       c.roll(6);
       c.movePawn(c.movablePawns().firstWhere((x) => x == p)); // 2e six
       expect(c.currentColor, PlayerColor.blue);
+      final where = p.position;
       c.roll(6); // 3e six → annulation
       expect(c.currentColor, PlayerColor.red);
-      expect(p.location, PawnLocation.base);
+      expect(p.location, PawnLocation.ring,
+          reason: 'le tour est perdu, le pion RESTE sur le plateau');
+      expect(p.position, where);
     });
 
     test('la série se remet à zéro sur un non-6', () {
@@ -719,8 +724,10 @@ void main() {
       });
       expect(b0.location, PawnLocation.ring);
       c.runAsSeat(PlayerColor.blue, () => c.roll(6)); // 3e six
-      expect(b0.location, PawnLocation.base,
-          reason: 'le 3e six renvoie le dernier pion joué en base');
+      expect(c.seatOf(PlayerColor.blue).consecutiveSixes, 0,
+          reason: 'le 3e six coûte le tour : le compteur du siège retombe');
+      expect(b0.location, PawnLocation.ring,
+          reason: 'le 3e six coûte le TOUR, pas le pion');
     });
 
     test('une capture entre deux couleurs qui jouent chacune de leur côté',
