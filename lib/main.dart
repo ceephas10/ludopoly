@@ -6375,9 +6375,11 @@ class BoardView extends StatelessWidget {
               // Avec la carte « Deux dés », il y en a bien DEUX au centre,
               // un peu plus petits pour tenir côte à côte. Le total joué
               // est leur somme.
-              // Le dé occupe presque deux cases : posé à plat au centre
-              // du plateau, il doit se lire sans qu'on se penche.
-              final size = pair == null ? cell * 1.92 : cell * 1.26;
+              // Le dé occupe plus de deux cases : posé à plat au centre
+              // du plateau, il doit se lire d'un coup d'œil, sans qu'on se
+              // penche ni qu'on le cherche. C'est l'objet autour duquel
+              // tout le tour s'organise.
+              final size = pair == null ? cell * 2.35 : cell * 1.50;
               final width = pair == null ? size : size * 2 + cell * 0.14;
               final clickable = canRollDice;
               return Positioned(
@@ -6579,7 +6581,25 @@ class BoardView extends StatelessWidget {
                         //
                         // Il reste HORS du saut : le pion s'élève, son
                         // halo ne quitte pas le sol.
-                        if (pawn.location != PawnLocation.base)
+                        // ── QUAND LE HALO TOURNE ─────────────────────
+                        //
+                        // Il tournait dès que c'était au tour d'une
+                        // couleur. Il annonçait donc « à toi de jouer »
+                        // alors que le dé n'était pas lancé et qu'aucun
+                        // pion ne pouvait bouger : le joueur touchait, et
+                        // rien ne se passait.
+                        //
+                        // Il tourne maintenant sur les pions qui
+                        // RÉPONDENT AU DOIGT à cet instant. Avant le
+                        // lancer, aucun. Après, ceux que le dé autorise —
+                        // et si c'est un 6, ceux de la boîte aussi.
+                        //
+                        // DANS LA BASE, le halo n'apparaît QUE là : le
+                        // plateau y peint déjà un socle, et deux disques
+                        // concentriques au repos ne se lisent pas comme un
+                        // relief. Un anneau de tirets qui tourne, si.
+                        if (pawn.location != PawnLocation.base ||
+                            movablePawns.contains(pawn))
                           Positioned(
                             left: (pawnWidth - cell * 0.92) / 2,
                             top: pawnHeight * 0.90 - cell * 0.46,
@@ -6587,7 +6607,7 @@ class BoardView extends StatelessWidget {
                             height: cell * 0.92,
                             child: _PawnHaloView(
                               color: _colorOf(pawn.color),
-                              spinning: pawn.color == currentPlayerColor,
+                              spinning: movablePawns.contains(pawn),
                             ),
                           ),
                         Positioned.fill(
