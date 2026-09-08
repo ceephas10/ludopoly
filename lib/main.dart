@@ -6536,6 +6536,50 @@ class BoardView extends StatelessWidget {
               // dans la liste de rendu (qui change à chaque déplacement).
               int delayOf(Pawn p) => ((p.color.index * 4 + p.id) * 137) % 800;
 
+              // ---- Passe 1 ter : LES HALOS, TOUS AVANT TOUS LES PIONS.
+              //
+              // Le halo vivait dans le pion, sous son propre sprite. Il
+              // ne le traversait donc pas — mais il traversait LES
+              // AUTRES : sur l'anneau les pions se chevauchent (un pion
+              // fait 1,36 case de haut), et le halo d'un pion se
+              // retrouvait par-dessus la tête de son voisin de derrière.
+              //
+              // Il faut donc les peindre TOUS d'abord. Ils gardent
+              // EXACTEMENT la même position animée que leur pion —
+              // `AnimatedPositioned`, même durée, même courbe, construit
+              // dans la même passe de build : les deux tweens partent sur
+              // la même frame et n'ont aucun moyen de diverger.
+              for (final pawn in list) {
+                if (pawn.location == PawnLocation.base &&
+                    !movablePawns.contains(pawn)) {
+                  continue;
+                }
+                final center =
+                    _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
+                yield AnimatedPositioned(
+                  key: ValueKey('halo_${pawn.color.name}_${pawn.id}'),
+                  duration: moveDuration[pawn] ?? Duration.zero,
+                  curve: baseExit.contains(pawn)
+                      ? Curves.easeOutCubic
+                      : Curves.easeInOut,
+                  // Les pieds du pion, pas son cadre : le halo reste au
+                  // sol pendant que le pion saute au-dessus de lui.
+                  left: center.dx - cell * 0.36,
+                  top: center.dy -
+                      pawnHeight * _pawnVisibleCenterFrac +
+                      pawnHeight * 0.90 -
+                      cell * 0.19,
+                  width: cell * 0.72,
+                  height: cell * 0.38,
+                  child: IgnorePointer(
+                    child: _PawnHaloView(
+                      color: _colorOf(pawn.color),
+                      spinning: movablePawns.contains(pawn),
+                    ),
+                  ),
+                );
+              }
+
               // ---- Pass 2: pawn IMAGES (no hit-test, full bbox for visual).
               //  AnimatedPositioned interpolates left/top when the cell
               //  changes — Flutter handles the slide internally, no extra
@@ -6567,49 +6611,6 @@ class BoardView extends StatelessWidget {
                     child: Stack(
                       clipBehavior: Clip.none,
                       children: [
-                        // ── LE HALO EST DANS LE PION ─────────────────
-                        //
-                        // Il était posé à part, avec sa propre animation
-                        // de position. Deux animations, deux horloges :
-                        // le pion partait, le halo suivait, et l'on
-                        // voyait le pion arriver avant lui. Même durée et
-                        // même courbe n'y suffisaient pas.
-                        //
-                        // Il partage maintenant LA position du pion — il
-                        // n'y en a plus qu'une. Le décalage n'est plus
-                        // possible, il n'y a plus rien à accorder.
-                        //
-                        // Il reste HORS du saut : le pion s'élève, son
-                        // halo ne quitte pas le sol.
-                        // ── QUAND LE HALO TOURNE ─────────────────────
-                        //
-                        // Il tournait dès que c'était au tour d'une
-                        // couleur. Il annonçait donc « à toi de jouer »
-                        // alors que le dé n'était pas lancé et qu'aucun
-                        // pion ne pouvait bouger : le joueur touchait, et
-                        // rien ne se passait.
-                        //
-                        // Il tourne maintenant sur les pions qui
-                        // RÉPONDENT AU DOIGT à cet instant. Avant le
-                        // lancer, aucun. Après, ceux que le dé autorise —
-                        // et si c'est un 6, ceux de la boîte aussi.
-                        //
-                        // DANS LA BASE, le halo n'apparaît QUE là : le
-                        // plateau y peint déjà un socle, et deux disques
-                        // concentriques au repos ne se lisent pas comme un
-                        // relief. Un anneau de tirets qui tourne, si.
-                        if (pawn.location != PawnLocation.base ||
-                            movablePawns.contains(pawn))
-                          Positioned(
-                            left: (pawnWidth - cell * 0.92) / 2,
-                            top: pawnHeight * 0.90 - cell * 0.46,
-                            width: cell * 0.92,
-                            height: cell * 0.92,
-                            child: _PawnHaloView(
-                              color: _colorOf(pawn.color),
-                              spinning: movablePawns.contains(pawn),
-                            ),
-                          ),
                         Positioned.fill(
                           child: _PawnHop(
                       seq: hopSeq[pawn] ?? 0,
@@ -7885,28 +7886,36 @@ class _PawnHalo extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final c = Offset(size.width / 2, size.height / 2);
-    final r0 = size.shortestSide / 2;
-    final rr = r0 * 0.74;
+    // UN OVALE, PAS UN CERCLE : l'anneau est posé à plat sur la case et
+    // vu de biais, comme dans Ludo King. Un cercle se dresse devant le
+    // pion, monte jusqu'aux têtes voisines et les traverse.
+    //
+    // Les rayons se prennent donc séparément sur la boîte, que
+    // l'appelant fait large et basse.
+    final rx = size.width / 2 * 0.86;
+    final ry = size.height / 2 * 0.86;
     // Épais : un tiret fin sur une case blanche ne se voit pas, et sur
-    // une case de sa propre couleur pas du tout.
-    final stroke = math.max(2.4, r0 * 0.36);
+    // une case de sa propre couleur pas du tout. La mesure se prend sur
+    // la LARGEUR — sur la hauteur écrasée, elle donnerait un cheveu.
+    final stroke = math.max(2.2, rx * 0.32);
 
-    // Le disque au sol. Il reste dans les deux états — c'est lui qui pose
-    // le pion sur sa case.
-    canvas.drawCircle(c, r0 * 0.92, Paint()..color = rgb.withValues(alpha: 0.16));
+    // L'ombre au sol. Elle reste dans les deux états — c'est elle qui
+    // pose le pion sur sa case.
+    canvas.drawOval(
+        Rect.fromCenter(center: c, width: rx * 2.10, height: ry * 2.10),
+        Paint()..color = rgb.withValues(alpha: 0.16));
+
+    final rect = Rect.fromCenter(center: c, width: rx * 2, height: ry * 2);
 
     if (dashed < 0.02) {
-      canvas.drawCircle(
-          c,
-          rr,
+      canvas.drawOval(
+          rect,
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = stroke
             ..color = rgb.withValues(alpha: 0.85));
       return;
     }
-
-    final rect = Rect.fromCircle(center: c, radius: rr);
     final step = 2 * math.pi / _dashes;
     // Le vide occupe presque la moitié du pas : c'est CE vide qu'on voit
     // défiler. Un écart étroit et le cercle redevient continu.
