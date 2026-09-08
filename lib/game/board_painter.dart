@@ -66,9 +66,12 @@ class BoardPainter extends CustomPainter {
   /// luminosité, la teinte et la saturation restent celles de la palette.
   static Color _lift(Color c, double amount) {
     final h = HSLColor.fromColor(c);
+    // Éclaircir une couleur la DÉSATURE : elle file vers le blanc. On
+    // remonte donc la saturation d'autant, sinon les bandes des bases
+    // paraissent délavées du côté de la source de lumière.
     return h
         .withLightness((h.lightness + amount).clamp(0.0, 1.0))
-        .withSaturation((h.saturation * 1.06).clamp(0.0, 1.0))
+        .withSaturation((h.saturation * 1.26).clamp(0.0, 1.0))
         .toColor();
   }
 
@@ -78,7 +81,7 @@ class BoardPainter extends CustomPainter {
     final h = HSLColor.fromColor(c);
     return h
         .withLightness((h.lightness - amount).clamp(0.0, 1.0))
-        .withSaturation((h.saturation * 1.10).clamp(0.0, 1.0))
+        .withSaturation((h.saturation * 1.16).clamp(0.0, 1.0))
         .toColor();
   }
 
@@ -95,9 +98,38 @@ class BoardPainter extends CustomPainter {
       ).createShader(r);
   }
 
+  /// La matrice qui SATURE, sans toucher aux gris.
+  ///
+  /// Les coefficients sont ceux de la luminance perçue (Rec. 709) : un
+  /// pixel gris a ses trois canaux égaux, la matrice le laisse donc
+  /// exactement où il est. Seules les couleurs s'écartent — vers plus de
+  /// couleur. Le blanc des cases et le blanc du vernis ne bougent pas.
+  static ColorFilter _saturation(double s) {
+    const lr = 0.2126, lg = 0.7152, lb = 0.0722;
+    final k = 1.0 - s;
+    return ColorFilter.matrix(<double>[
+      lr * k + s, lg * k,     lb * k,     0, 0,
+      lr * k,     lg * k + s, lb * k,     0, 0,
+      lr * k,     lg * k,     lb * k + s, 0, 0,
+      0,          0,          0,          1, 0,
+    ]);
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     final cell = size.shortestSide / 15.0;
+
+    // TOUT le plateau est peint dans un calque saturé.
+    //
+    // Éclairer une couleur la tire vers le blanc : les bandes des bases,
+    // exposées de plein fouet du côté de la source, en ressortaient
+    // délavées. Ce calque leur rend leur couleur APRÈS coup, une fois
+    // toutes les couches posées — le vernis compris, qui est blanc donc
+    // neutre et n'en profite pas.
+    canvas.saveLayer(
+        Rect.fromLTWH(0, 0, size.width, size.height),
+        Paint()..colorFilter = _saturation(1.22));
+
     final fill = Paint()..style = PaintingStyle.fill;
     final stroke = Paint()
       ..style = PaintingStyle.stroke
@@ -123,7 +155,7 @@ class BoardPainter extends CustomPainter {
     //    leave room for the LudoPoly extension content).
     void drawBase(double c0, double r0, Color color) {
       final outer = rect(c0, r0, c0 + 6, r0 + 6);
-      canvas.drawRect(outer, _lit(outer, color, up: 0.15, down: 0.12));
+      canvas.drawRect(outer, _lit(outer, color, up: 0.085, down: 0.14));
       // Bande de couleur élargie : le blanc intérieur se resserre de 0,5 à
       // 0,85 case sur chaque bord.
       final inner = rect(c0 + 0.85, r0 + 0.85, c0 + 5.15, r0 + 5.15);
@@ -318,12 +350,12 @@ class BoardPainter extends CustomPainter {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Colors.white.withValues(alpha: 0.17),
-              Colors.white.withValues(alpha: 0.045),
+              Colors.white.withValues(alpha: 0.095),
+              Colors.white.withValues(alpha: 0.028),
               Colors.transparent,
               Colors.transparent,
             ],
-            stops: const [0.0, 0.24, 0.52, 1.0],
+            stops: const [0.0, 0.20, 0.46, 1.0],
           ).createShader(full));
 
     // Le halo de la source, calé sur le coin haut-gauche du plateau.
@@ -336,8 +368,8 @@ class BoardPainter extends CustomPainter {
           ..blendMode = BlendMode.plus
           ..shader = RadialGradient(
             colors: [
-              Colors.white.withValues(alpha: 0.13),
-              Colors.white.withValues(alpha: 0.03),
+              Colors.white.withValues(alpha: 0.075),
+              Colors.white.withValues(alpha: 0.018),
               Colors.transparent,
             ],
             stops: const [0.0, 0.42, 1.0],
@@ -359,6 +391,8 @@ class BoardPainter extends CustomPainter {
             ],
             stops: const [0.0, 0.55, 0.82, 1.0],
           ).createShader(full));
+
+    canvas.restore(); // ferme le calque saturé
   }
 
   /// Une paire d'ailes déployées, gravée sur une case.

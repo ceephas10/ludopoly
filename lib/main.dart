@@ -579,11 +579,15 @@ class BoardScreenState extends State<BoardScreen>
 
 
   /// Durée de l'animation de lancer du Studio — MESURÉE sur les fichiers
-  /// `Dice_<couleur>_throw_<valeur>.webp` : 15 images, 495 ms, sans
+  /// `Dice_<couleur>_throw_<valeur>.webp` : 20 images, 500 ms, sans
   /// répétition. Elles s'arrêtent d'elles-mêmes sur la face sortie ; on
   /// repasse ensuite au PNG net. Un test vérifie que cette valeur suit les
   /// fichiers si le Studio les refait.
-  static const Duration _diceThrowDuration = Duration(milliseconds: 495);
+  ///
+  /// Le découpage : 300 ms de culbute, 100 ms de PALIER où le dé montre
+  /// son volume, 100 ms de bascule à plat. C'est le palier qui fait qu'on
+  /// voit un objet se poser, et non une image se figer.
+  static const Duration _diceThrowDuration = Duration(milliseconds: 500);
 
   @visibleForTesting
   static Duration get diceThrowDurationForTest => _diceThrowDuration;
@@ -1298,8 +1302,9 @@ class BoardScreenState extends State<BoardScreen>
       return;
     }
     if (drawn == null) return;
-    // Une différée ne se montre pas : elle va se ranger, point.
-    if (drawn.card.kind == CardKind.deferred) return;
+    // Toute carte tirée se MONTRE. Une différée part se ranger dans la
+    // base de son propriétaire ; sans ce temps d'arrêt, elle y arrivait
+    // sans que personne ne l'ait vue — ni son propriétaire, ni la table.
     _openCard(drawn);
   }
 
@@ -1328,16 +1333,97 @@ class BoardScreenState extends State<BoardScreen>
   /// Minuterie qui referme la carte toute seule.
   Timer? _revealTimer;
 
-  /// Combien de temps la carte reste ouverte. Assez pour lire
-  /// l'instruction sans avoir à cliquer.
+  /// Combien de temps une carte IMMÉDIATE reste ouverte. Assez pour lire
+  /// l'instruction sans avoir à cliquer — son effet part dans la foulée.
   static const Duration _revealHold = Duration(milliseconds: 3200);
+
+  /// Combien de temps une carte DIFFÉRÉE reste ouverte avant d'aller se
+  /// ranger dans la base. Plus court : rien ne se joue tout de suite, on
+  /// montre seulement à la table ce qui vient d'être tiré.
+  static const Duration _revealHoldDeferred = Duration(milliseconds: 2000);
 
   /// Ouvre [drawn] au centre du plateau. Un clic la referme plus tôt.
   void _openCard(({ChanceCard card, PlayerColor by}) drawn) {
     _revealTimer?.cancel();
     setState(() => _revealed = drawn);
-    _revealTimer = _after(_pace(_revealHold, ai: _isAiColor(drawn.by)),
-        () => closeCard());
+    final hold = drawn.card.kind == CardKind.deferred
+        ? _revealHoldDeferred
+        : _revealHold;
+    _revealTimer =
+        _after(_pace(hold, ai: _isAiColor(drawn.by)), () => closeCard());
+  }
+
+  // ── DÉSIGNER SA CIBLE SUR LE PLATEAU ─────────────────────────────────
+  //
+  // « Empêchez un pion adverse de sortir » : la cible se choisissait dans
+  // une liste déroulante — « pion 3 de rouge » — alors qu'elle est là, sur
+  // le plateau, sous les yeux du joueur. Il la DÉSIGNE maintenant en la
+  // touchant, quelle que soit sa couleur.
+  //
+  // La liste déroulante reste : elle sert au clavier, aux tests, et à
+  // l'ordinateur. La désignation s'ajoute, elle ne remplace rien.
+  ({
+    ChanceCard card,
+    PlayerColor by,
+    List<Pawn> targets,
+    void Function(Pawn) pick,
+  })? _targeting;
+
+  /// Les pions désignables en ce moment, pour le plateau et les tests.
+  @visibleForTesting
+  List<Pawn> get targetPawns => _targeting?.targets ?? const [];
+
+  void _startTargeting({
+    required ChanceCard card,
+    required PlayerColor by,
+    required List<Pawn> targets,
+    required void Function(Pawn) pick,
+  }) {
+    if (targets.isEmpty) return;
+    setState(() {
+      _handCard = null;   // la carte s'efface : elle cachait le plateau
+      _targeting = (card: card, by: by, targets: targets, pick: pick);
+    });
+  }
+
+  @visibleForTesting
+  void cancelTargeting() {
+    if (_targeting != null) setState(() => _targeting = null);
+  }
+
+  void _pickTarget(Pawn p) {
+    final t = _targeting;
+    if (t == null || !t.targets.contains(p)) return;
+    setState(() => _targeting = null);
+    t.pick(p);
+  }
+
+  // ── LA CARTE MAINTENUE ────────────────────────────────────────────────
+  //
+  // Un doigt posé sur une carte de sa base la montre, en grand, tant qu'il
+  // y reste. C'est le geste qu'on fait avec une vraie carte quand on la
+  // lève pour que la table la voie : elle se montre, puis on la repose.
+  //
+  // Au relâchement, la carte s'ouvre pour de bon — avec son bouton
+  // « Jouer la carte ». Le maintien ne remplace donc rien, il s'ajoute.
+  ({ChanceCard card, PlayerColor by})? _heldCard;
+
+  ChanceCard? get heldCardForTest => _heldCard?.card;
+
+  void _holdHandCard(int slot) {
+    if (_paused) return;
+    final seat = _cardTapSeat;
+    if (seat == null) return;
+    final hand = _controller.upgrades.handOf(seat);
+    if (slot < 0 || slot >= hand.length) return;
+    setState(() => _heldCard = (card: hand[slot], by: seat));
+  }
+
+  /// Le doigt se lève : on repose la carte, et on l'ouvre.
+  void _releaseHandCard(int slot) {
+    if (_heldCard == null) return;
+    setState(() => _heldCard = null);
+    _openHandCard(slot);
   }
 
   /// Referme la carte ouverte, s'il y en a une.
@@ -2431,7 +2517,10 @@ class BoardScreenState extends State<BoardScreen>
                       },
                       twoDice: _twoDiceShown,
                       tappableCardSeat: _cardTapSeat,
-                      onDeferredCardTap: _openHandCard,
+                      onDeferredCardTap: _releaseHandCard,
+                      onDeferredCardHold: _holdHandCard,
+                      onDeferredCardRelease: () =>
+                          setState(() => _heldCard = null),
                       showRing: _showRing,
                       showGrid: _showGrid,
                       showCanvas: _showCanvas,
@@ -2448,6 +2537,11 @@ class BoardScreenState extends State<BoardScreen>
                       movablePawns: _humanMovablePawns,
                       onRollDice: _rollDiceRandom,
                       onPawnTap: (p) => _movePawn(p),
+                      targetPawns: _targeting?.targets ?? const [],
+                      targetTint: _targeting == null
+                          ? const Color(0xFFFFD54F)
+                          : cardIdentity(_targeting!.card).color,
+                      onTargetPick: _pickTarget,
                       pawnAsset: _pawnAsset,
                       pawnInfo: _pawnInfo,
                       onPawnHover: _onPawnHover,
@@ -2487,6 +2581,21 @@ class BoardScreenState extends State<BoardScreen>
                               onPlay: ({targetPawn, targetPlayer}) =>
                                   resolvePendingChoice(targetPawn),
                               defaultPawn: _pendingChoice!.onPawn,
+                              onPickOnBoard: () {
+                                final pending = _pendingChoice!;
+                                setState(() => _pendingChoice = null);
+                                _startTargeting(
+                                  card: pending.card,
+                                  by: pending.onPawn.color,
+                                  targets: _controller.immediateTargets(
+                                      pending.card, pending.onPawn),
+                                  pick: (p) => setState(() {
+                                    _controller.resolvePendingImmediate(
+                                        chosen: p);
+                                    _flushUpgradeNotices();
+                                  }),
+                                );
+                              },
                             ),
                             ),
                           ),
@@ -2514,7 +2623,50 @@ class BoardScreenState extends State<BoardScreen>
                               phase: _controller.phase,
                               onClose: closeHandCard,
                               onPlay: _playOpenedHandCard,
+                              onPickOnBoard: () {
+                                final open = _handCard!;
+                                _startTargeting(
+                                  card: open.card,
+                                  by: open.by,
+                                  targets: _controller.deferredPawnTargets(
+                                      open.by, open.card),
+                                  // La carte ouverte s'efface pour laisser
+                                  // voir le plateau : on retient donc ICI
+                                  // laquelle on joue, plutôt que de la
+                                  // relire dans `_handCard`, qui est nul.
+                                  pick: (p) => playDeferredCard(open.card,
+                                      targetPawn: p),
+                                );
+                              },
                             ),
+                            ),
+                          ),
+                        // La bannière de DÉSIGNATION : elle dit ce qu'on
+                        // attend et permet d'y renoncer. Sans elle, le
+                        // plateau se met à refuser les coups normaux sans
+                        // que rien n'explique pourquoi.
+                        if (_targeting != null)
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            top: 0,
+                            child: _TargetBanner(
+                              card: _targeting!.card,
+                              count: _targeting!.targets.length,
+                              onCancel: cancelTargeting,
+                            ),
+                          ),
+                        // La carte MAINTENUE : elle se montre à la table
+                        // dans le sens de l'écran — c'est justement pour
+                        // les autres qu'on la lève, pas pour soi.
+                        if (_heldCard != null)
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              child: _HeldCard(
+                                card: _heldCard!.card,
+                                ownerLabel: _frenchColor(_heldCard!.by),
+                                size: boardSide,
+                              ),
                             ),
                           ),
                         if (_revealed != null)
@@ -4088,6 +4240,62 @@ class _GameModeCard extends StatelessWidget {
 /// Elle part de son DOS — le même que celui des cartes posées dans les
 /// bases — puis pivote sur elle-même pour montrer sa vraie face et son
 /// instruction. Un clic n'importe où la referme avant la fin.
+/// La carte qu'on MAINTIENT : montrée en grand, au centre, tant que le
+/// doigt reste posé dessus.
+///
+/// Pas de bouton, pas de minuterie, rien à fermer : elle vit exactement le
+/// temps du geste. Et elle se présente dans le sens de l'ÉCRAN, jamais
+/// retournée vers son propriétaire — c'est pour que les autres la voient
+/// qu'on la lève.
+class _HeldCard extends StatelessWidget {
+  const _HeldCard({
+    required this.card,
+    required this.ownerLabel,
+    required this.size,
+  });
+
+  final ChanceCard card;
+  final String ownerLabel;
+
+  /// Côté du plateau : la carte s'y dimensionne.
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final w = (size * 0.34).clamp(150.0, 260.0);
+    return ColoredBox(
+      color: const Color(0x99000000),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Carte de $ownerLabel',
+              style: const TextStyle(
+                color: Color(0xFFF3E3A3),
+                fontSize: 13,
+                letterSpacing: 1.1,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: w,
+              height: w * 1.55,
+              child: CardFace(card: card),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Relâchez pour la reposer',
+              style: TextStyle(color: Color(0x99F3E3A3), fontSize: 11),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CardReveal extends StatefulWidget {
   final ChanceCard card;
   final String ownerLabel;
@@ -4191,6 +4399,140 @@ class _CardRevealState extends State<_CardReveal>
       ),
     );
   }
+}
+
+/// Retourne [child] pour les joueurs assis EN HAUT du plateau.
+///
+/// Rouge et vert regardent le plateau depuis l'autre bord : ce qui est
+/// dessiné dans le sens de l'écran leur arrive à l'envers. Une carte, un
+/// dé — tout ce qui doit se lire « face à soi » passe par ici. Bleu et
+/// jaune, en bas, lisent tel quel.
+Widget _facingColor(PlayerColor c, Widget child) =>
+    (c == PlayerColor.red || c == PlayerColor.green)
+        ? RotatedBox(quarterTurns: 2, child: child)
+        : child;
+
+/// La bannière affichée pendant qu'on désigne une cible sur le plateau.
+///
+/// Elle dit trois choses : quelle carte attend, ce qu'on attend, et
+/// comment y renoncer. Sans elle, le plateau se met à refuser les coups
+/// normaux et rien n'explique pourquoi.
+class _TargetBanner extends StatelessWidget {
+  const _TargetBanner({
+    required this.card,
+    required this.count,
+    required this.onCancel,
+  });
+
+  final ChanceCard card;
+
+  /// Combien de pions sont désignables. « aucun » n'arrive pas ici — on
+  /// n'entre pas en désignation sans cible — mais le pluriel, si.
+  final int count;
+
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final ident = cardIdentity(card);
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        margin: const EdgeInsets.all(8),
+        padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+        decoration: BoxDecoration(
+          color: const Color(0xE6101418),
+          border: Border.all(color: ident.color, width: 1.6),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            CardGlyph(card: card, size: 22),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Touchez le pion à désigner',
+                    style: TextStyle(
+                      color: ident.color,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                  Text(
+                    '${card.nameFr} — $count pion${count > 1 ? 's' : ''} '
+                    'possible${count > 1 ? 's' : ''}',
+                    style: const TextStyle(
+                        color: Color(0xCCF3E3A3), fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            TextButton(
+              onPressed: onCancel,
+              child: const Text('Annuler',
+                  style: TextStyle(color: Color(0xFFF3E3A3))),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Le repère d'un pion DÉSIGNABLE : un anneau franc, doublé de blanc.
+///
+/// Il doit se voir sur les quatre couleurs de base comme sur le blanc des
+/// cases — d'où le double trait : la couleur de la carte pour dire d'où
+/// vient la demande, cerclée de blanc pour tenir sur n'importe quel fond.
+/// Les quatre encoches en croix disent « ici, on touche ».
+class _TargetMark extends CustomPainter {
+  const _TargetMark(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final u = size.shortestSide;
+    final c = Offset(size.width / 2, size.height / 2);
+    final r = u * 0.44;
+
+    canvas.drawCircle(
+        c, r, Paint()..color = color.withValues(alpha: 0.18));
+    canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(2.4, u * 0.085)
+          ..color = Colors.white.withValues(alpha: 0.92));
+    canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(1.4, u * 0.050)
+          ..color = color);
+
+    // Quatre encoches, aux quatre points cardinaux.
+    final tick = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = math.max(1.6, u * 0.058)
+      ..color = Colors.white;
+    for (var i = 0; i < 4; i++) {
+      final a = i * math.pi / 2;
+      final d = Offset(math.cos(a), math.sin(a));
+      canvas.drawLine(c + d * (r * 0.96), c + d * (r * 1.26), tick);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _TargetMark old) => old.color != color;
 }
 
 /// Le repère d'un pion INVULNÉRABLE : un anneau clair autour de sa case,
@@ -4397,6 +4739,11 @@ class _HandCardOverlay extends StatefulWidget {
   /// lui.
   final Pawn? defaultPawn;
 
+  /// Referme la carte et passe le plateau en mode désignation : le joueur
+  /// touche alors directement le pion qu'il vise. `null` quand la carte
+  /// ne vise pas un pion.
+  final VoidCallback? onPickOnBoard;
+
   const _HandCardOverlay({
     super.key,
     required this.card,
@@ -4409,6 +4756,7 @@ class _HandCardOverlay extends StatefulWidget {
     required this.onClose,
     required this.onPlay,
     this.defaultPawn,
+    this.onPickOnBoard,
   });
 
   @override
@@ -4507,6 +4855,21 @@ class _HandCardOverlayState extends State<_HandCardOverlay> {
                     width: w,
                     child: Column(
                       children: [
+                        // DÉSIGNER SUR LE PLATEAU : le geste naturel.
+                        // Le pion visé est là, sous les yeux ; le choisir
+                        // dans une liste — « pion 3 de rouge » — oblige à
+                        // le retrouver ensuite du regard.
+                        if (needsPawn && widget.onPickOnBoard != null)
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton.tonalIcon(
+                              onPressed: widget.pawnTargets.isEmpty
+                                  ? null
+                                  : widget.onPickOnBoard,
+                              icon: const Icon(Icons.ads_click, size: 18),
+                              label: const Text('Désigner sur le plateau'),
+                            ),
+                          ),
                         if (needsPawn)
                           DropdownButton<Pawn>(
                             isExpanded: true,
@@ -4972,6 +5335,25 @@ class BoardView extends StatelessWidget {
 
   final bool canRollDice;
   final Set<Pawn> movablePawns;
+
+  // ── LA DÉSIGNATION SUR LE PLATEAU ────────────────────────────────────
+  //
+  // Une carte qui vise « un pion adverse » demandait sa cible dans une
+  // liste déroulante — « pion 3 de rouge » — alors que le pion est là,
+  // sous les yeux. On le DÉSIGNE désormais en le touchant.
+  //
+  // Tant que [targetPawns] n'est pas vide, le plateau est en mode
+  // désignation : seuls ces pions-là répondent au doigt, et ils
+  // répondent à [onTargetPick] et non à [onPawnTap]. Les coups normaux
+  // sont suspendus — on ne peut pas déplacer un pion pendant qu'on en
+  // désigne un.
+  final List<Pawn> targetPawns;
+
+  /// Couleur du repère posé sur les cibles — celle de la famille de la
+  /// carte, pour qu'on relie le repère à la carte qui l'a demandé.
+  final Color targetTint;
+
+  final void Function(Pawn)? onTargetPick;
   final VoidCallback onRollDice;
   final ValueChanged<Pawn> onPawnTap;
   /// Resolver for a pawn's currently-assigned idle GIF asset path.
@@ -5030,6 +5412,14 @@ class BoardView extends StatelessWidget {
 
   /// Le joueur a touché la carte n° [slot] de sa base.
   final void Function(int slot)? onDeferredCardTap;
+
+  /// Le doigt se POSE sur une carte de sa base : elle se montre en grand
+  /// tant qu'il y reste.
+  final void Function(int slot)? onDeferredCardHold;
+
+  /// Le doigt quitte la carte sans la relâcher dessus (geste annulé) :
+  /// on la repose sans rien ouvrir.
+  final VoidCallback? onDeferredCardRelease;
   const BoardView({
     super.key,
     required this.players,
@@ -5042,6 +5432,9 @@ class BoardView extends StatelessWidget {
     this.paused = false,
     required this.canRollDice,
     required this.movablePawns,
+    this.targetPawns = const [],
+    this.targetTint = const Color(0xFFFFD54F),
+    this.onTargetPick,
     required this.onRollDice,
     required this.onPawnTap,
     required this.pawnAsset,
@@ -5064,6 +5457,8 @@ class BoardView extends StatelessWidget {
     this.twoDice,
     this.tappableCardSeat,
     this.onDeferredCardTap,
+    this.onDeferredCardHold,
+    this.onDeferredCardRelease,
   });
 
   // Top-left grid cell of each colored base (the board is a 15x15 grid).
@@ -5415,7 +5810,11 @@ class BoardView extends StatelessWidget {
                           cursor: SystemMouseCursors.click,
                           child: Listener(
                             behavior: HitTestBehavior.opaque,
-                            onPointerDown: (_) => onDeferredCardTap!(slot),
+                            onPointerDown: (_) =>
+                                onDeferredCardHold?.call(slot),
+                            onPointerUp: (_) => onDeferredCardTap!(slot),
+                            onPointerCancel: (_) =>
+                                onDeferredCardRelease?.call(),
                             child: art,
                           ),
                         );
@@ -5430,7 +5829,9 @@ class BoardView extends StatelessWidget {
               // Avec la carte « Deux dés », il y en a bien DEUX au centre,
               // un peu plus petits pour tenir côte à côte. Le total joué
               // est leur somme.
-              final size = pair == null ? cell * 1.6 : cell * 1.08;
+              // Le dé occupe presque deux cases : posé à plat au centre
+              // du plateau, il doit se lire sans qu'on se penche.
+              final size = pair == null ? cell * 1.92 : cell * 1.26;
               final width = pair == null ? size : size * 2 + cell * 0.14;
               final clickable = canRollDice;
               return Positioned(
@@ -5454,7 +5855,13 @@ class BoardView extends StatelessWidget {
                   child: Listener(
                     behavior: HitTestBehavior.opaque,
                     onPointerDown: clickable ? (_) => onRollDice() : null,
-                    child: pair == null
+                    // Le dé se présente FACE À CELUI QUI JOUE, comme les
+                    // cartes. Rouge et vert sont assis en haut : un dé
+                    // dessiné dans le sens de l'écran leur montre son
+                    // ombre du mauvais côté, et sa lumière aussi. On le
+                    // retourne, et chacun voit le même dé que l'autre
+                    // depuis sa place.
+                    child: _facingColor(activeColor, pair == null
                         ? _DiceFace(
                             value: diceValue,
                             playerColor: activeColor,
@@ -5477,7 +5884,7 @@ class BoardView extends StatelessWidget {
                                     value: pair.b, playerColor: activeColor),
                               ),
                             ],
-                          ),
+                          )),
                   ),
                 ),
               );
@@ -5597,16 +6004,25 @@ class BoardView extends StatelessWidget {
               // dans la liste de rendu (qui change à chaque déplacement).
               int delayOf(Pawn p) => ((p.color.index * 4 + p.id) * 137) % 800;
 
-              // Studio spec for Selector_D_Arrow.gif (400×400, transparent,
-              // pawn logical center at (200,200), ring at (200,299) — under
-              // feet, arrow at y 95..131 — above head):
-              //   - SQUARE width == height (here +4 vertical viewbox extension)
-              //   - centered on the visible pawn anchor (NOT bbox center)
-              //   - pointer-events: none (IgnorePointer)
+              // Repère du Studio (400×400, transparent, centre logique du
+              // pion en (200,200)) :
+              //   - carré, largeur == hauteur (+4 d'extension verticale)
+              //   - centré sur l'ancre VISIBLE du pion, pas sur sa bbox
+              //   - ne reçoit aucun clic (IgnorePointer)
+              //
+              // `Selector_D_ArrowOnly` et non `Selector_D_Arrow` : le second
+              // porte AUSSI un anneau de pointillés sous les pieds du pion.
+              // Ces pointillés cerclaient exactement ce sur quoi on veut
+              // cliquer, et le pion disparaissait derrière son propre
+              // repère. Seule la FLÈCHE reste — au-dessus de la tête, là où
+              // elle ne recouvre rien.
               final selSize = cell * 1.8 + 4;
 
               // ---- Pass 1: selectors (all behind all pawns) ----
-              for (final pawn in list) {
+              // Rien pendant une désignation : la flèche montre les pions
+              // JOUABLES, or on ne joue pas, on désigne. Deux repères
+              // contradictoires sur le même plateau ne se lisent pas.
+              for (final pawn in targetPawns.isEmpty ? list : const <Pawn>[]) {
                 if (!movablePawns.contains(pawn)) continue;
                 final center =
                     _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
@@ -5620,7 +6036,7 @@ class BoardView extends StatelessWidget {
                   height: selSize + 4,
                   child: IgnorePointer(
                     child: Image.asset(
-                      'AnimStock/Selectors/WEBP/Selector_D_Arrow.webp',
+                      'AnimStock/Selectors/WEBP/Selector_D_ArrowOnly.webp',
                       fit: BoxFit.fill,
                     ),
                   ),
@@ -5633,6 +6049,11 @@ class BoardView extends StatelessWidget {
               // les pions pour rester dessous. Sans lui, un pion pose sur
               // une case blanche n'a rien qui le rattache au plateau.
               for (final pawn in list) {
+                // DANS LA BASE, pas de halo : le plateau y peint déjà un
+                // socle sous chaque pion. Deux disques concentriques de la
+                // même couleur ne se lisent pas comme un relief, mais
+                // comme une tache.
+                if (pawn.location == PawnLocation.base) continue;
                 final center =
                     _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
                 // Les pieds : le bas du pion visible.
@@ -5641,12 +6062,7 @@ class BoardView extends StatelessWidget {
                   center.dy + pawnHeight * (1 - _pawnVisibleCenterFrac) -
                       pawnHeight * 0.10,
                 );
-                // En base, le halo doit tenir DANS le socle peint sous le
-                // pion : sinon deux cercles de même taille se superposent
-                // et l'on ne distingue plus lequel est lequel.
-                final r = pawn.location == PawnLocation.base
-                    ? kBaseSlotSize * cell * 0.30 * 0.62
-                    : cell * 0.30;
+                final r = cell * 0.30;
                 yield AnimatedPositioned(
                   key: ValueKey('halo_${pawn.color.name}_${pawn.id}'),
                   duration: moveDuration[pawn] ?? Duration.zero,
@@ -5703,6 +6119,27 @@ class BoardView extends StatelessWidget {
                 // image — not the layout bbox.)
               }
 
+              // ---- Passe 2 bis : le REPÈRE des pions désignables. ----
+              // Un anneau franc autour de chaque cible, dans la couleur
+              // de la carte. Il est dessiné APRÈS les pions pour qu'aucun
+              // ne le recouvre : c'est le seul moment où le repère compte
+              // plus que le pion.
+              for (final pawn in targetPawns) {
+                final center =
+                    _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
+                final d = cell * 1.15;
+                yield Positioned(
+                  key: ValueKey('tgt_${pawn.color.name}_${pawn.id}'),
+                  left: center.dx - d / 2,
+                  top: center.dy - d / 2,
+                  width: d,
+                  height: d,
+                  child: IgnorePointer(
+                    child: CustomPaint(painter: _TargetMark(targetTint)),
+                  ),
+                );
+              }
+
               // ---- Pass 3: HIT zones (tight square around the visible
               //              token only — no more giant bbox swallowing
               //              the empty halo around the sprite). ----
@@ -5713,10 +6150,16 @@ class BoardView extends StatelessWidget {
               // au-delà du sprite — les zones voisines ne se recouvrent
               // pas pour autant, les pions étant à une case d'écart.
               final hitSize = cell * 1.34;
+              // En mode désignation, c'est la liste des cibles qui commande
+              // — pas les coups possibles. Un pion adverse n'est jamais
+              // « jouable », et c'est pourtant lui qu'on vient désigner.
+              final picking = targetPawns.isNotEmpty && onTargetPick != null;
               for (final pawn in list) {
                 final center =
                     _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
-                final isMovable = movablePawns.contains(pawn);
+                final isMovable = picking
+                    ? targetPawns.contains(pawn)
+                    : movablePawns.contains(pawn);
                 yield Positioned(
                   key: ValueKey('hit_${pawn.color.name}_${pawn.id}'),
                   left: center.dx - hitSize / 2,
@@ -5751,8 +6194,11 @@ class BoardView extends StatelessWidget {
                         // part dès que le doigt se pose, sans attendre
                         // qu'il se relève ni que l'arbitrage tranche.
                         behavior: HitTestBehavior.opaque,
-                        onPointerDown:
-                            isMovable ? (_) => onPawnTap(pawn) : null,
+                        onPointerDown: !isMovable
+                            ? null
+                            : picking
+                                ? (_) => onTargetPick!(pawn)
+                                : (_) => onPawnTap(pawn),
                         child: const SizedBox.expand(),
                       ),
                     ),

@@ -647,8 +647,8 @@ void main() {
     });
   });
 
-  group('🤫 Une carte DIFFÉRÉE ne se montre pas', () {
-    testWidgets('elle file dans la base sans rien révéler', (t) async {
+  group('👀 Une carte DIFFÉRÉE se montre 2 secondes, puis se range', () {
+    testWidgets('on la voit passer, et elle finit dans la base', (t) async {
       await bootApp(t);
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
       final c = state.controller;
@@ -663,16 +663,24 @@ void main() {
 
       state.rollManualForTest(3);
       await t.pump(const Duration(milliseconds: 700));
-      await t.pump(const Duration(seconds: 2));
+      await t.pump(const Duration(milliseconds: 900));
 
       expect(c.upgrades.handOf(me), hasLength(1),
           reason: 'elle est bien allée dans la base');
+
+      // Elle S'OUVRE. Sans cet arrêt, elle arrivait dans la base sans que
+      // personne ne l'ait vue — ni son propriétaire, ni la table. Le
+      // retournement dure 620 ms : la FACE n'apparaît qu'à mi-course.
+      expect(state.revealedCard, isNotNull,
+          reason: 'la carte tirée se montre');
+      await t.pump(const Duration(milliseconds: 450)); // le retournement
+      expect(find.byType(CardFace), findsOneWidget);
+
+      // Puis elle se referme toute seule : 2 s, pas plus. C'est une
+      // différée, rien ne se joue — on la montre, elle se range.
+      await t.pump(const Duration(milliseconds: 1800));
       expect(state.revealedCard, isNull,
-          reason: 'aucune carte ne s\'ouvre toute seule');
-      expect(find.byType(CardFace), findsNothing,
-          reason: 'sa face reste cachée : il faudra la toucher');
-      expect(find.byType(CardBack), findsOneWidget,
-          reason: 'on ne voit que son dos, dans la base');
+          reason: 'elle ne reste pas ouverte : elle va se ranger');
 
       await shutdownApp(t);
     });
