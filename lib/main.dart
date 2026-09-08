@@ -6534,45 +6534,6 @@ class BoardView extends StatelessWidget {
               // dans la liste de rendu (qui change à chaque déplacement).
               int delayOf(Pawn p) => ((p.color.index * 4 + p.id) * 137) % 800;
 
-              // Repère du Studio (400×400, transparent, centre logique du
-              // pion en (200,200)) :
-              //   - carré, largeur == hauteur (+4 d'extension verticale)
-              //   - centré sur l'ancre VISIBLE du pion, pas sur sa bbox
-              //   - ne reçoit aucun clic (IgnorePointer)
-              //
-              // `Selector_D_ArrowOnly` et non `Selector_D_Arrow` : le second
-              // porte AUSSI un anneau de pointillés sous les pieds du pion.
-              // Ces pointillés cerclaient exactement ce sur quoi on veut
-              // cliquer, et le pion disparaissait derrière son propre
-              // repère. Seule la FLÈCHE reste — au-dessus de la tête, là où
-              // elle ne recouvre rien.
-              final selSize = cell * 1.8 + 4;
-
-              // ---- Pass 1: selectors (all behind all pawns) ----
-              // Rien pendant une désignation : la flèche montre les pions
-              // JOUABLES, or on ne joue pas, on désigne. Deux repères
-              // contradictoires sur le même plateau ne se lisent pas.
-              for (final pawn in targetPawns.isEmpty ? list : const <Pawn>[]) {
-                if (!movablePawns.contains(pawn)) continue;
-                final center =
-                    _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
-                final visCx = center.dx;
-                final visCy = center.dy;
-                yield Positioned(
-                  key: ValueKey('sel_${pawn.color.name}_${pawn.id}'),
-                  left: visCx - selSize / 2,
-                  top:  visCy - (selSize + 4) / 2 - 7,
-                  width: selSize,
-                  height: selSize + 4,
-                  child: IgnorePointer(
-                    child: Image.asset(
-                      'AnimStock/Selectors/WEBP/Selector_D_ArrowOnly.webp',
-                      fit: BoxFit.fill,
-                    ),
-                  ),
-                );
-              }
-
               // ---- Pass 2: pawn IMAGES (no hit-test, full bbox for visual).
               //  AnimatedPositioned interpolates left/top when the cell
               //  changes — Flutter handles the slide internally, no extra
@@ -6663,6 +6624,52 @@ class BoardView extends StatelessWidget {
                 // when `showCanvas` is true, using the GIF's native pixel
                 // dimensions so the rectangle matches the actual rendered
                 // image — not the layout bbox.)
+              }
+
+              // ---- Passe 2 bis : LA FLÈCHE des pions jouables. ----
+              //
+              // Elle était dessinée AVANT les pions, donc derrière eux.
+              // Tant que le repère du Studio portait aussi un anneau de
+              // pointillés sous les pieds, il en restait quelque chose de
+              // visible ; en ne gardant que la flèche, elle disparaissait
+              // entièrement derrière la tête du pion.
+              //
+              // Elle passe donc APRÈS les pions — au-dessus de tout — et
+              // se pose FRANCHEMENT au-dessus de la tête, sans la
+              // recouvrir. Elle ne prend aucun clic : c'est un panneau
+              // indicateur, pas un bouton.
+              //
+              // L'asset est recadré au plus près de la flèche
+              // (`Selector_Arrow_Tight`, 73 x 76) : sur la toile 400 x 400
+              // d'origine, la flèche n'occupait qu'un sixième de la
+              // hauteur, et la mettre à une taille lisible aurait demandé
+              // un cadre de trois cases.
+              for (final pawn in list) {
+                if (targetPawns.isNotEmpty) break; // on désigne, on ne joue pas
+                if (!movablePawns.contains(pawn)) continue;
+                final center =
+                    _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
+                final aw = cell * 0.62;
+                final ah = aw * 76 / 73;
+                yield Positioned(
+                  key: ValueKey('sel_${pawn.color.name}_${pawn.id}'),
+                  left: center.dx - aw / 2,
+                  // Le sommet du pion visible, moins la flèche et un jour.
+                  top: center.dy -
+                      pawnHeight * _pawnVisibleCenterFrac -
+                      ah -
+                      cell * 0.04,
+                  width: aw,
+                  height: ah,
+                  child: IgnorePointer(
+                    child: Image.asset(
+                      'AnimStock/Selectors/WEBP/Selector_Arrow_Tight.webp',
+                      fit: BoxFit.contain,
+                      filterQuality: FilterQuality.high,
+                      gaplessPlayback: true,
+                    ),
+                  ),
+                );
               }
 
               // ---- Passe 2 bis : le REPÈRE des pions désignables. ----
