@@ -4,10 +4,11 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart'
-    show rootBundle, HapticFeedback, SystemSound, SystemSoundType;
+    show rootBundle, HapticFeedback;
 import 'game/ai_difficulty.dart';
 import 'game/board_painter.dart';
 import 'game/board_painter_5p.dart';
@@ -660,22 +661,30 @@ class BoardScreenState extends State<BoardScreen>
   /// — arc plus haut, freinage plus long.
   final Set<Pawn> _baseExit = {};
 
-  /// Le pion se pose sur une case : un déclic et une petite secousse.
+  /// Le pion se pose sur une case : le son fourni, et une petite secousse.
   ///
-  /// Pas de fichier son ni de greffon : `SystemSound` et `HapticFeedback`
-  /// sont dans Flutter. Sur Android — la cible réelle du jeu — les deux
-  /// répondent ; sur le web ils ne font rien, et le jeu ne s'en trouve pas
-  /// plus mal. Un vrai son enregistré demanderait `audioplayers` et ses
-  /// 39 dépendances, dont un greffon natif.
+  /// Le fichier est celui que l'utilisateur a choisi
+  /// (`UIAlert_Notification lasolisa 5`, LaSonotheque.fr), reconverti en
+  /// PCM 16 bits — le 24 bits d'origine ne se décode pas partout sur le
+  /// web — et renommé sans espaces, comme tous les assets du projet.
+  ///
+  /// La secousse reste : elle ne coûte rien et, sur Android, c'est elle
+  /// qu'on sent sous le doigt avant même d'entendre le son.
   void _stepBeat() {
     if (_muted) return;
-    SystemSound.play(SystemSoundType.click);
+    _stepSound.play();
     HapticFeedback.selectionClick();
   }
 
-  /// Coupe le son des pas. Les tests le lèvent : `SystemSound` passe par
-  /// un canal de plateforme, et 400 déclics par suite de tests ne prouvent
-  /// rien.
+  /// Les voix du son de pas. Une par pion en mouvement ne suffirait pas :
+  /// c'est le MÊME pion qui redéclenche le son tous les 190 ms, alors que
+  /// le fichier dure 400 ms. Il faut donc plusieurs voix pour que le pas
+  /// suivant n'arrête pas le précédent.
+  final _StepSound _stepSound = _StepSound();
+
+  /// Coupe le son des pas. Les tests le lèvent : le son passe par un
+  /// greffon natif, et 400 lectures par suite de tests ne prouvent rien —
+  /// elles échoueraient d'ailleurs, faute de greffon dans le harnais.
   static bool _muted = false;
 
   @visibleForTesting
@@ -933,6 +942,8 @@ class BoardScreenState extends State<BoardScreen>
     _aiWatchdog?.cancel();
     _revealTimer?.cancel();
     _cancelAnimations();
+    // Les quatre lecteurs tiennent chacun un canal natif : les rendre.
+    _stepSound.dispose();
     super.dispose();
   }
 
@@ -7803,6 +7814,82 @@ class YardBlinkState extends State<YardBlink>
 /// que le pion — donc à la même position, à la même image près — mais
 /// hors de la transformation du saut : le pion s'élève, le halo reste au
 /// sol, et aucun décalage n'est possible puisqu'il n'y a qu'une position.
+/// LE SON DU PAS, joué à VOIX MULTIPLES.
+///
+/// Le fichier fourni dure 400 ms, à plein niveau du début à la fin — ce
+/// n'est pas un déclic qui s'éteint, c'est une note tenue. Or un pion
+/// change de case toutes les 190 ms. Avec un seul lecteur, chaque pas
+/// couperait le précédent en plein milieu et l'on n'entendrait qu'un
+/// hachis.
+///
+/// Quatre voix tournantes suffisent : la première est réutilisée au bout
+/// de 760 ms, bien après la fin du son qu'elle jouait. Aucun pas n'est
+/// donc jamais interrompu — ils se superposent, ce qui est le
+/// comportement normal d'un son de jeu déclenché en rafale.
+class _StepSound {
+  /// `audioplayers` préfixe tout seul par `assets/` : le chemin part donc
+  /// de l'intérieur du dossier.
+  static const String _asset = 'audio/pawn_step.wav';
+  static const int _voices = 4;
+
+  final List<AudioPlayer> _pool = [];
+  int _next = 0;
+  Future<void>? _warmup;
+
+  /// Une panne du greffon ne doit pas se rejouer à chaque case. On la
+  /// constate une fois, et l'on se tait pour de bon.
+  bool _dead = false;
+
+  /// Les lecteurs se préparent à la PREMIÈRE demande, pas au démarrage :
+  /// tant qu'aucun pion ne bouge, il n'y a aucune raison de réveiller un
+  /// greffon natif ni de décoder quoi que ce soit.
+  Future<void> _warm() async {
+    for (var i = 0; i < _voices; i++) {
+      final p = AudioPlayer();
+      await p.setReleaseMode(ReleaseMode.stop);
+      // Basse latence : le greffon garde le son décodé en mémoire. Le web
+      // ne connaît pas ce mode ; son refus est sans conséquence, il joue
+      // déjà depuis un cache.
+      try {
+        await p.setPlayerMode(PlayerMode.lowLatency);
+      } catch (_) {
+        // tant pis, la latence par défaut suffit
+      }
+      await p.setSource(AssetSource(_asset));
+      _pool.add(p);
+    }
+  }
+
+  void play() {
+    if (_dead) return;
+    unawaited(_playOne());
+  }
+
+  Future<void> _playOne() async {
+    try {
+      await (_warmup ??= _warm());
+      if (_pool.isEmpty) return;
+      final p = _pool[_next];
+      _next = (_next + 1) % _pool.length;
+      // On rembobine avant de relancer : la voix qui revient dans la ronde
+      // a fini sa lecture et est restée sur sa dernière image.
+      await p.seek(Duration.zero);
+      await p.resume();
+    } catch (e) {
+      _dead = true;
+      debugPrint('[son] pas de son de pas : $e');
+    }
+  }
+
+  void dispose() {
+    for (final p in _pool) {
+      p.dispose();
+    }
+    _pool.clear();
+    _warmup = null;
+  }
+}
+
 class _PawnHaloView extends StatefulWidget {
   const _PawnHaloView({required this.color, required this.spinning});
 
