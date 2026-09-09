@@ -676,11 +676,50 @@ class BoardScreenState extends State<BoardScreen>
     HapticFeedback.selectionClick();
   }
 
+  /// Le pion QUITTE sa boîte : la chaîne, et une secousse plus franche —
+  /// c'est un événement, pas un pas de plus.
+  void _baseExitBeat() {
+    if (_muted) return;
+    _baseExitSound.play();
+    HapticFeedback.mediumImpact();
+  }
+
+  /// Le dé part : le choc des dés. Une secousse légère avec — c'est le
+  /// geste du joueur, pas un impact.
+  void _diceBeat() {
+    if (_muted) return;
+    _diceSound.play();
+    HapticFeedback.lightImpact();
+  }
+
+  /// Un pion vient de se faire manger : le cri. Une seule fois par coup,
+  /// même si le coup en renvoie deux — le lecteur en entend deux, mais
+  /// c'est l'appelant qui décide combien de fois il déclenche.
+  void _captureBeat() {
+    if (_muted) return;
+    _captureSound.play();
+    HapticFeedback.heavyImpact();
+  }
+
   /// Les voix du son de pas. Une par pion en mouvement ne suffirait pas :
   /// c'est le MÊME pion qui redéclenche le son tous les 190 ms, alors que
   /// le fichier dure 400 ms. Il faut donc plusieurs voix pour que le pas
   /// suivant n'arrête pas le précédent.
-  final _StepSound _stepSound = _StepSound();
+  final _Sfx _stepSound = _Sfx('audio/pawn_step.wav', voices: 4);
+
+  /// LA CAPTURE : le cri. Deux voix, parce qu'un même coup peut renvoyer
+  /// deux pions à la fois — et qu'on doit alors entendre deux cris.
+  final _Sfx _captureSound = _Sfx('audio/capture.wav');
+
+  /// LA SORTIE DE BASE : la chaîne. Pour TOUTES les couleurs — le son ne
+  /// dépend pas de qui sort, seulement de ce qui se passe.
+  final _Sfx _baseExitSound = _Sfx('audio/base_exit.wav');
+
+  /// LE LANCER DU DÉ. Le seul des quatre qui soit un MP3 : il est arrivé
+  /// ainsi, il pèse 33 Ko au lieu des 350 Ko qu'un PCM coûterait, et tous
+  /// les navigateurs comme Android le lisent. Une seule voix : on ne
+  /// lance pas deux dés en même temps.
+  final _Sfx _diceSound = _Sfx('audio/dice_roll.mp3', voices: 1);
 
   /// Coupe le son des pas. Les tests le lèvent : le son passe par un
   /// greffon natif, et 400 lectures par suite de tests ne prouvent rien —
@@ -942,8 +981,11 @@ class BoardScreenState extends State<BoardScreen>
     _aiWatchdog?.cancel();
     _revealTimer?.cancel();
     _cancelAnimations();
-    // Les quatre lecteurs tiennent chacun un canal natif : les rendre.
+    // Chaque lecteur tient un canal natif : les rendre tous.
     _stepSound.dispose();
+    _captureSound.dispose();
+    _baseExitSound.dispose();
+    _diceSound.dispose();
     super.dispose();
   }
 
@@ -1097,6 +1139,11 @@ class BoardScreenState extends State<BoardScreen>
     _evictThrowAnimation(forPlayer ?? _controller.currentColor, value);
     _diceRolling = true;
     _throwSeq++;
+    // LE LANCER : ici, et nulle part ailleurs. Tout ce qui jette le dé
+    // passe par cette ligne — le doigt du joueur, l'ordinateur, le lancer
+    // manuel du panneau — donc chaque lancer sonne, et un seul son par
+    // lancer.
+    _diceBeat();
     _diceThrowTimer = _after(_pace(_diceThrowDuration), () {
       if (!mounted) return;
       setState(() => _diceRolling = false);
@@ -2082,6 +2129,21 @@ class BoardScreenState extends State<BoardScreen>
           pp != p &&
           beforeLoc[pp]!.location != PawnLocation.base &&
           pp.location == PawnLocation.base));
+      // LE CRI, un par victime — mais DÉCALÉS. Un même coup peut en
+      // renvoyer deux (c'est même la règle depuis le bloc), et deux fois
+      // le même fichier au même instant ne fait pas deux cris : cela
+      // double l'amplitude d'un son qui frôle déjà le maximum, donc cela
+      // sature. 130 ms d'écart, et l'on entend deux victimes.
+      //
+      // C'est le seul endroit qui sait qui vient de tomber : la capture
+      // au dé comme celle d'une carte passent par ici.
+      for (var i = 0; i < capturedNow.length; i++) {
+        if (i == 0) {
+          _captureBeat();
+        } else {
+          _after(Duration(milliseconds: 130 * i), _captureBeat);
+        }
+      }
       // Trace de diagnostic demandée : elle dit ce que la détection a
       // RÉELLEMENT vu, pour qu'on puisse confirmer en conditions réelles
       // qu'aucune animation ne part sans victime.
@@ -2136,7 +2198,15 @@ class BoardScreenState extends State<BoardScreen>
         _baseExit.remove(p);
       }
     });
-    _stepBeat();
+    // LA SORTIE DE BASE a son propre son — la chaîne — et il REMPLACE le
+    // pas : ce n'est pas un pas, c'est une entrée en scène, et le pion y
+    // glisse au lieu de sauter. Les deux ensemble ne feraient qu'une
+    // bouillie sur un même demi-seconde.
+    if (oldLoc == PawnLocation.base) {
+      _baseExitBeat();
+    } else {
+      _stepBeat();
+    }
     // La sortie finie, le pion redevient un pion ordinaire.
     if (oldLoc == PawnLocation.base) {
       _after(stepDur, () {
@@ -7814,23 +7884,29 @@ class YardBlinkState extends State<YardBlink>
 /// que le pion — donc à la même position, à la même image près — mais
 /// hors de la transformation du saut : le pion s'élève, le halo reste au
 /// sol, et aucun décalage n'est possible puisqu'il n'y a qu'une position.
-/// LE SON DU PAS, joué à VOIX MULTIPLES.
+/// UN SON DU JEU, joué à VOIX MULTIPLES.
 ///
-/// Le fichier fourni dure 400 ms, à plein niveau du début à la fin — ce
-/// n'est pas un déclic qui s'éteint, c'est une note tenue. Or un pion
-/// change de case toutes les 190 ms. Avec un seul lecteur, chaque pas
-/// couperait le précédent en plein milieu et l'on n'entendrait qu'un
-/// hachis.
+/// Le pas dure 400 ms, à plein niveau du début à la fin — ce n'est pas un
+/// déclic qui s'éteint, c'est une note tenue. Or un pion change de case
+/// toutes les 190 ms. Avec un seul lecteur, chaque pas couperait le
+/// précédent en plein milieu et l'on n'entendrait qu'un hachis.
 ///
-/// Quatre voix tournantes suffisent : la première est réutilisée au bout
-/// de 760 ms, bien après la fin du son qu'elle jouait. Aucun pas n'est
-/// donc jamais interrompu — ils se superposent, ce qui est le
-/// comportement normal d'un son de jeu déclenché en rafale.
-class _StepSound {
+/// Plusieurs voix tournantes règlent la question : la première est
+/// réutilisée au bout de `voices × 190 ms`, bien après la fin du son
+/// qu'elle jouait. Aucun déclenchement n'est jamais interrompu — ils se
+/// superposent, ce qui est le comportement normal d'un son de jeu
+/// déclenché en rafale.
+///
+/// Les sons rares — la capture, la sortie de base — se contentent de deux
+/// voix : ils ne partent jamais en rafale, mais deux pions peuvent se
+/// faire manger d'un coup.
+class _Sfx {
+  _Sfx(this._asset, {int voices = 2}) : _voices = voices;
+
   /// `audioplayers` préfixe tout seul par `assets/` : le chemin part donc
   /// de l'intérieur du dossier.
-  static const String _asset = 'audio/pawn_step.wav';
-  static const int _voices = 4;
+  final String _asset;
+  final int _voices;
 
   final List<AudioPlayer> _pool = [];
   int _next = 0;
@@ -7877,7 +7953,7 @@ class _StepSound {
       await p.resume();
     } catch (e) {
       _dead = true;
-      debugPrint('[son] pas de son de pas : $e');
+      debugPrint('[son] $_asset muet : $e');
     }
   }
 
