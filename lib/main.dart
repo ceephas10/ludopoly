@@ -64,7 +64,17 @@ class _LudoPolyAppState extends State<LudoPolyApp> {
       title: 'LudoPoly',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.indigo),
-      home: _body(),
+      // LE PREMIER GESTE, où qu'il tombe, réveille la musique.
+      //
+      // Les navigateurs interdisent tout son avant que l'utilisateur
+      // n'ait touché la page. La musique de l'accueil ne partait donc
+      // jamais — sauf en touchant son propre bouton, qui est un geste :
+      // d'où « ça ne marche qu'en coupant puis remettant le son ».
+      home: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => MenuMusic.instance.nudge(),
+        child: _body(),
+      ),
     );
   }
 
@@ -1521,20 +1531,23 @@ class BoardScreenState extends State<BoardScreen>
   /// l'instruction sans avoir à cliquer — son effet part dans la foulée.
   static const Duration _revealHold = Duration(milliseconds: 3200);
 
-  /// Combien de temps une carte DIFFÉRÉE reste ouverte avant d'aller se
-  /// ranger dans la base. Plus court : rien ne se joue tout de suite, on
-  /// montre seulement à la table ce qui vient d'être tiré.
-  static const Duration _revealHoldDeferred = Duration(milliseconds: 2000);
 
   /// Ouvre [drawn] au centre du plateau. Un clic la referme plus tôt.
+  ///
+  /// SAUF pour une carte DIFFÉRÉE : celle-là file directement dans la
+  /// base de son propriétaire, sans se montrer. Rien ne se joue au
+  /// moment du tirage — la présentation ne faisait qu'interrompre la
+  /// partie pour une carte qu'on jouera plus tard, et qu'on peut de
+  /// toute façon consulter en la maintenant dans sa base.
   void _openCard(({ChanceCard card, PlayerColor by}) drawn) {
     _revealTimer?.cancel();
+    if (drawn.card.kind == CardKind.deferred) {
+      if (_revealed != null) setState(() => _revealed = null);
+      return;
+    }
     setState(() => _revealed = drawn);
-    final hold = drawn.card.kind == CardKind.deferred
-        ? _revealHoldDeferred
-        : _revealHold;
-    _revealTimer =
-        _after(_pace(hold, ai: _isAiColor(drawn.by)), () => closeCard());
+    _revealTimer = _after(
+        _pace(_revealHold, ai: _isAiColor(drawn.by)), () => closeCard());
   }
 
   // ── DÉSIGNER SA CIBLE SUR LE PLATEAU ─────────────────────────────────
@@ -3141,11 +3154,68 @@ class BoardScreenState extends State<BoardScreen>
             /// Le retour au menu, en haut à droite de la zone du plateau.
             /// Sur téléphone cette zone occupe toute la largeur : il tombe
             /// donc en haut à droite de l'écran, portrait compris.
-            Widget withHome(Widget layout) => widget.onExit == null
-                ? layout
-                : Stack(
+            /// Un bouton rond de la barre du plateau. Les deux se
+            /// ressemblent trait pour trait : même fond, même taille,
+            /// même hauteur — l'un à gauche, l'autre à droite.
+            Widget barButton({
+              required Key key,
+              required IconData icon,
+              required String tip,
+              required VoidCallback onTap,
+              Color? fond,
+            }) =>
+                Tooltip(
+                  message: tip,
+                  child: Material(
+                    color: fond ?? Colors.black.withValues(alpha: 0.45),
+                    shape: const CircleBorder(),
+                    elevation: 2,
+                    child: InkWell(
+                      key: key,
+                      customBorder: const CircleBorder(),
+                      onTap: onTap,
+                      child: Padding(
+                        padding: const EdgeInsets.all(7),
+                        child: Icon(icon, size: 20, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                );
+
+            Widget withHome(Widget layout) => Stack(
                     children: [
                       layout,
+                      // LA PAUSE, à gauche — en face de la maison.
+                      //
+                      // Elle existait déjà, mais seulement dans le centre
+                      // de commandes : en mode « Jouer » le panneau
+                      // n'existe pas, et il n'y avait aucun moyen
+                      // d'arrêter la partie.
+                      Positioned(
+                        top: 6,
+                        left: 0,
+                        width: widget.showBoard ? boardArea : w,
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: barButton(
+                              key: const Key('board-pause'),
+                              icon: _paused
+                                  ? Icons.play_arrow_rounded
+                                  : Icons.pause_rounded,
+                              tip: _paused ? 'Reprendre' : 'Mettre en pause',
+                              // En pause, le bouton s'allume : c'est le
+                              // seul repère quand tout le reste est figé.
+                              fond: _paused
+                                  ? const Color(0xE6D4AF37)
+                                  : null,
+                              onTap: () => setPaused(!_paused),
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (widget.onExit != null)
                       Positioned(
                         top: 6,
                         left: 0,
@@ -3156,24 +3226,12 @@ class BoardScreenState extends State<BoardScreen>
                           alignment: Alignment.centerRight,
                           child: Padding(
                             padding: const EdgeInsets.only(right: 6),
-                            child: Tooltip(
-                              message: 'Revenir au menu',
-                              child: Material(
-                                color: Colors.black.withValues(alpha: 0.45),
-                                shape: const CircleBorder(),
-                                elevation: 2,
-                                child: InkWell(
-                                  key: const Key('board-home'),
-                                  customBorder: const CircleBorder(),
-                                  onTap: () =>
-                                      widget.onExit?.call(_currentSetup),
-                                  child: const Padding(
-                                    padding: EdgeInsets.all(7),
-                                    child: Icon(Icons.home_outlined,
-                                        size: 20, color: Colors.white),
-                                  ),
-                                ),
-                              ),
+                            child: barButton(
+                              key: const Key('board-home'),
+                              icon: Icons.home_outlined,
+                              tip: 'Revenir au menu',
+                              onTap: () =>
+                                  widget.onExit?.call(_currentSetup),
                             ),
                           ),
                         ),
@@ -3695,8 +3753,7 @@ class _ControlPanel extends StatelessWidget {
 
                 // ---- Setup card (left, half width) + nomenclature
                 //      thumbnail (right, half width, hover-zoom) ----
-                Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                rowOuColonne(
                     children: [
                       Expanded(
                         flex: 3,
@@ -3925,8 +3982,7 @@ class _ControlPanel extends StatelessWidget {
                   padding: EdgeInsets.zero,
                   child: Column(
                     children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      rowOuColonne(
                         children: [
                           Expanded(
                             child: SwitchListTile(
@@ -3950,8 +4006,7 @@ class _ControlPanel extends StatelessWidget {
                           ),
                         ],
                       ),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      rowOuColonne(
                         children: [
                           Expanded(
                             child: SwitchListTile(
@@ -4136,9 +4191,9 @@ class _ControlPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // ─── Haut : Couleur à gauche (verticale), Pions dans la Maison
-          //     en haut à DROITE, à l'horizontale ───
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          //     en haut à DROITE, à l'horizontale — empilés sur un
+          //     téléphone, où deux colonnes ne tiennent pas. ───
+          rowOuColonne(
             children: [
               // La colonne des couleurs ne prend que la largeur qu'il lui
               // faut : tout le reste va aux pions, qui en ont besoin pour
@@ -4767,6 +4822,47 @@ class _CardRevealState extends State<_CardReveal>
 ///
 /// Le siège de celui qui joue s'allume, sa valeur de dé apparaît. Les
 /// autres restent en retrait.
+/// UN `Row` SUR UN ÉCRAN LARGE, UNE COLONNE SUR UN TÉLÉPHONE.
+///
+/// Le centre de commandes a été dessiné pour un écran large : chaque
+/// carte y prend la moitié de la largeur. Sur un téléphone de 360 points
+/// cette moitié tombe à 170, et un interrupteur avec son titre et sa
+/// ligne d'explication n'y tient plus — tout se retrouve coincé, écrasé,
+/// coupé.
+///
+/// Cette fonction prend EXACTEMENT les mêmes enfants qu'un `Row`. Quand
+/// la place manque, elle les empile : les `Expanded` rendent leur enfant
+/// tel quel (une colonne les étire déjà sur toute la largeur), et les
+/// espaceurs horizontaux deviennent des espaceurs verticaux.
+///
+/// Le seuil est celui déjà retenu ailleurs dans ce panneau : en dessous,
+/// deux colonnes ne tiennent pas.
+Widget rowOuColonne({
+  required List<Widget> children,
+  double seuil = 560,
+}) {
+  return LayoutBuilder(builder: (context, c) {
+    if (c.maxWidth >= seuil) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: children,
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final w in children)
+          if (w is Expanded)
+            w.child
+          else if (w is SizedBox && (w.width ?? 0) > 0)
+            SizedBox(height: w.width)
+          else
+            w,
+      ],
+    );
+  });
+}
+
 class _SeatStrip extends StatelessWidget {
   const _SeatStrip({
     required this.seats,
@@ -6206,7 +6302,23 @@ class BoardView extends StatelessWidget {
   /// Abscisses des 4 cartes du bloc, en cases depuis le coin de la base.
   /// Elles se touchent presque : c'est un bloc, pas quatre emplacements
   /// épars.
-  static const List<double> _cardSpotsX = [1.65, 2.55, 3.45, 4.35];
+  /// Écart entre deux cartes du bloc, en cases. Les cartes ont GRANDI —
+  /// elles étaient trop petites pour qu'on distingue le pictogramme d'un
+  /// coup d'œil — et l'écart a suivi, sinon elles se chevaucheraient.
+  static const double cardSlotStep = 1.15;
+
+  /// Largeur et hauteur d'une carte du bloc, en cases. Le bloc de quatre
+  /// occupe donc 4 × 1,15 = 4,6 cases sur les 6 de la base : il reste une
+  /// marge de 0,7 case de chaque côté.
+  static const double cardW = 1.05;
+  static const double cardH = 1.47;
+
+  static const List<double> _cardSpotsX = [
+    3.0 - 1.5 * cardSlotStep,
+    3.0 - 0.5 * cardSlotStep,
+    3.0 + 0.5 * cardSlotStep,
+    3.0 + 1.5 * cardSlotStep,
+  ];
 
   /// Centre de la carte [slot] (0..3) du bloc de [color], en unités de
   /// case. Fonction pure : les tests la vérifient sans widget.
@@ -6464,8 +6576,8 @@ class BoardView extends StatelessWidget {
                     final hand =
                         deferredHands[p.color] ?? const <ChanceCard>[];
                     final center = cardSlotCenter(p.color, slot);
-                    final w = cell * 0.80;
-                    final h = cell * 1.12;
+                    final w = cell * BoardView.cardW;
+                    final h = cell * BoardView.cardH;
                     return Positioned(
                       left: center.dx * cell - w / 2,
                       top: center.dy * cell - h / 2,

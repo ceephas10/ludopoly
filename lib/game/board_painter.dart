@@ -167,40 +167,15 @@ class BoardPainter extends CustomPainter {
               end: Alignment.bottomRight,
               colors: const [Color(0xFFFFFFFF), Color(0xFFEFF3F8)],
             ).createShader(inner));
-      // Un socle par pion : sur le blanc de la base, les quatre pions
-      // flottaient sans rien pour les poser. Chaque socle occupe
-      // exactement la place du pion — mêmes constantes, partagées avec la
-      // couche qui les dessine.
-      for (final sx in kBaseSlotsX) {
-        final cx = (c0 + sx) * cell;
-        // Le socle se pose SOUS la pointe des pieds, pas derrière le pion :
-        // la pointe touche la case à `kBaseSlotY + 0.1`, le disque est
-        // centré juste là. Il est aussi plus petit que le pion — c'est un
-        // socle, pas un fond.
-        final cy = (r0 + kBaseSlotY + 0.1) * cell;
-        final r = kBaseSlotSize * cell * 0.30;
-        // Une ombre sous le socle : sans elle il est peint SUR le blanc,
-        // avec elle il est POSÉ dessus.
-        canvas.drawCircle(
-            Offset(cx, cy + r * 0.14),
-            r * 1.04,
-            Paint()
-              ..color = const Color(0x33000000)
-              ..maskFilter =
-                  MaskFilter.blur(BlurStyle.normal, math.max(0.6, r * 0.22)));
-        canvas.drawCircle(
-            Offset(cx, cy),
-            r,
-            _lit(Rect.fromCircle(center: Offset(cx, cy), radius: r), color,
-                up: 0.18, down: 0.14));
-        canvas.drawCircle(
-            Offset(cx, cy),
-            r * 0.82,
-            Paint()
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = math.max(0.8, r * 0.10)
-              ..color = Colors.white.withValues(alpha: 0.55));
-      }
+      // PAS DE SOCLE SOUS LES PIONS DE LA BASE.
+      //
+      // Il y en avait un : un disque de la couleur du camp, posé sous
+      // chaque pion pour qu'il ne flotte pas sur le blanc. Retiré à la
+      // demande — le pion se suffit, et le disque doublait le halo qui
+      // s'allume quand il devient jouable.
+      //
+      // [kBaseSlotsX] et [kBaseSlotY] restent : c'est la couche des pions
+      // qui les lit pour se placer.
     }
     drawBase(0, 0, _red);     // top-left
     drawBase(9, 0, _green);   // top-right

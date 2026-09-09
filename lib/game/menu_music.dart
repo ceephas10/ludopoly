@@ -60,9 +60,34 @@ class MenuMusic {
         await p.resume();
       }
     } catch (e) {
-      _dead = true;
-      debugPrint('[musique] muette : $e');
+      // PAS de condamnation ici. Le navigateur REFUSE de jouer un son
+      // avant le premier geste de l'utilisateur : l'ouverture de la page
+      // tombe donc systématiquement dans ce `catch`. C'était le bug —
+      // la musique ne partait qu'après avoir touché le bouton, qui est
+      // justement un geste.
+      //
+      // On garde donc l'envie, et [nudge] réessaiera au premier contact.
+      if (!_grumbled) {
+        _grumbled = true;
+        debugPrint('[musique] pas encore autorisée ($e) — on réessaiera '
+            'au premier geste');
+      }
     }
+  }
+
+  /// On ne se plaint qu'une fois : le refus se répète à chaque tentative.
+  bool _grumbled = false;
+
+  /// À appeler au PREMIER GESTE de l'utilisateur, où qu'il touche.
+  ///
+  /// C'est la règle des navigateurs : rien ne sonne avant qu'on ait
+  /// touché la page. Sans ce rattrapage, la musique de l'accueil ne
+  /// démarrait jamais — sauf en touchant son propre bouton.
+  void nudge() {
+    if (muted || _dead || !wanted.value) return;
+    if (_player?.state == PlayerState.playing) return;
+    if (_fadeTimer != null) return; // on est en train de s'éteindre
+    play();
   }
 
   /// Baisse le son PROGRESSIVEMENT puis coupe. C'est la demande : en

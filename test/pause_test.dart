@@ -172,4 +172,47 @@ void main() {
       expect(fired, 0);
     });
   });
+
+  // ── LE BOUTON, SUR LE PLATEAU LUI-MÊME ────────────────────────────
+  //
+  // La pause n'existait que dans le centre de commandes. En mode
+  // « Jouer » — celui du téléphone — le panneau n'existe pas : il n'y
+  // avait aucun moyen d'arrêter la partie. Le bouton se pose donc dans
+  // la barre du plateau, à GAUCHE, en face de la maison.
+  testWidgets('le plateau porte son propre bouton Pause, à gauche',
+      (t) async {
+    await bootApp(t);
+    final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+
+    expect(find.byKey(const Key('board-pause')), findsOneWidget);
+    expect(state.paused, isFalse);
+
+    await t.tap(find.byKey(const Key('board-pause')));
+    await t.pump();
+    expect(state.paused, isTrue, reason: 'un appui met en pause');
+    expect(find.byIcon(Icons.play_arrow_rounded), findsWidgets,
+        reason: 'l\'icône bascule : elle dit ce que fera le prochain appui');
+
+    await t.tap(find.byKey(const Key('board-pause')));
+    await t.pump();
+    expect(state.paused, isFalse, reason: 'le même bouton reprend');
+
+    await shutdownApp(t);
+  });
+
+  testWidgets('la pause est à GAUCHE, la maison à DROITE', (t) async {
+    // Le plateau seul, avec sa sortie : les deux boutons coexistent.
+    resetPawnAnimationCache();
+    await t.pumpWidget(MaterialApp(
+      home: BoardScreen(showPanel: false, onExit: (_) {}),
+    ));
+    await waitForBoard(t);
+
+    final pause = t.getCenter(find.byKey(const Key('board-pause'))).dx;
+    final maison = t.getCenter(find.byKey(const Key('board-home'))).dx;
+    expect(pause, lessThan(maison),
+        reason: 'la pause se pose en face de la maison, pas à côté');
+
+    await shutdownApp(t);
+  });
 }

@@ -334,12 +334,17 @@ void main() {
             BoardView.cardSlotCenter(color, slot).dy,
         };
         expect(ys.length, 1, reason: '${color.name} : une seule rangée');
+        // Les cartes ne se chevauchent PAS : l'écart doit dépasser la
+        // largeur. C'est ce qui les empêche de grandir sans bouger.
+        expect(BoardView.cardSlotStep, greaterThan(BoardView.cardW),
+            reason: 'des cartes larges de ${BoardView.cardW} ne tiennent pas '
+                'dans un pas de ${BoardView.cardSlotStep}');
         final xs = [
           for (int slot = 0; slot < LudoUpgrades.handLimit; slot++)
             BoardView.cardSlotCenter(color, slot).dx,
         ]..sort();
         for (int i = 1; i < xs.length; i++) {
-          expect(xs[i] - xs[i - 1], closeTo(0.90, 1e-9),
+          expect(xs[i] - xs[i - 1], closeTo(BoardView.cardSlotStep, 1e-9),
               reason: '${color.name} : espacement irrégulier $xs');
         }
       }
@@ -647,8 +652,12 @@ void main() {
     });
   });
 
-  group('👀 Une carte DIFFÉRÉE se montre 2 secondes, puis se range', () {
-    testWidgets('on la voit passer, et elle finit dans la base', (t) async {
+  group('👀 Une carte DIFFÉRÉE file dans la base SANS se montrer', () {
+    // Elle s'ouvrait deux secondes au centre du plateau. Retiré à la
+    // demande : rien ne se joue au moment du tirage, et cette pause
+    // interrompait la partie pour une carte qu'on jouera plus tard — et
+    // qu'on peut de toute façon consulter en la maintenant dans sa base.
+    testWidgets('elle se range, et rien ne s\'ouvre', (t) async {
       await bootApp(t);
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
       final c = state.controller;
@@ -667,20 +676,14 @@ void main() {
 
       expect(c.upgrades.handOf(me), hasLength(1),
           reason: 'elle est bien allée dans la base');
-
-      // Elle S'OUVRE. Sans cet arrêt, elle arrivait dans la base sans que
-      // personne ne l'ait vue — ni son propriétaire, ni la table. Le
-      // retournement dure 620 ms : la FACE n'apparaît qu'à mi-course.
-      expect(state.revealedCard, isNotNull,
-          reason: 'la carte tirée se montre');
-      await t.pump(const Duration(milliseconds: 450)); // le retournement
-      expect(find.byType(CardFace), findsOneWidget);
-
-      // Puis elle se referme toute seule : 2 s, pas plus. C'est une
-      // différée, rien ne se joue — on la montre, elle se range.
-      await t.pump(const Duration(milliseconds: 1800));
       expect(state.revealedCard, isNull,
-          reason: 'elle ne reste pas ouverte : elle va se ranger');
+          reason: 'aucune présentation : elle va directement se ranger');
+      expect(find.byType(CardFace), findsNothing,
+          reason: 'sa face ne doit apparaître nulle part au tirage');
+
+      // Et elle ne s'ouvre pas non plus une seconde plus tard.
+      await t.pump(const Duration(milliseconds: 1200));
+      expect(state.revealedCard, isNull);
 
       await shutdownApp(t);
     });
