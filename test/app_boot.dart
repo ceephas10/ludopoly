@@ -19,6 +19,18 @@ import 'package:ludopoly/main.dart';
 /// déborde et le test échoue sur une erreur sans rapport avec ce qu'il
 /// teste.
 void useLargeSurface() {
+  // LE SON, COUPÉ POUR TOUTE LA SUITE.
+  //
+  // Le harnais n'a pas de greffon audio. Construire un lecteur y ouvre un
+  // canal d'événements qui répond par une MissingPluginException — une
+  // erreur asynchrone, qu'aucun `try` du code de jeu ne peut rattraper, et
+  // que le harnais compte comme un échec du test en cours.
+  //
+  // C'est ici et non dans [bootApp] : depuis que les sons se préparent au
+  // démarrage, un test qui monte l'application PAR LE MENU les réveille
+  // aussi. Ce `setUp` est le seul point que tous les tests de widget
+  // partagent.
+  BoardScreenState.muteStepSounds = true;
   final view =
       TestWidgetsFlutterBinding.instance.platformDispatcher.views.first;
   view.physicalSize = const Size(2400, 1500);

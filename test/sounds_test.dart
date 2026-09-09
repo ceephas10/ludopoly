@@ -12,8 +12,15 @@
 
 import 'dart:typed_data';
 
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ludopoly/game/game_controller.dart';
+import 'package:ludopoly/game/pawn.dart';
+import 'package:ludopoly/game/player_color.dart';
+import 'package:ludopoly/main.dart';
+
+import 'app_boot.dart';
 
 /// Un son du jeu, et la durée au-delà de laquelle il gênerait.
 class _Son {
@@ -90,5 +97,107 @@ void main() {
     expect(tailles.length, _sons.length,
         reason: 'un même fichier recopié sous plusieurs noms passerait '
             'tous les contrôles ci-dessus sans qu\'on l\'entende');
+  });
+
+  // ── QUAND chaque son part ──────────────────────────────────────────
+  //
+  // La plainte : « les sons ne coïncident pas, on attend que le dé ait
+  // fini de rouler pour l'entendre ». Le harnais n'a pas de greffon
+  // audio, on ne peut donc rien écouter — mais on peut mesurer l'INSTANT
+  // de chaque déclenchement, et c'est exactement ce qui n'allait pas.
+  group('⏱ Les sons tombent avec le geste', () {
+    late List<({String son, Duration t})> journal;
+    late Duration horloge;
+
+    setUp(() {
+      useLargeSurface();
+      horloge = Duration.zero;
+      journal = [];
+      BoardScreenState.onSoundForTest =
+          (son) => journal.add((son: son, t: horloge));
+    });
+    tearDown(() {
+      BoardScreenState.onSoundForTest = null;
+      resetSurface();
+    });
+
+    /// Avance l'horloge simulée ET celle du journal, du même pas.
+    Future<void> avancer(WidgetTester t, Duration d) async {
+      horloge += d;
+      await t.pump(d);
+    }
+
+    testWidgets('le dé sonne au LANCER, pas à la fin de son animation',
+        (t) async {
+      await bootApp(t);
+      final s = t.state<BoardScreenState>(find.byType(BoardScreen));
+      s.rollManualForTest(6);
+      await t.pump();
+
+      expect(journal.map((e) => e.son), contains('de'));
+      expect(journal.first.son, 'de');
+      expect(journal.first.t, Duration.zero,
+          reason: 'le son part dans la frame du lancer, pas après');
+
+      await t.pump(const Duration(seconds: 2));
+      await shutdownApp(t);
+    });
+
+    testWidgets('la SORTIE DE BASE sonne la chaîne, et pas le pas',
+        (t) async {
+      await bootApp(t);
+      final s = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final me = s.controller.currentColor;
+      s.rollManualForTest(6);
+      await t.pump();
+      journal.clear(); // on ne juge que ce qui suit le lancer
+
+      await t.tap(find.byKey(ValueKey('hit_${me.name}_0')));
+      await avancer(t, const Duration(milliseconds: 16));
+
+      expect(journal.map((e) => e.son), ['sortie'],
+          reason: 'une entrée en scène, pas un pas de plus');
+
+      await t.pump(const Duration(seconds: 2));
+      await shutdownApp(t);
+    });
+
+    testWidgets('le CRI attend que la victime s\'efface', (t) async {
+      await bootApp(t);
+      final s = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = s.controller;
+      final me = c.currentColor;
+
+      // Un pion à moi sur l'anneau, une victime isolée trois pas devant.
+      final mien = c.state.pawnsByColor[me]![0];
+      mien.location = PawnLocation.ring;
+      mien.position = (GameController.startIdx(me) + 20) %
+          GameController.ringSize;
+      final proie = c.state.pawnsByColor[
+          PlayerColor.values.firstWhere((x) => x != me)]![0];
+      proie.location = PawnLocation.ring;
+      proie.position = (mien.position + 3) % GameController.ringSize;
+
+      s.rollManualForTest(3);
+      await t.pump();
+      journal.clear();
+
+      await t.tap(find.byKey(ValueKey('hit_${me.name}_0')));
+      for (var i = 0; i < 60; i++) {
+        await avancer(t, const Duration(milliseconds: 40));
+      }
+
+      final pas = journal.where((e) => e.son == 'pas').toList();
+      final cri = journal.where((e) => e.son == 'capture').toList();
+      expect(pas, isNotEmpty, reason: 'trois pas, donc des sons de pas');
+      expect(cri, hasLength(1), reason: 'une victime, un cri');
+      expect(cri.first.t, greaterThan(pas.last.t),
+          reason: 'le cri partait à la DÉTECTION, une seconde avant qu\'on '
+              'voie quoi que ce soit : il doit tomber APRÈS le dernier pas, '
+              'quand la victime s\'efface');
+
+      await t.pump(const Duration(seconds: 2));
+      await shutdownApp(t);
+    });
   });
 }

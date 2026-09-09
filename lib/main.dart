@@ -670,7 +670,18 @@ class BoardScreenState extends State<BoardScreen>
   ///
   /// La secousse reste : elle ne coûte rien et, sur Android, c'est elle
   /// qu'on sent sous le doigt avant même d'entendre le son.
+  /// Témoin des sons, POUR LES TESTS.
+  ///
+  /// Le harnais n'a pas de greffon audio : on ne peut donc pas écouter ce
+  /// qui sort. Ce qu'on PEUT vérifier — et c'est tout l'objet de la
+  /// plainte « les sons ne coïncident pas » — c'est QUAND chaque son
+  /// part. Ce témoin est appelé avant la coupure du son, sinon les tests,
+  /// qui sont muets, ne verraient jamais rien.
+  @visibleForTesting
+  static void Function(String son)? onSoundForTest;
+
   void _stepBeat() {
+    onSoundForTest?.call('pas');
     if (_muted) return;
     _stepSound.play();
     HapticFeedback.selectionClick();
@@ -679,14 +690,33 @@ class BoardScreenState extends State<BoardScreen>
   /// Le pion QUITTE sa boîte : la chaîne, et une secousse plus franche —
   /// c'est un événement, pas un pas de plus.
   void _baseExitBeat() {
+    onSoundForTest?.call('sortie');
     if (_muted) return;
     _baseExitSound.play();
     HapticFeedback.mediumImpact();
   }
 
+  /// Ouvre les canaux et décode les quatre sons AVANT la première partie.
+  ///
+  /// Muet en test : le harnais n'a pas de greffon natif, et l'attente ne
+  /// prouverait rien.
+  Future<void> _warmSounds() async {
+    if (_muted) return;
+    final t = DateTime.now();
+    await Future.wait([
+      _diceSound.warmUp(),
+      _stepSound.warmUp(),
+      _baseExitSound.warmUp(),
+      _captureSound.warmUp(),
+    ]);
+    debugPrint('[son] 4 banques prêtes en '
+        '${DateTime.now().difference(t).inMilliseconds} ms');
+  }
+
   /// Le dé part : le choc des dés. Une secousse légère avec — c'est le
   /// geste du joueur, pas un impact.
   void _diceBeat() {
+    onSoundForTest?.call('de');
     if (_muted) return;
     _diceSound.play();
     HapticFeedback.lightImpact();
@@ -696,6 +726,7 @@ class BoardScreenState extends State<BoardScreen>
   /// même si le coup en renvoie deux — le lecteur en entend deux, mais
   /// c'est l'appelant qui décide combien de fois il déclenche.
   void _captureBeat() {
+    onSoundForTest?.call('capture');
     if (_muted) return;
     _captureSound.play();
     HapticFeedback.heavyImpact();
@@ -1068,6 +1099,20 @@ class BoardScreenState extends State<BoardScreen>
     }
     _availableVariants = available;
     _setLoading('Tokens trouvés : $foundTotal / $probedTotal');
+
+    // ─── Les sons, PRÉPARÉS MAINTENANT ────────────────────────────────
+    //
+    // C'est le vrai retard qu'on entendait. Le premier `play()` faisait
+    // tout le travail : créer les lecteurs, ouvrir un canal natif par
+    // voix, décoder le fichier. Le tout dure facilement une demi-seconde,
+    // et l'on entendait donc le dé APRÈS son animation, puis le pion
+    // APRÈS son pas — chaque son avec un tour de retard sur son geste.
+    //
+    // On paie ce prix ici, pendant que l'écran de chargement est déjà à
+    // l'écran pour les pions. Ensuite, `play()` n'a plus qu'à rembobiner
+    // et lancer : quelques millisecondes, imperceptibles.
+    _setLoading('Sons…');
+    await _warmSounds();
 
     // ─── Assign each pawn a distinct anim from its color's pool ───────
     for (final entry in byColor.entries) {
@@ -2129,21 +2174,6 @@ class BoardScreenState extends State<BoardScreen>
           pp != p &&
           beforeLoc[pp]!.location != PawnLocation.base &&
           pp.location == PawnLocation.base));
-      // LE CRI, un par victime — mais DÉCALÉS. Un même coup peut en
-      // renvoyer deux (c'est même la règle depuis le bloc), et deux fois
-      // le même fichier au même instant ne fait pas deux cris : cela
-      // double l'amplitude d'un son qui frôle déjà le maximum, donc cela
-      // sature. 130 ms d'écart, et l'on entend deux victimes.
-      //
-      // C'est le seul endroit qui sait qui vient de tomber : la capture
-      // au dé comme celle d'une carte passent par ici.
-      for (var i = 0; i < capturedNow.length; i++) {
-        if (i == 0) {
-          _captureBeat();
-        } else {
-          _after(Duration(milliseconds: 130 * i), _captureBeat);
-        }
-      }
       // Trace de diagnostic demandée : elle dit ce que la détection a
       // RÉELLEMENT vu, pour qu'on puisse confirmer en conditions réelles
       // qu'aucune animation ne part sans victime.
@@ -2318,6 +2348,25 @@ class BoardScreenState extends State<BoardScreen>
       _explosionTimer?.cancel();
       _explosionTimer = _after(totalDur, () {
         if (!mounted) return;
+        // LE CRI TOMBE ICI, avec l'explosion.
+        //
+        // Il partait jusque-là à la DÉTECTION de la capture, c'est-à-dire
+        // au moment où le moteur la résout — soit une seconde avant qu'on
+        // la voie. L'attaquant n'avait même pas commencé son trajet. On
+        // entendait donc crier un pion encore bien vivant à l'écran.
+        //
+        // Un cri par victime, DÉCALÉS de 130 ms : un même coup peut en
+        // renvoyer deux (c'est la règle depuis le bloc), et deux fois le
+        // même fichier au même instant ne fait pas deux cris — cela
+        // double l'amplitude d'un son qui frôle déjà le maximum, donc
+        // cela sature.
+        for (var i = 0; i < captures.length; i++) {
+          if (i == 0) {
+            _captureBeat();
+          } else {
+            _after(Duration(milliseconds: 130 * i), _captureBeat);
+          }
+        }
         setState(() {
           for (final cap in captures) {
             final fx = ExplosionFx(
@@ -7936,26 +7985,59 @@ class _Sfx {
     }
   }
 
+  /// Prépare les voix SANS jouer. À appeler au démarrage : c'est ce
+  /// travail-là qui retardait le premier son de chaque sorte.
+  Future<void> warmUp() async {
+    if (_dead) return;
+    try {
+      await (_warmup ??= _warm());
+    } catch (e) {
+      _dead = true;
+      debugPrint('[son] $_asset muet : $e');
+    }
+  }
+
   void play() {
     if (_dead) return;
     unawaited(_playOne());
   }
 
   Future<void> _playOne() async {
+    final AudioPlayer p;
     try {
       await (_warmup ??= _warm());
       if (_pool.isEmpty) return;
-      final p = _pool[_next];
+      p = _pool[_next];
       _next = (_next + 1) % _pool.length;
+    } catch (e) {
+      // Là, c'est la BANQUE qui ne s'ouvre pas — greffon absent, fichier
+      // introuvable. Rien ne sortira jamais : on cesse d'essayer.
+      _dead = true;
+      debugPrint('[son] $_asset muet : $e');
+      return;
+    }
+    try {
       // On rembobine avant de relancer : la voix qui revient dans la ronde
-      // a fini sa lecture et est restée sur sa dernière image.
+      // a fini sa lecture et est restée sur sa dernière image. Le zéro est
+      // le SEUL déplacement que le mode basse latence accepte sur Android
+      // — il y est traité comme un arrêt suivi d'un redépart.
       await p.seek(Duration.zero);
       await p.resume();
     } catch (e) {
-      _dead = true;
-      debugPrint('[son] $_asset muet : $e');
+      // Un déclenchement raté ne condamne PAS les suivants. Le navigateur
+      // refuse par exemple de jouer avant le premier geste de
+      // l'utilisateur : ce serait une raison absurde de rendre le jeu
+      // muet pour toute la partie.
+      if (!_grumbled) {
+        _grumbled = true;
+        debugPrint('[son] $_asset : déclenchement raté ($e)');
+      }
     }
   }
+
+  /// On ne se plaint qu'UNE fois par son : sinon un refus du navigateur
+  /// remplirait la console à chaque case.
+  bool _grumbled = false;
 
   void dispose() {
     for (final p in _pool) {
