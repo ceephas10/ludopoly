@@ -12,6 +12,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludopoly/game/brand.dart';
+import 'package:ludopoly/game/menu_music.dart';
 import 'package:ludopoly/main.dart';
 
 /// Surface de rendu des tests. La surface par défaut (800×600) est trop
@@ -31,6 +32,7 @@ void useLargeSurface() {
   // aussi. Ce `setUp` est le seul point que tous les tests de widget
   // partagent.
   BoardScreenState.muteStepSounds = true;
+  MenuMusic.muted = true;
   final view =
       TestWidgetsFlutterBinding.instance.platformDispatcher.views.first;
   view.physicalSize = const Size(2400, 1500);

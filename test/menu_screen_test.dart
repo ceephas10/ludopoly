@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludopoly/game/brand.dart';
+import 'package:ludopoly/game/menu_music.dart';
 import 'package:ludopoly/main.dart';
 
 import 'app_boot.dart';
@@ -26,6 +27,34 @@ void main() {
     expect(find.byType(BoardScreen), findsNothing);
     expect(find.text('Nombre de joueurs'), findsNothing,
         reason: 'les réglages ne doivent PAS être sur le chemin du joueur');
+
+    await shutdownApp(t);
+  });
+
+  // LA MUSIQUE DE L'ACCUEIL et son bouton. Le son lui-même est coupé dans
+  // les tests — le harnais n'a pas de greffon audio — mais l'intention,
+  // elle, se vérifie : c'est elle que le bouton pilote.
+  testWidgets('l\'accueil porte un bouton qui coupe la musique', (t) async {
+    addTearDown(() => MenuMusic.instance.setWanted(true));
+    resetPawnAnimationCache();
+    await t.pumpWidget(const LudoPolyApp());
+    await t.pump();
+
+    expect(MenuMusic.instance.wanted.value, isTrue,
+        reason: 'la musique tourne par défaut en arrivant');
+    expect(find.byIcon(Icons.volume_up_rounded), findsOneWidget);
+
+    await t.tap(find.byKey(const Key('menu-music')));
+    await t.pump();
+    expect(MenuMusic.instance.wanted.value, isFalse, reason: 'stop');
+    expect(find.byIcon(Icons.volume_off_rounded), findsOneWidget,
+        reason: 'l\'icône dit l\'état : haut-parleur barré');
+
+    // Et l'on peut la remettre : couper sans pouvoir revenir serait une
+    // impasse.
+    await t.tap(find.byKey(const Key('menu-music')));
+    await t.pump();
+    expect(MenuMusic.instance.wanted.value, isTrue);
 
     await shutdownApp(t);
   });

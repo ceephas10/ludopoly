@@ -31,6 +31,9 @@ class _Son {
 }
 
 const _sons = [
+  // La musique de l'accueil : longue par nature, elle tourne en boucle.
+  _Son('assets/audio/menu_music.mp3', 600000,
+      'une musique de fond, elle n\'a pas de limite courte'),
   _Son('assets/audio/dice_roll.mp3', 3000,
       'un lancer dure 500 ms : la traîne peut le déborder, pas l\'enterrer'),
   _Son('assets/audio/pawn_step.wav', 1000,

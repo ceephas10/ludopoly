@@ -11,6 +11,7 @@ import 'package:flutter/services.dart'
     show rootBundle, HapticFeedback;
 import 'game/ai_difficulty.dart';
 import 'game/board_painter.dart';
+import 'game/menu_music.dart';
 import 'game/board_painter_5p.dart';
 import 'game/app_background.dart';
 import 'game/board_path.dart';
@@ -38,6 +39,13 @@ class LudoPolyApp extends StatefulWidget {
 }
 
 class _LudoPolyAppState extends State<LudoPolyApp> {
+  @override
+  void initState() {
+    super.initState();
+    // La musique commence avec l'accueil, avant tout choix.
+    MenuMusic.instance.play();
+  }
+
   /// Ce que l'on regarde : le menu, les réglages, ou une partie.
   MenuChoice? _screen;
 
@@ -64,6 +72,12 @@ class _LudoPolyAppState extends State<LudoPolyApp> {
     switch (_screen) {
       case null:
         return MenuScreen(background: _setup.background, onChoose: (c) {
+          // ON ENTRE SUR LE PLATEAU : la musique DESCEND puis s'éteint.
+          // Ailleurs — Options, Comment jouer — on n'est pas encore dans
+          // la partie : elle continue.
+          if (c == MenuChoice.play || c == MenuChoice.system) {
+            MenuMusic.instance.fadeOutAndStop();
+          }
           setState(() {
             _screen = c;
             if (c != MenuChoice.options) _game++;
@@ -107,6 +121,9 @@ class _LudoPolyAppState extends State<LudoPolyApp> {
           onExit: (s) => setState(() {
             _setup = s;
             _screen = null;
+            // De retour à l'accueil : la musique reprend, sauf si le
+            // joueur l'a coupée avec le bouton.
+            MenuMusic.instance.play();
           }),
         );
     }
@@ -4772,6 +4789,12 @@ class _SeatStrip extends StatelessWidget {
 
   /// Les joueurs d'en haut lisent le plateau à l'envers : leur bandeau se
   /// retourne, comme leurs cartes et comme le dé.
+  ///
+  /// Le retournement porte sur CHAQUE PAVÉ, pas sur la rangée. Retourner
+  /// la rangée entière la lisait de droite à gauche : le pavé rouge
+  /// atterrissait au-dessus de la base VERTE et le vert au-dessus de la
+  /// ROUGE. C'est ce que signalait « Player 2 est rouge alors qu'il
+  /// devrait être vert » — les deux étaient simplement inversés.
   final bool flip;
 
   static const Map<PlayerColor, Color> _tint = {
@@ -4791,18 +4814,21 @@ class _SeatStrip extends StatelessWidget {
         children: [
           for (final p in seats)
             Flexible(
-              child: _SeatTile(
-                player: p,
-                tint: _tint[p.color] ?? Colors.white,
-                active: p.color == current,
-                diceValue: diceValue,
-                home: homeCount[p.color] ?? 0,
+              child: RotatedBox(
+                quarterTurns: flip ? 2 : 0,
+                child: _SeatTile(
+                  player: p,
+                  tint: _tint[p.color] ?? Colors.white,
+                  active: p.color == current,
+                  diceValue: diceValue,
+                  home: homeCount[p.color] ?? 0,
+                ),
               ),
             ),
         ],
       ),
     );
-    return flip ? RotatedBox(quarterTurns: 2, child: row) : row;
+    return row;
   }
 }
 

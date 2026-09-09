@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'game/app_background.dart';
 import 'game/background_config.dart';
 import 'game/brand.dart';
+import 'game/menu_music.dart';
 
 /// Ce que le menu peut lancer.
 enum MenuChoice {
@@ -45,7 +46,10 @@ class MenuScreen extends StatelessWidget {
       body: AppBackground.menu.wrap(
         config: background,
         SafeArea(
-          child: LayoutBuilder(
+          child: Stack(
+            children: [
+              _musique(),
+              LayoutBuilder(
             builder: (context, c) {
               // Sur un écran court, le logo se fait discret pour laisser la
               // place aux entrées ; sur un grand, il prend ses aises.
@@ -95,6 +99,43 @@ class MenuScreen extends StatelessWidget {
                 ),
               );
             },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// LE BOUTON DE LA MUSIQUE, en haut à droite de l'accueil.
+  ///
+  /// Un interrupteur, pas un aller simple : couper la musique sans pouvoir
+  /// la remettre serait une impasse. L'icône dit l'état, pas l'action —
+  /// haut-parleur barré quand c'est coupé.
+  Widget _musique() {
+    return Positioned(
+      top: 8,
+      right: 8,
+      child: ValueListenableBuilder<bool>(
+        valueListenable: MenuMusic.instance.wanted,
+        builder: (context, on, _) => Tooltip(
+          message: on ? 'Couper la musique' : 'Remettre la musique',
+          child: Material(
+            key: const Key('menu-music'),
+            color: Colors.white.withValues(alpha: on ? 0.14 : 0.06),
+            shape: const CircleBorder(),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () => MenuMusic.instance.setWanted(!on),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Icon(
+                  on ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+                  size: 22,
+                  color: Colors.white.withValues(alpha: on ? 0.92 : 0.55),
+                ),
+              ),
+            ),
           ),
         ),
       ),
