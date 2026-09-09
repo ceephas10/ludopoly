@@ -2075,9 +2075,21 @@ class BoardScreenState extends State<BoardScreen>
       // RÉELLEMENT vu, pour qu'on puisse confirmer en conditions réelles
       // qu'aucune animation ne part sans victime.
       if (capturedNow.isEmpty) {
+        // Trois raisons possibles de ne rien manger, et la trace doit
+        // dire LAQUELLE : la case était vide ou sûre, ou bien elle était
+        // tenue par un BLOC — deux pions d'une même couleur, qu'un pion
+        // seul ne déloge pas.
+        final bloc = p.location == PawnLocation.ring
+            ? _game.allPawns.where((o) =>
+                o.color != p.color &&
+                o.location == PawnLocation.ring &&
+                o.position == p.position)
+            : const <Pawn>[];
+        final tenue = bloc.isNotEmpty;
         debugPrint('[capture] pas de capture : '
             '${p.color.name}#${p.id} arrive sur '
-            '${p.location.name}:${p.position}, case vide ou sûre');
+            '${p.location.name}:${p.position}, '
+            '${tenue ? 'bloc adverse : ${bloc.map((o) => '${o.color.name}#${o.id}').join(' + ')}' : 'case vide ou sûre'}');
       } else {
         debugPrint('[capture] capture détectée : '
             '${capturedNow.map((c) => '${c.color.name}#${c.id} depuis '

@@ -276,6 +276,35 @@ void main() {
       expect(ev.where((e) => e.type == EventType.captured).length, 2);
     });
 
+    // LE BLOC. Deux pions d'une MÊME couleur sur une case ne tombent que
+    // devant deux pions. `game_controller.dart` applique la même règle :
+    // les deux moteurs ne doivent pas raconter deux jeux différents.
+    test('un bloc de deux tient devant un attaquant seul', () {
+      final g = game(players: [TokenColor.red, TokenColor.blue]);
+      final b0 = tok(g, TokenColor.blue, 0)..enterRing(5);
+      final b1 = tok(g, TokenColor.blue, 1)..enterRing(5);
+      final r0 = tok(g, TokenColor.red, 0)..enterRing(2);
+      g.roll(3);
+      final ev = g.play(r0);
+      expect(b0.onRing && b1.onRing, isTrue, reason: 'le bloc tient');
+      expect(types(ev), isNot(contains(EventType.captured)));
+      expect(r0.ringIndex, 5, reason: 'l\'attaquant partage la case');
+    });
+
+    test('le bloc dégage quand l\'adversaire y amène un deuxième pion', () {
+      final g = game(players: [TokenColor.red, TokenColor.blue]);
+      final b0 = tok(g, TokenColor.blue, 0)..enterRing(5);
+      final b1 = tok(g, TokenColor.blue, 1)..enterRing(5);
+      // Le premier rouge est DÉJÀ sur la case : il y a partagé le terrain
+      // au tour precedent sans rien manger. C'est le deuxième qui compte.
+      tok(g, TokenColor.red, 0).enterRing(5);
+      final r1 = tok(g, TokenColor.red, 1)..enterRing(2);
+      g.roll(3);
+      final ev = g.play(r1);
+      expect(b0.inBase && b1.inBase, isTrue, reason: 'deux contre deux');
+      expect(ev.where((e) => e.type == EventType.captured).length, 2);
+    });
+
     test('mes propres pions : on s\'empile, pas de capture', () {
       final g = game();
       final b0 = tok(g, TokenColor.blue, 0)..enterRing(10);

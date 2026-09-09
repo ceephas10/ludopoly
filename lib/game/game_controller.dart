@@ -582,15 +582,41 @@ class GameController {
     }
   }
 
+  /// Combien de pions de [color] occupent la case d'anneau [cell].
+  int _countOnCell(PlayerColor color, int cell) => state.pawnsByColor[color]!
+      .where((p) => p.location == PawnLocation.ring && p.position == cell)
+      .length;
+
+  /// LE BLOC TIENT-IL ? Rend `true` quand les pions de [color] posés sur
+  /// [cell] sont à l'abri de l'attaquant qui vient d'y arriver avec
+  /// [attackers] pions de SA couleur.
+  ///
+  /// La règle, telle que demandée : deux pions d'une même couleur sur une
+  /// même case de l'anneau forment un bloc. Un pion adverse SEUL qui s'y
+  /// pose ne les mange pas — il se contente de partager la case. Il faut
+  /// que l'adversaire y amène un DEUXIÈME pion de sa couleur pour que le
+  /// bloc dégage.
+  ///
+  /// Un pion isolé, lui, se mange comme avant. Et cela ne dépend d'aucune
+  /// couleur : les comptes se font par couleur, des deux côtés.
+  bool _blockHolds(PlayerColor color, int cell, int attackers) {
+    final defenders = _countOnCell(color, cell);
+    return defenders >= 2 && attackers < 2;
+  }
+
   /// Capture les pions adverses présents sur la case de [p], selon les
   /// règles habituelles : rien sur une case sûre, jamais un coéquipier,
-  /// jamais un pion invulnérable. Rend `true` si quelqu'un a été mangé.
+  /// jamais un pion invulnérable, et jamais un BLOC sans en amener un
+  /// soi-même. Rend `true` si quelqu'un a été mangé.
   bool _captureEnemiesAt(Pawn p) {
     if (p.location != PawnLocation.ring) return false;
     if (_safeCells.contains(p.position)) return false;
+    final mine = _countOnCell(p.color, p.position);
     bool any = false;
     for (final color in state.pawnsByColor.keys) {
       if (_sameTeam(color, p.color)) continue;
+      // Un BLOC ne tombe que devant un BLOC — voir [_blockHolds].
+      if (_blockHolds(color, p.position, mine)) continue;
       for (final other in state.pawnsByColor[color]!) {
         // Un pion INVULNÉRABLE ne se fait pas capturer : les deux pions
         // cohabitent sur la case.
@@ -840,10 +866,19 @@ class GameController {
   }
 
   /// True si un pion adverse capturable se trouve sur la case [cell].
+  ///
+  /// « Capturable » compte le BLOC : deux pions d'une même couleur adverse
+  /// ne tombent que si j'arrive à deux moi aussi (voir [_blockHolds]).
+  /// Sans ce compte, l'IA voyait une prise là où il n'y en a pas et
+  /// payait 900 points pour un coup qui ne mange rien.
   bool _wouldCaptureAt(int cell, PlayerColor mover) {
     if (_safeCells.contains(cell)) return false;
+    // Le pion qui arrive s'ajoute à ceux de sa couleur déjà sur la case :
+    // c'est ainsi qu'on amène le deuxième pion qui fait tomber un bloc.
+    final mine = _countOnCell(mover, cell) + 1;
     for (final entry in state.pawnsByColor.entries) {
       if (_sameTeam(entry.key, mover)) continue;
+      if (_blockHolds(entry.key, cell, mine)) continue;
       for (final other in entry.value) {
         if (other.location == PawnLocation.ring && other.position == cell) {
           return true;
@@ -1716,12 +1751,16 @@ class GameController {
 
   /// Capture par CARTE à la case du pion [p] : mêmes règles que la capture
   /// au dé (cases sûres intouchables, coéquipiers épargnés, invulnérables
-  /// épargnés) — mais sans tour bonus.
+  /// épargnés, blocs intouchables) — mais sans tour bonus.
   void _cardCaptureEnemiesAt(Pawn p) {
     if (p.location != PawnLocation.ring) return;
     if (_safeCells.contains(p.position)) return;
+    final mine = _countOnCell(p.color, p.position);
     for (final entry in state.pawnsByColor.entries) {
       if (_sameTeam(entry.key, p.color)) continue;
+      // Le bloc protège aussi contre une carte : c'est bien « les mêmes
+      // règles qu'au dé ».
+      if (_blockHolds(entry.key, p.position, mine)) continue;
       for (final other in entry.value) {
         if (upgrades.isInvulnerable(other)) continue;
         if (other.location == PawnLocation.ring &&

@@ -323,14 +323,25 @@ class GameplayEngine {
   // --- capture --------------------------------------------------------------
 
   /// Sur une case non sûre, tout pion adverse présent retourne dans sa base —
-  /// sauf s'il est invincible. Renvoie `true` si au moins un est parti.
+  /// sauf s'il est invincible, et sauf s'il tient un BLOC.
+  ///
+  /// Le bloc : deux pions d'une même couleur sur une même case. Un
+  /// adversaire seul qui s'y pose ne les mange pas, il partage la case ;
+  /// il faut qu'il y amène un deuxième pion de sa couleur. Un pion isolé,
+  /// lui, se mange comme avant. Même règle que `game_controller.dart`.
+  ///
+  /// Renvoie `true` si au moins un pion est parti.
   bool _capture(Token mover, List<GameEvent> out) {
     final cell = spec.cell(mover.ringIndex);
     if (cell.safe) return false;
+    final here = tokensAt(mover.ringIndex).toList();
+    final mine = here.where((t) => t.color == mover.color).length;
     var any = false;
-    for (final v in tokensAt(mover.ringIndex)) {
+    for (final v in here) {
       if (v.color == mover.color) continue;
       if (v.status == TokenStatus.invincible) continue;
+      final theirs = here.where((t) => t.color == v.color).length;
+      if (theirs >= 2 && mine < 2) continue;
       v.returnToBase();
       out.add(GameEvent(EventType.captured, token: mover, victim: v, cell: cell.id));
       any = true;
