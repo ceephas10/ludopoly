@@ -787,11 +787,19 @@ class LudoUpgrades {
   /// Remplaçable par les tests pour un tirage reproductible.
   math.Random rng = math.Random();
 
-  /// Nombre maximum de cartes différées tenues en main — §3 : « il peut
-  /// avoir au maximum 4 cartes différées disponibles », et §9 interdit
-  /// « plus de 4 cartes différées dans la main d'un joueur ». Une carte
-  /// tirée alors que la main est pleine est perdue — voir [addToHand].
-  static const int handLimit = 4;
+  /// Nombre maximum de cartes différées tenues en main. Une carte tirée
+  /// alors que la main est pleine est perdue — voir [addToHand].
+  ///
+  /// TROIS, sur demande : « dans les cases de base laisse seulement place
+  /// à 3 cartes ». La base ne dessine que [handLimit] emplacements, donc
+  /// baisser l'un sans l'autre cacherait une carte que le joueur tient
+  /// vraiment — les deux vont ensemble.
+  ///
+  /// La spec en annonçait QUATRE (§3 : « il peut avoir au maximum 4 cartes
+  /// différées disponibles », §9 : pas « plus de 4 cartes différées dans
+  /// la main d'un joueur »). C'est donc une règle changée à la main, pas
+  /// une correction : elle est signalée comme telle.
+  static const int handLimit = 3;
 
   // --- Talons -------------------------------------------------------------
 

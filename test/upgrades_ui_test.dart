@@ -273,7 +273,7 @@ void main() {
       await shutdownApp(t);
     });
 
-    testWidgets('la main tient 4 cartes et le bloc les montre toutes',
+    testWidgets('la main tient 3 cartes et le bloc les montre toutes',
         (t) async {
       await bootApp(t);
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
@@ -281,23 +281,23 @@ void main() {
       state.setChanceEnabled(true);
       final me = c.currentColor;
 
-      for (int v = 1; v <= 4; v++) {
+      for (int v = 1; v <= LudoUpgrades.handLimit; v++) {
         c.upgrades.addToHand(
             me, kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_$v'));
       }
       await t.pump(const Duration(milliseconds: 300));
-      expect(c.upgrades.handOf(me).length, 4);
-      for (int v = 1; v <= 4; v++) {
+      expect(c.upgrades.handOf(me).length, LudoUpgrades.handLimit);
+      for (int v = 1; v <= LudoUpgrades.handLimit; v++) {
         expect(
             find.text(kDeferredCards
                 .singleWhere((x) => x.id == 'DEF_DICE_$v')
                 .nameFr),
             findsOneWidget);
       }
-      // La 5e est refusée.
+      // Celle d'après est refusée : la base n'a que trois emplacements.
       expect(
           c.upgrades.addToHand(
-              me, kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_5')),
+              me, kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_4')),
           isFalse);
 
       await shutdownApp(t);
@@ -667,12 +667,17 @@ void main() {
     });
   });
 
-  group('👀 Une carte DIFFÉRÉE file dans la base SANS se montrer', () {
-    // Elle s'ouvrait deux secondes au centre du plateau. Retiré à la
-    // demande : rien ne se joue au moment du tirage, et cette pause
-    // interrompait la partie pour une carte qu'on jouera plus tard — et
-    // qu'on peut de toute façon consulter en la maintenant dans sa base.
-    testWidgets('elle se range, et rien ne s\'ouvre', (t) async {
+  group('👀 Une carte DIFFÉRÉE se montre AVANT de rejoindre la base', () {
+    // Elle filait se ranger sans rien montrer — c'était la consigne
+    // précédente, remplacée par celle-ci : « il faudrait que la carte
+    // différée se présente à moi quelques secondes avant qu'elle parte
+    // dans la base ».
+    //
+    // La DURÉE et l'ordre d'arrivée dans la base se vérifient dans
+    // `card_reveal_test.dart` ; ici, ce qu'on veut voir, c'est la FACE
+    // de la carte à l'écran.
+    testWidgets('sa face s\'ouvre au tirage, puis se referme seule',
+        (t) async {
       await bootApp(t);
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
       final c = state.controller;
@@ -691,14 +696,18 @@ void main() {
 
       expect(c.upgrades.handOf(me), hasLength(1),
           reason: 'elle est bien allée dans la base');
-      expect(state.revealedCard, isNull,
-          reason: 'aucune présentation : elle va directement se ranger');
-      expect(find.byType(CardFace), findsNothing,
-          reason: 'sa face ne doit apparaître nulle part au tirage');
+      expect(state.revealedCard, isNotNull,
+          reason: 'mais elle se présente d\'abord');
+      // Elle s'ouvre par un RETOURNEMENT : on voit d'abord son dos, et
+      // la face n'arrive qu'au bout de l'animation.
+      await t.pump(const Duration(milliseconds: 900));
+      expect(find.byType(CardFace), findsWidgets,
+          reason: 'sa face doit être à l\'écran une fois retournée');
 
-      // Et elle ne s'ouvre pas non plus une seconde plus tard.
-      await t.pump(const Duration(milliseconds: 1200));
+      // Puis elle se referme toute seule, sans qu'on y touche.
+      await t.pump(const Duration(seconds: 5));
       expect(state.revealedCard, isNull);
+      expect(find.byType(CardFace), findsNothing);
 
       await shutdownApp(t);
     });

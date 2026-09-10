@@ -1,13 +1,24 @@
-// Placement des pions ARRIVÉS dans le triangle de la maison.
+// LES PIONS ARRIVÉS : superposés sur la 6ᵉ case, et plus petits.
 //
-// Les 4 pions d'une couleur se rangent sur 4 parts égales de l'hypoténuse
-// de leur triangle, au lieu de se superposer sur un point unique.
+// « Lorsqu'un pion entre à maison il faut qu'il diminue de forme et
+// qu'on le voie superposé dans leur 6ᵉ case. »
 //
-// Tout est vérifiable ici : `homeSlotCenter` est une fonction pure, en
-// unités de case, sans le moindre widget.
+// Les quatre pions d'une couleur se rangeaient auparavant sur quatre
+// parts égales de l'hypoténuse de leur triangle. Ils tiennent désormais
+// tous sur la même case — la sixième de leur couloir, celle qui touche le
+// centre — et c'est leur TAILLE réduite, plus l'écart de l'empilement,
+// qui permet de les compter.
+//
+// `homeSlotCenter` est une fonction pure, en unités de case : le premier
+// groupe se vérifie sans le moindre widget. Le second monte le plateau,
+// parce que la réduction, elle, est une affaire de rendu.
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ludopoly/game/pawn.dart';
 import 'package:ludopoly/main.dart';
+
+import 'app_boot.dart';
 
 /// Sommet des quatre triangles : le centre du plateau.
 const _apex = Offset(7.5, 7.5);
@@ -21,132 +32,86 @@ const _outward = {
 };
 
 void main() {
-  group('🏠 Les 4 pions se rangent sur l\'hypoténuse de leur triangle', () {
-    test('aucun pion ne se superpose à un autre', () {
+  group('🏠 Les 4 pions rentrés tiennent sur la 6ᵉ case', () {
+    test('les quatre places n\'en font qu\'une', () {
       for (final color in PlayerColor.values) {
         final places = {
           for (int slot = 0; slot < 4; slot++)
             BoardView.homeSlotCenter(color, slot),
         };
-        expect(places.length, 4,
-            reason: '${color.name} : ${places.length} places distinctes '
-                'au lieu de 4');
+        expect(places.length, 1,
+            reason: '${color.name} : ${places.length} places au lieu '
+                'd\'une seule — les pions rentrés se superposent');
       }
     });
 
-    test('les 4 places sont ALIGNÉES, parallèlement à l\'hypoténuse', () {
+    test('cette case est la 6ᵉ du couloir : une case après la 5ᵉ, '
+        'vers le centre', () {
       for (final color in PlayerColor.values) {
-        final out = _outward[color]!;
-        // Toutes à la même distance du sommet dans la direction sortante :
-        // elles forment donc une ligne parallèle à la base.
-        final depths = {
-          for (int slot = 0; slot < 4; slot++)
-            () {
-              final p = BoardView.homeSlotCenter(color, slot) - _apex;
-              return (p.dx * out.dx + p.dy * out.dy).toStringAsFixed(6);
-            }(),
-        };
-        expect(depths.length, 1,
-            reason: '${color.name} : profondeurs différentes $depths');
+        // Les cinq cases du couloir vont de la 0 à la 4 ; la sixième est
+        // la suivante, à une case du centre du côté de sa couleur.
+        final attendu = _apex + _outward[color]! * 1.0;
+        expect(BoardView.homeSlotCenter(color, 0), attendu,
+            reason: '${color.name} : la case des pions rentrés');
       }
     });
 
-    test('elles sont SYMÉTRIQUES par rapport à l\'axe du triangle', () {
-      for (final color in PlayerColor.values) {
-        final out = _outward[color]!;
-        // Axe perpendiculaire à la direction sortante.
-        final side = Offset(-out.dy, out.dx);
-        final along = [
-          for (int slot = 0; slot < 4; slot++)
-            () {
-              final p = BoardView.homeSlotCenter(color, slot) - _apex;
-              return p.dx * side.dx + p.dy * side.dy;
-            }(),
-        ];
-        // Somme nulle = centrées sur l'axe ; et les extrêmes s'opposent.
-        expect(along.reduce((a, b) => a + b), closeTo(0, 1e-9),
-            reason: '${color.name} : $along');
-        expect(along.first, closeTo(-along.last, 1e-9));
-        expect(along[1], closeTo(-along[2], 1e-9));
-      }
-    });
-
-    test('ce sont les MILIEUX de 4 parts égales : 1/8, 3/8, 5/8, 7/8', () {
-      for (final color in PlayerColor.values) {
-        final out = _outward[color]!;
-        final side = Offset(-out.dy, out.dx);
-        final along = [
-          for (int slot = 0; slot < 4; slot++)
-            () {
-              final p = BoardView.homeSlotCenter(color, slot) - _apex;
-              return p.dx * side.dx + p.dy * side.dy;
-            }(),
-        ];
-        // L'hypoténuse mesure 3 cases. Les milieux des quarts sont donc à
-        // -1,125 / -0,375 / +0,375 / +1,125 de l'axe.
-        for (final v in along) {
-          expect(v.abs(), anyOf(closeTo(0.375, 1e-9), closeTo(1.125, 1e-9)),
-              reason: '${color.name} : $along');
-        }
-        // Pas constant entre voisins.
-        final sorted = [...along]..sort();
-        for (int i = 1; i < sorted.length; i++) {
-          expect(sorted[i] - sorted[i - 1], closeTo(0.75, 1e-9),
-              reason: '${color.name} : parts inégales $sorted');
-        }
-      }
-    });
-
-    test('toutes les places sont SUR la ligne de l\'hypoténuse', () {
-      // Le triangle a son sommet au centre et sa base à 1,5 case. Être
-      // « sur l'hypoténuse » veut donc dire : profondeur exactement 1,5,
-      // et latéral strictement dans la largeur de la base.
-      for (final color in PlayerColor.values) {
-        final out = _outward[color]!;
-        final side = Offset(-out.dy, out.dx);
-        for (int slot = 0; slot < 4; slot++) {
-          final p = BoardView.homeSlotCenter(color, slot) - _apex;
-          final depth = p.dx * out.dx + p.dy * out.dy;
-          final lateral = (p.dx * side.dx + p.dy * side.dy).abs();
-          expect(depth, closeTo(1.5, 1e-9),
-              reason: '${color.name}#$slot n\'est pas SUR la base '
-                  '(profondeur $depth au lieu de 1,5)');
-          expect(lateral, lessThan(1.5),
-              reason: '${color.name}#$slot sort par le flanc de la base');
-        }
-      }
-    });
-
-    test('chaque couleur va vers SON côté du plateau', () {
-      for (final entry in _outward.entries) {
-        for (int slot = 0; slot < 4; slot++) {
-          final p = BoardView.homeSlotCenter(entry.key, slot) - _apex;
-          final depth = p.dx * entry.value.dx + p.dy * entry.value.dy;
-          expect(depth, greaterThan(0),
-              reason: '${entry.key.name} doit pointer vers son propre bord');
-        }
-      }
-    });
-
-    test('un slot hors bornes retombe sur une place valide', () {
-      // Robustesse : jamais de position aberrante si un id sortait de 0..3.
+    test('un rang hors bornes ne casse rien', () {
       for (final color in PlayerColor.values) {
         expect(BoardView.homeSlotCenter(color, -5),
             BoardView.homeSlotCenter(color, 0));
         expect(BoardView.homeSlotCenter(color, 99),
-            BoardView.homeSlotCenter(color, 3));
+            BoardView.homeSlotCenter(color, 0));
       }
     });
 
-    test('les 4 places tiennent sur la base, sans la déborder', () {
-      // L'écart entre les deux extrêmes doit valoir 3 parts de 0,75, soit
-      // 2,25 case — donc bien à l'intérieur des 3 cases de la base.
-      for (final color in PlayerColor.values) {
-        final first = BoardView.homeSlotCenter(color, 0);
-        final last = BoardView.homeSlotCenter(color, 3);
-        expect((last - first).distance, closeTo(2.25, 1e-9),
-            reason: '${color.name} : étalement inattendu');
-      }
+    test('le pion rentré est RÉDUIT, sans devenir un point', () {
+      expect(BoardView.retraitMaison, lessThan(1.0),
+          reason: 'il doit diminuer');
+      expect(BoardView.retraitMaison, greaterThan(0.4),
+          reason: 'mais rester un pion qu\'on reconnaît');
+    });
+  });
+
+  group('🏠 Sur le plateau, le pion rentré rapetisse', () {
+    setUp(useLargeSurface);
+    tearDown(resetSurface);
+
+    testWidgets('il perd exactement le retrait annoncé, sans se déformer',
+        (t) async {
+      await bootApp(t);
+      final state = t.state<BoardScreenState>(find.byType(BoardScreen));
+      final c = state.controller;
+      final couleur = state.manualPlayerForTest;
+
+      // On rentre un pion PAR LE PANNEAU, comme on le ferait à la main :
+      // « Pions à la maison », bouton 1.
+      final cadre = find.ancestor(
+          of: find.text('Pions à la maison'), matching: find.byType(Card));
+      await t.tap(find.descendant(of: cadre, matching: find.text('1')));
+      await t.pump(const Duration(milliseconds: 400));
+
+      final pions = c.state.pawnsByColor[couleur]!;
+      final rentre = pions.firstWhere((p) => p.location == PawnLocation.home);
+      final dehors = pions.firstWhere((p) => p.location != PawnLocation.home);
+
+      // Deux pions de la MÊME couleur au même instant : le seul écart
+      // entre eux est d'être rentré ou non.
+      final petit = t.getSize(
+          find.byKey(ValueKey('pawn_${couleur.name}_${rentre.id}')));
+      final grand = t.getSize(
+          find.byKey(ValueKey('pawn_${couleur.name}_${dehors.id}')));
+
+      expect(petit.height, lessThan(grand.height),
+          reason: 'le pion rentré doit diminuer');
+      expect(petit.height / grand.height,
+          closeTo(BoardView.retraitMaison, 0.001),
+          reason: 'exactement du retrait annoncé');
+      expect(petit.width / grand.width,
+          closeTo(BoardView.retraitMaison, 0.001),
+          reason: 'et sans se déformer : la largeur suit la hauteur');
+
+      await shutdownApp(t);
     });
   });
 }

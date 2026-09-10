@@ -272,15 +272,20 @@ void main() {
       expect(red.toSet().length, kDeferredCards.length);
     });
 
-    test('il y a de la place pour 4 cartes différées, pas une de plus', () {
-      expect(LudoUpgrades.handLimit, 4);
+    // ÉCART ASSUMÉ AVEC LA SPEC. Elle annonce quatre places (§3, §9) ;
+    // la base n'en montre plus que trois, sur demande — « dans les cases
+    // de base laisse seulement place à 3 cartes ». Les deux vont
+    // ensemble : garder quatre en main derrière trois emplacements
+    // cacherait une carte que le joueur tient vraiment.
+    test('il y a de la place pour 3 cartes différées, pas une de plus', () {
+      expect(LudoUpgrades.handLimit, 3);
       final u = LudoUpgrades()..rng = math.Random(5);
-      for (int i = 0; i < 4; i++) {
+      for (int i = 0; i < LudoUpgrades.handLimit; i++) {
         expect(u.addToHand(PlayerColor.blue, kDeferredCards[i]), isTrue);
       }
-      expect(u.addToHand(PlayerColor.blue, kDeferredCards[4]), isFalse,
-          reason: 'la 5e est refusée');
-      expect(u.handOf(PlayerColor.blue).length, 4);
+      expect(u.addToHand(PlayerColor.blue, kDeferredCards[3]), isFalse,
+          reason: 'la 4e est refusée');
+      expect(u.handOf(PlayerColor.blue).length, 3);
     });
 
     test('on ne joue qu\'une carte différée à la fois', () {

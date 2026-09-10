@@ -914,17 +914,20 @@ void main() {
       expect(dice, [1, 2, 3, 4, 5, 6]);
     });
 
-    test('la main tient 4 cartes, pas une de plus', () {
-      expect(LudoUpgrades.handLimit, 4, reason: '4 places, comme la spec');
+    test('la main tient 3 cartes, pas une de plus', () {
+      // TROIS, pas les quatre de la spec : la base ne dessine que trois
+      // emplacements, demandés tels quels, et une main plus grande que
+      // la base cacherait une carte.
+      expect(LudoUpgrades.handLimit, 3, reason: '3 places, comme la base');
       final u = LudoUpgrades()..rng = math.Random(5);
       for (int i = 0; i < LudoUpgrades.handLimit; i++) {
         expect(u.addToHand(PlayerColor.blue, kDeferredCards[i]), isTrue);
       }
-      expect(u.handOf(PlayerColor.blue).length, 4);
+      expect(u.handOf(PlayerColor.blue).length, 3);
       expect(u.handIsFull(PlayerColor.blue), isTrue);
-      expect(u.addToHand(PlayerColor.blue, kDeferredCards[4]), isFalse,
-          reason: 'la 5e carte n\'a pas de place');
-      expect(u.handOf(PlayerColor.blue).length, 4);
+      expect(u.addToHand(PlayerColor.blue, kDeferredCards[3]), isFalse,
+          reason: 'la 4e carte n\'a pas de place');
+      expect(u.handOf(PlayerColor.blue).length, 3);
     });
 
     test('une case Chance donne parfois une différée : elle va EN MAIN, '

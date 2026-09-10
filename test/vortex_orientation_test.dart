@@ -10,7 +10,6 @@
 // quart de tour autour du centre du plateau doit emmener la case de
 // bleu exactement sur celle de la couleur concernée.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludopoly/game/board_painter.dart' show kQuartsDeTour;
 import 'package:ludopoly/game/board_path.dart' show ring;

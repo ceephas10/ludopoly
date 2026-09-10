@@ -1502,8 +1502,8 @@ class BoardScreenState extends State<BoardScreen>
   /// Suite d'un tirage sur une case Chance.
   ///
   /// Une carte IMMÉDIATE s'ouvre : elle agit tout de suite, le joueur doit
-  /// voir ce qui vient de lui arriver. Une carte DIFFÉRÉE, elle, ne montre
-  /// RIEN : elle rejoint la base face cachée et y attend qu'on la retourne.
+  /// voir ce qui vient de lui arriver. Une carte DIFFÉRÉE s'ouvre aussi,
+  /// puis rejoint la base de son propriétaire et y attend son tour.
   ///
   /// Et si l'immédiate réclame une cible, on la présente avec son choix de
   /// pion au lieu de l'appliquer d'office.
@@ -1559,27 +1559,51 @@ class BoardScreenState extends State<BoardScreen>
   /// Minuterie qui referme la carte toute seule.
   Timer? _revealTimer;
 
-  /// Combien de temps une carte IMMÉDIATE reste ouverte. Assez pour lire
-  /// l'instruction sans avoir à cliquer — son effet part dans la foulée.
-  static const Duration _revealHold = Duration(milliseconds: 3200);
+  /// Combien de temps une carte tirée reste ouverte.
+  ///
+  /// QUATRE SECONDES, demandées telles quelles : « il faut que la durée
+  /// pour qu'elle s'applique prenne au moins 4 secondes, et aussi pour la
+  /// carte différée 4 secondes aussi ». C'est le temps de lire le nom, le
+  /// pictogramme et l'effet sans avoir à toucher l'écran.
+  ///
+  /// Un clic la referme plus tôt : la durée est un plancher pour qui
+  /// regarde, pas une attente imposée à qui a déjà lu.
+  static const Duration _revealHold = Duration(milliseconds: 4000);
 
 
   /// Ouvre [drawn] au centre du plateau. Un clic la referme plus tôt.
   ///
-  /// SAUF pour une carte DIFFÉRÉE : celle-là file directement dans la
-  /// base de son propriétaire, sans se montrer. Rien ne se joue au
-  /// moment du tirage — la présentation ne faisait qu'interrompre la
-  /// partie pour une carte qu'on jouera plus tard, et qu'on peut de
-  /// toute façon consulter en la maintenant dans sa base.
+  /// TOUTE carte tirée se montre, la DIFFÉRÉE comprise : « il faudrait
+  /// que la carte différée se présente à moi quelques secondes avant
+  /// qu'elle parte dans la base ». Elle filait s'y ranger sans que
+  /// personne ne l'ait vue — ni son propriétaire, ni la table.
+  ///
+  /// Elle n'apparaît dans la base qu'une fois refermée : voir
+  /// [mainAffichee]. Le moteur, lui, la range tout de suite — c'est
+  /// l'AFFICHAGE qui la retient, pas la règle.
   void _openCard(({ChanceCard card, PlayerColor by}) drawn) {
     _revealTimer?.cancel();
-    if (drawn.card.kind == CardKind.deferred) {
-      if (_revealed != null) setState(() => _revealed = null);
-      return;
-    }
     setState(() => _revealed = drawn);
     _revealTimer = _after(
         _pace(_revealHold, ai: _isAiColor(drawn.by)), () => closeCard());
+  }
+
+  /// La main de [c] TELLE QU'ON LA VOIT dans sa base.
+  ///
+  /// C'est la vraie main, moins la carte qui est en ce moment ouverte au
+  /// milieu du plateau : tant qu'on la présente, elle n'est pas encore
+  /// arrivée. Sans ça elle se poserait dans la base au moment même où on
+  /// la montre, et le « quelques secondes avant qu'elle parte dans la
+  /// base » n'existerait pas.
+  @visibleForTesting
+  List<ChanceCard> mainAffichee(PlayerColor c) {
+    final main = _controller.upgrades.handOf(c);
+    final montree = _revealed;
+    if (montree == null || montree.by != c) return main;
+    if (montree.card.kind != CardKind.deferred) return main;
+    final i = main.lastIndexOf(montree.card);
+    if (i < 0) return main;
+    return [...main]..removeAt(i);
   }
 
   // ── DÉSIGNER SA CIBLE SUR LE PLATEAU ─────────────────────────────────
@@ -2855,7 +2879,7 @@ class BoardScreenState extends State<BoardScreen>
                       showChanceCells: _controller.upgrades.chanceEnabled,
                       deferredHands: {
                         for (final p in _activePlayers)
-                          p.color: _controller.upgrades.handOf(p.color),
+                          p.color: mainAffichee(p.color),
                       },
                       invulnerablePawns: {
                         for (final p in _game.allPawns)
@@ -3684,7 +3708,18 @@ class _ControlPanel extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(child: _normalCard(theme, cs)),
+                    // « Jeu normal », et JUSTE EN DESSOUS le cadre
+                    // Retour / Rejouer : c'est la colonne de gauche
+                    // entière, pas une case de la ligne.
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _normalCard(theme, cs),
+                          _undoCard(theme, cs),
+                        ],
+                      ),
+                    ),
                     const SizedBox(width: 6),
                     Expanded(child: _manualCard(theme, cs)),
                     const SizedBox(width: 6),
@@ -4244,6 +4279,56 @@ class _ControlPanel extends StatelessWidget {
     );
   }
 
+  /// « Retour / Rejouer » — son propre cadre, sous « Jeu normal ».
+  ///
+  /// Les deux boutons vivaient au bas du Jeu manuel, ce qui les liait à
+  /// une carte dont ils ne dépendent pas : ils annulent et rétablissent
+  /// le DERNIER coup, qu'il ait été joué à la main ou normalement.
+  Widget _undoCard(ThemeData theme, ColorScheme cs) {
+    return _SectionCard(
+      title: 'Retour / Rejouer',
+      padding: const EdgeInsets.all(8),
+      child: rowOuColonne(
+        seuil: 210,
+        children: [
+          Expanded(
+            child: Tooltip(
+              message: canStepBack
+                  ? 'Annule : ${stepBackLabel ?? "le dernier coup"}'
+                  : 'Rien à annuler',
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.undo, size: 18),
+                // Le cadre ne fait qu'un tiers du panneau : sans coupure
+                // nette, le libellé déborde du bouton.
+                label: const Text('Retour',
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8)),
+                onPressed: canStepBack ? onStepBack : null,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Tooltip(
+              message: canStepForward
+                  ? 'Rejoue : ${stepForwardLabel ?? "le coup annulé"}'
+                  : 'Rien à rejouer',
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.redo, size: 18),
+                label: const Text('Rejouer',
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8)),
+                onPressed: canStepForward ? onStepForward : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _manualCard(ThemeData theme, ColorScheme cs) {
     return _SectionCard(
       title: 'Jeu manuel',
@@ -4320,46 +4405,6 @@ class _ControlPanel extends StatelessWidget {
               onPressed:
                   (busy || phase == TurnPhase.gameOver) ? null : onManualRoll,
             ),
-          ),
-          // ─── Retour / Rejouer (undo / redo) — bas de carte ───
-          const SizedBox(height: 12),
-          rowOuColonne(
-            seuil: 210,
-            children: [
-              Expanded(
-                child: Tooltip(
-                  message: canStepBack
-                      ? 'Annule : ${stepBackLabel ?? "le dernier coup"}'
-                      : 'Rien à annuler',
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.undo, size: 18),
-                    // Le cadre ne fait plus qu'un tiers du panneau : sans
-                    // coupure nette, le libellé déborde du bouton.
-                    label: const Text('Retour',
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                    style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 8)),
-                    onPressed: canStepBack ? onStepBack : null,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Tooltip(
-                  message: canStepForward
-                      ? 'Rejoue : ${stepForwardLabel ?? "le coup annulé"}'
-                      : 'Rien à rejouer',
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.redo, size: 18),
-                    label: const Text('Rejouer',
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                    style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 8)),
-                    onPressed: canStepForward ? onStepForward : null,
-                  ),
-                ),
-              ),
-            ],
           ),
         ],
       ),
@@ -6415,28 +6460,29 @@ class BoardView extends StatelessWidget {
   /// Abscisses des 4 cartes du bloc, en cases depuis le coin de la base.
   /// Elles se touchent presque : c'est un bloc, pas quatre emplacements
   /// épars.
-  /// Écart entre deux cartes du bloc, en cases. Les cartes ont GRANDI —
-  /// elles étaient trop petites pour qu'on distingue le pictogramme d'un
-  /// coup d'œil — et l'écart a suivi, sinon elles se chevaucheraient.
-  static const double cardSlotStep = 1.075;
-
-  /// Largeur et hauteur d'une carte du bloc, en cases.
+  /// Écart entre deux cartes du bloc, en cases.
   ///
-  /// Le bloc de quatre occupe 4 × 1,075 = 4,3 cases : exactement le blanc
-  /// intérieur de la base, qui va de 0,85 à 5,15. Les cartes ne mordent
-  /// donc plus sur la bande de couleur, et l'écart entre deux d'entre
-  /// elles reste de 0,075 case.
-  static const double cardW = 1.00;
-  static const double cardH = 1.40;
+  /// TROIS emplacements, plus quatre : « dans les cases de base laisse
+  /// seulement place à 3 cartes ». Le bloc garde exactement la même
+  /// largeur — le blanc intérieur de la base, de 0,85 à 5,15, soit 4,3
+  /// cases — mais il n'a plus que trois parts au lieu de quatre : 4,3 / 3
+  /// = 1,4333. Les cartes GRANDISSENT donc d'un tiers, et le pictogramme
+  /// avec elles.
+  static const double cardSlotStep = 4.3 / 3;
+
+  /// Largeur et hauteur d'une carte du bloc, en cases. Le rapport 1,4 est
+  /// celui d'une carte à jouer, et il ne bouge pas ; l'écart entre deux
+  /// cartes voisines reste le dixième de case qu'il était.
+  static const double cardW = cardSlotStep - 0.10;
+  static const double cardH = (cardSlotStep - 0.10) * 1.4;
 
   /// Le bloc est CENTRÉ sur le blanc intérieur de la base, pas sur la
   /// base entière : les deux ont le même milieu (3,0), mais c'est la
   /// largeur du blanc qui commande.
   static const List<double> _cardSpotsX = [
-    3.0 - 1.5 * cardSlotStep,
-    3.0 - 0.5 * cardSlotStep,
-    3.0 + 0.5 * cardSlotStep,
-    3.0 + 1.5 * cardSlotStep,
+    3.0 - cardSlotStep,
+    3.0,
+    3.0 + cardSlotStep,
   ];
 
   /// Centre de la carte [slot] (0..3) du bloc de [color], en unités de
@@ -6503,38 +6549,32 @@ class BoardView extends StatelessWidget {
     );
   }
 
-  /// Place du pion [slot] d'une couleur ARRIVÉE, en unités de case.
+  /// Place d'un pion ARRIVÉ, en unités de case : la SIXIÈME case de son
+  /// couloir, celle qui touche le centre du plateau.
   ///
-  /// Chaque triangle de maison a son sommet au centre du plateau (7,5 ;
-  /// 7,5) et sa base — l'hypoténuse — sur le bord extérieur du bloc
-  /// central, du côté de sa couleur :
+  /// Les quatre y sont SUPERPOSÉS, sur demande : « lorsqu'un pion entre à
+  /// maison il faut qu'il diminue de forme et qu'on le voie superposé
+  /// dans leur 6ᵉ case ». Ils étaient auparavant étalés sur l'hypoténuse
+  /// du triangle, chacun sa part — c'est ce partage qui est annulé ici.
   ///
-  ///   bleu   → sud     rouge → ouest
-  ///   vert   → nord    jaune → est
+  /// Ce qui les rend comptables malgré la superposition, c'est leur
+  /// TAILLE : un pion arrivé est peint à [retraitMaison] de sa hauteur,
+  /// et l'empilement les décale légèrement l'un par rapport à l'autre.
   ///
-  /// Les 4 pions se rangent sur 4 parts ÉGALES de cette hypoténuse : le
-  /// pion [slot] occupe le MILIEU de la part n° [slot], soit les fractions
-  /// 1/8, 3/8, 5/8 et 7/8 de la largeur. Ils sont donc symétriques deux à
-  /// deux par rapport à l'axe du triangle, et aucun n'en recouvre un autre
-  /// — avant, les quatre se superposaient sur un point unique.
-  ///
-  /// Les pions se posent SUR la ligne de l'hypoténuse elle-même, pas en
-  /// retrait à l'intérieur du triangle : `reach` vaut donc la demi-largeur
-  /// pleine du bloc central. La base y mesure 3 cases, d'où un pas de
-  /// 0,75 case entre voisins — plus d'air qu'en retrait, et les pions ne
-  /// se chevauchent plus.
+  /// La case se déduit du couloir, dont les cinq cases vont de la 0 à la
+  /// 4 : la sixième est la suivante, d'un cran vers le centre.
   static Offset homeSlotCenter(PlayerColor color, int slot) {
-    const center = 7.5;
-    const reach = 1.5;            // demi-côté du bloc : on est SUR la base
-    const step = (2 * reach) / 4; // 0,75 : largeur d'une part
-    final along = (slot.clamp(0, 3) - 1.5) * step;
     switch (color) {
-      case PlayerColor.blue:   return Offset(center + along, center + reach);
-      case PlayerColor.green:  return Offset(center + along, center - reach);
-      case PlayerColor.red:    return Offset(center - reach, center + along);
-      case PlayerColor.yellow: return Offset(center + reach, center + along);
+      case PlayerColor.blue:   return const Offset(7.5, 8.5);
+      case PlayerColor.green:  return const Offset(7.5, 6.5);
+      case PlayerColor.red:    return const Offset(6.5, 7.5);
+      case PlayerColor.yellow: return const Offset(8.5, 7.5);
     }
   }
+
+  /// Ce qu'il reste de la hauteur d'un pion une fois RENTRÉ. Les quatre
+  /// tiennent alors sur une seule case sans se cacher l'un l'autre.
+  static const double retraitMaison = 0.62;
 
   Offset _homeCenter(PlayerColor color, int slot, double cell) =>
       homeSlotCenter(color, slot) * cell;
@@ -6627,8 +6667,27 @@ class BoardView extends StatelessWidget {
         // un timbre. Il empiète donc sur ses voisines — sans jamais les
         // masquer, la silhouette étant étroite et le bas transparent.
         final pawnHeight = cell * kBaseSlotSize * 1.18;
-        // Aspect ≈ 0.7 — close to a typical idle WebP (64/93 = 0.69).
-        final pawnWidth = pawnHeight * 0.8;
+
+        // LA HAUTEUR D'UN PION, PION PAR PION.
+        //
+        // Elle est la même partout, SAUF une fois rentré : les quatre
+        // pions d'une couleur finissent alors sur la même case et se
+        // cacheraient l'un l'autre à taille pleine. Réduits, on les voit
+        // superposés et on les compte.
+        //
+        // C'est la case AFFICHÉE qui commande, pas celle du modèle : un
+        // pion encore en trajet vers sa maison garde sa taille jusqu'à
+        // l'arrivée, sinon il rapetisserait d'un coup en cours de route.
+        // Aspect ≈ 0,7 — celui d'un WebP d'attente (64/93 = 0,69) : la
+        // largeur se déduit toujours de la hauteur, y compris réduite.
+        double hauteurDe(Pawn p) {
+          final loc = travelStep[p]?.location ??
+              captureOverride[p]?.location ??
+              p.location;
+          return loc == PawnLocation.home
+              ? pawnHeight * BoardView.retraitMaison
+              : pawnHeight;
+        }
 
         return Stack(
           // Le corps d'un pion monte AU-DESSUS de sa case. Sur la rangée du
@@ -6886,11 +6945,11 @@ class BoardView extends StatelessWidget {
                   case PawnLocation.homeColumn:
                     return 'hc_${p.color.name}_$pos';
                   case PawnLocation.home:
-                    // Chaque pion arrivé a DÉJÀ sa place propre sur
-                    // l'hypoténuse : le grouper avec ses coéquipiers lui
-                    // ajouterait un décalage latéral par-dessus, et les
-                    // quatre repartiraient de travers.
-                    return 'home_${p.color.name}_${p.id}';
+                    // Les pions arrivés partagent tous la MÊME case — la
+                    // sixième du couloir. Un seul groupe, donc, et c'est
+                    // l'empilement qui les décale assez pour qu'on les
+                    // compte.
+                    return 'home_${p.color.name}';
                 }
               }
               final groups = <String, List<Pawn>>{};
@@ -6908,7 +6967,15 @@ class BoardView extends StatelessWidget {
               }
               final stackOffsets = <Pawn, Offset>{};
               const stackDxFrac = 0.18; // 18 % de case entre voisins
-              for (final g in groups.values) {
+              // LES PIONS RENTRÉS s'écartent davantage : ils sont réduits
+              // à 62 % et posés tous les quatre sur la même case. À 18 %
+              // on ne voyait du dessous que trois languettes ; à 30 % on
+              // les compte, tout en les voyant bien superposés.
+              const stackDxMaison = 0.30;
+              for (final entree in groups.entries) {
+                final g = entree.value;
+                final ecart =
+                    entree.key.startsWith('home_') ? stackDxMaison : stackDxFrac;
                 g.sort(stableCompare);
                 final n = g.length;
                 // Un pion capturé (encore affiché à son ancienne position
@@ -6922,7 +6989,7 @@ class BoardView extends StatelessWidget {
                 for (int i = 0; i < n; i++) {
                   final dx = (n == 1 || hasCapture)
                       ? 0.0
-                      : (i - (n - 1) / 2) * stackDxFrac * cell;
+                      : (i - (n - 1) / 2) * ecart * cell;
                   stackOffsets[g[i]] = Offset(dx, 0);
                 }
               }
@@ -6961,8 +7028,9 @@ class BoardView extends StatelessWidget {
                     !movablePawns.contains(pawn)) {
                   continue;
                 }
+                final hp = hauteurDe(pawn);
                 final center =
-                    _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
+                    _pawnCenter(pawn, cell, hp) + stackOffsets[pawn]!;
                 yield AnimatedPositioned(
                   key: ValueKey('halo_${pawn.color.name}_${pawn.id}'),
                   duration: moveDuration[pawn] ?? Duration.zero,
@@ -6973,8 +7041,8 @@ class BoardView extends StatelessWidget {
                   // sol pendant que le pion saute au-dessus de lui.
                   left: center.dx - cell * 0.36,
                   top: center.dy -
-                      pawnHeight * _pawnVisibleCenterFrac +
-                      pawnHeight * 0.90 -
+                      hp * _pawnVisibleCenterFrac +
+                      hp * 0.90 -
                       cell * 0.19,
                   width: cell * 0.72,
                   height: cell * 0.38,
@@ -6992,10 +7060,12 @@ class BoardView extends StatelessWidget {
               //  changes — Flutter handles the slide internally, no extra
               //  rebuild of the rest of the board. ----
               for (final pawn in list) {
+                final hp = hauteurDe(pawn);
+                final lp = hp * 0.8;
                 final center =
-                    _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
-                final bboxLeft = center.dx - pawnWidth / 2;
-                final bboxTop  = center.dy - pawnHeight * _pawnVisibleCenterFrac;
+                    _pawnCenter(pawn, cell, hp) + stackOffsets[pawn]!;
+                final bboxLeft = center.dx - lp / 2;
+                final bboxTop  = center.dy - hp * _pawnVisibleCenterFrac;
                 yield AnimatedPositioned(
                   // SANS cette clé, le Stack apparie ses enfants par index :
                   // dès qu'un pion change de case l'ordre de la liste bouge,
@@ -7012,8 +7082,8 @@ class BoardView extends StatelessWidget {
                       : Curves.easeInOut,
                   left: bboxLeft,
                   top:  bboxTop,
-                  width: pawnWidth,
-                  height: pawnHeight,
+                  width: lp,
+                  height: hp,
                   child: IgnorePointer(
                     child: Stack(
                       clipBehavior: Clip.none,
@@ -7139,17 +7209,20 @@ class BoardView extends StatelessWidget {
               // pas ». La zone est maintenant plus haute que large et
               // remontée : elle englobe la tête, le corps et le socle.
               final hitW = cell * 1.30;
-              final hitH = pawnHeight + cell * 0.55;
-              // De combien remonter : l'ancre est au milieu du pion, la
-              // tête au-dessus.
-              final hitUp = pawnHeight * _pawnVisibleCenterFrac + cell * 0.30;
+              // La hauteur et le relèvement suivent le PION : celui qui
+              // est rentré est plus petit, sa zone aussi.
               // En mode désignation, c'est la liste des cibles qui commande
               // — pas les coups possibles. Un pion adverse n'est jamais
               // « jouable », et c'est pourtant lui qu'on vient désigner.
               final picking = targetPawns.isNotEmpty && onTargetPick != null;
               for (final pawn in list) {
+                final hp = hauteurDe(pawn);
+                final hitH = hp + cell * 0.55;
+                // De combien remonter : l'ancre est au milieu du pion, la
+                // tête au-dessus.
+                final hitUp = hp * _pawnVisibleCenterFrac + cell * 0.30;
                 final center =
-                    _pawnCenter(pawn, cell, pawnHeight) + stackOffsets[pawn]!;
+                    _pawnCenter(pawn, cell, hp) + stackOffsets[pawn]!;
                 final isMovable = picking
                     ? targetPawns.contains(pawn)
                     : movablePawns.contains(pawn);
