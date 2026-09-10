@@ -26,6 +26,27 @@ const double kBaseSlotY = 1.83;
 /// Côté du socle, en cases. C'est aussi la hauteur visible du pion.
 const double kBaseSlotSize = 1.15;
 
+/// LE QUART DE TOUR D'UNE COULEUR, dans le sens des aiguilles.
+///
+/// Le plateau est le même bras répété quatre fois : un quart de tour
+/// autour du centre (7,5 ; 7,5) emmène celui de bleu sur celui de rouge,
+/// puis de vert, puis de jaune. Ce n'est pas une convention posée ici,
+/// c'est une propriété des cases — le crâne de bleu est en (8,5 ; 9,5),
+/// et ce quart de tour le pose exactement sur celui de rouge, en
+/// (5,5 ; 8,5). Un test le vérifie sur les huit cases Vortex.
+///
+/// Les DESSINS suivent. Sans ça les ailes de bleu pointent vers la base
+/// bleue — elles sont dessinées pour — mais les trois autres pointent
+/// dans la même direction que celles de bleu, donc vers la base de
+/// quelqu'un d'autre. Tourné, chaque dessin regarde SA couleur, et se
+/// lit droit depuis le siège de son propriétaire.
+const Map<PlayerColor, int> kQuartsDeTour = {
+  PlayerColor.blue: 0,
+  PlayerColor.red: 1,
+  PlayerColor.green: 2,
+  PlayerColor.yellow: 3,
+};
+
 class BoardPainter extends CustomPainter {
   /// Améliorations LudoPoly : quand un interrupteur est allumé, les cases
   /// correspondantes se dessinent par-dessus le plateau de base. Éteints
@@ -306,10 +327,18 @@ class BoardPainter extends CustomPainter {
     if (showVortex) {
       for (final color in SpecialCells.startOf.keys) {
         final tint = _playerColors[color]!;
+        final quarts = kQuartsDeTour[color]!;
         final g = ring[SpecialCells.goodVortexCell(color)].pos;
-        _drawWings(canvas, g.dx * cell, g.dy * cell, cell, tint);
+        _pivote(canvas, g.dx * cell, g.dy * cell, quarts,
+            () => _drawWings(canvas, g.dx * cell, g.dy * cell, cell, tint));
         final b = ring[SpecialCells.badVortexCell(color)].pos;
-        _drawTopHatSkull(canvas, b.dx * cell, b.dy * cell, cell, tint);
+        _pivote(
+            canvas,
+            b.dx * cell,
+            b.dy * cell,
+            quarts,
+            () => _drawTopHatSkull(
+                canvas, b.dx * cell, b.dy * cell, cell, tint));
       }
     }
 
@@ -580,6 +609,23 @@ class BoardPainter extends CustomPainter {
 
     // Le point d'interrogation, au-dessus de l'ouverture.
     _drawGlyph(canvas, '?', cx, cy - u * 0.20, u * 0.40, _goldDeep);
+  }
+
+  /// Dessine [dessine] tourné de [quarts] quarts de tour autour de la case
+  /// (`cx`, `cy`). Le dessin garde ses coordonnées absolues : c'est le
+  /// repère qui tourne, pas lui.
+  void _pivote(Canvas canvas, double cx, double cy, int quarts,
+      void Function() dessine) {
+    if (quarts % 4 == 0) {
+      dessine();
+      return;
+    }
+    canvas.save();
+    canvas.translate(cx, cy);
+    canvas.rotate(quarts * math.pi / 2);
+    canvas.translate(-cx, -cy);
+    dessine();
+    canvas.restore();
   }
 
   /// Couleur de plateau de chaque joueur, pour peindre sa case Vortex.
