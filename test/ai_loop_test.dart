@@ -100,6 +100,18 @@ void main() {
           }
 
           if (c.currentColor == human) {
+            // UNE CARTE ATTEND UNE CIBLE. Depuis que les cases Chance
+            // sont allumées d'origine, le joueur humain en tire, et
+            // certaines réclament qu'il désigne un pion. Tant qu'il ne
+            // l'a pas fait, la partie attend — pour de bon, et c'est
+            // bien ce que le chien de garde doit signaler.
+            //
+            // Le joueur, lui, répondrait. Le test répond donc aussi,
+            // sans quoi il mesure sa propre inaction.
+            if (state.pendingChoiceCard != null) {
+              state.resolvePendingChoice(null);
+              await tester.pump();
+            }
             // Tour humain : on clique, exactement comme le ferait un joueur.
             if (c.phase == TurnPhase.rolling) {
               final dice = find.byKey(const Key('roll-normal'));
