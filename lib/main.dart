@@ -82,11 +82,15 @@ class _LudoPolyAppState extends State<LudoPolyApp> {
     switch (_screen) {
       case null:
         return MenuScreen(background: _setup.background, onChoose: (c) {
-          // ON ENTRE SUR LE PLATEAU : la musique DESCEND puis s'éteint.
+          // ON ENTRE SUR LE PLATEAU : la musique descend, s'éteint, et
+          // ne peut plus repartir tant qu'on y est — c'est le verrou qui
+          // compte, car sur le plateau on touche l'écran sans arrêt et
+          // chaque contact réveillait la musique.
+          //
           // Ailleurs — Options, Comment jouer — on n'est pas encore dans
           // la partie : elle continue.
           if (c == MenuChoice.play || c == MenuChoice.system) {
-            MenuMusic.instance.fadeOutAndStop();
+            MenuMusic.instance.surLePlateau(true);
           }
           setState(() {
             _screen = c;
@@ -131,9 +135,9 @@ class _LudoPolyAppState extends State<LudoPolyApp> {
           onExit: (s) => setState(() {
             _setup = s;
             _screen = null;
-            // De retour à l'accueil : la musique reprend, sauf si le
-            // joueur l'a coupée avec le bouton.
-            MenuMusic.instance.play();
+            // De retour à l'accueil : le verrou saute et la musique
+            // reprend, sauf si le joueur l'a coupée avec le bouton.
+            MenuMusic.instance.surLePlateau(false);
           }),
         );
     }

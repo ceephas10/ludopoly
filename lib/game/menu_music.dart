@@ -37,6 +37,38 @@ class MenuMusic {
   /// écrit ici, et le bouton lui-même qui écoute — d'où le notificateur.
   final ValueNotifier<bool> wanted = ValueNotifier<bool>(true);
 
+  /// SOMMES-NOUS SUR LE PLATEAU ? Si oui, la musique se tait, un point.
+  ///
+  /// Sans ce verrou, [nudge] la relançait : il est appelé au moindre
+  /// contact avec l'écran, et sur le plateau on touche sans arrêt — le dé,
+  /// les pions, les cartes. La musique repartait donc au premier geste de
+  /// la partie, juste après s'être éteinte.
+  ///
+  /// Le fondu d'extinction ne suffisait pas : une fois terminé, plus rien
+  /// ne distinguait « on vient de sortir du menu » de « on est sur
+  /// l'accueil, silencieux ».
+  bool _surLePlateau = false;
+
+  /// LA MUSIQUE DEVRAIT-ELLE JOUER EN CET INSTANT ?
+  ///
+  /// C'est la décision, pas son exécution : elle ne dépend ni du greffon
+  /// audio ni du bon vouloir du navigateur. Deux conditions, et deux
+  /// seulement — le joueur en veut, et l'on n'est pas sur le plateau.
+  bool get devraitJouer => wanted.value && !_surLePlateau;
+
+  /// À appeler en entrant sur le plateau et en le quittant. L'entrée
+  /// éteint la musique ; la sortie la rend au menu, sauf si le joueur l'a
+  /// coupée avec le bouton.
+  void surLePlateau(bool oui) {
+    if (_surLePlateau == oui) return;
+    _surLePlateau = oui;
+    if (oui) {
+      fadeOutAndStop();
+    } else {
+      play();
+    }
+  }
+
   AudioPlayer? _player;
   Timer? _fadeTimer;
   bool _dead = false;
@@ -44,7 +76,7 @@ class MenuMusic {
   /// Lance la musique, ou la reprend. Sans effet si elle tourne déjà, ou
   /// si l'utilisateur l'a coupée.
   Future<void> play() async {
-    if (muted || _dead || !wanted.value) return;
+    if (muted || _dead || !devraitJouer) return;
     _fadeTimer?.cancel();
     _fadeTimer = null;
     try {
@@ -84,7 +116,7 @@ class MenuMusic {
   /// touché la page. Sans ce rattrapage, la musique de l'accueil ne
   /// démarrait jamais — sauf en touchant son propre bouton.
   void nudge() {
-    if (muted || _dead || !wanted.value) return;
+    if (muted || _dead || !devraitJouer) return;
     if (_player?.state == PlayerState.playing) return;
     if (_fadeTimer != null) return; // on est en train de s'éteindre
     play();
@@ -142,6 +174,7 @@ class MenuMusic {
     _player?.dispose();
     _player = null;
     _dead = false;
+    _surLePlateau = false;
     wanted.value = true;
   }
 }

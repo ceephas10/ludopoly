@@ -59,6 +59,43 @@ void main() {
     await shutdownApp(t);
   });
 
+  // LA MUSIQUE NE SUIT PAS SUR LE PLATEAU.
+  //
+  // Elle y repartait au premier contact : le réveil au premier geste —
+  // celui qui la fait démarrer sur l'accueil, puisque les navigateurs
+  // interdisent tout son avant qu'on ait touché la page — ne faisait
+  // aucune différence entre l'accueil et la partie. Or sur le plateau on
+  // touche sans arrêt : le dé, les pions, les cartes.
+  testWidgets('la musique se tait sur le plateau, et rien ne la réveille',
+      (t) async {
+    addTearDown(() => MenuMusic.instance.surLePlateau(false));
+    resetPawnAnimationCache();
+    await t.pumpWidget(const LudoPolyApp());
+    await t.pump();
+
+    expect(MenuMusic.instance.devraitJouer, isTrue,
+        reason: 'sur l\'accueil, elle joue');
+
+    await t.tap(find.byKey(const Key('menu-play')));
+    await waitForBoard(t);
+    expect(MenuMusic.instance.devraitJouer, isFalse,
+        reason: 'sur le plateau, elle se tait');
+
+    // On touche le plateau, comme on le fait sans arrêt en jouant.
+    await t.tapAt(t.getCenter(find.byType(BoardScreen)));
+    await t.pump(const Duration(milliseconds: 200));
+    expect(MenuMusic.instance.devraitJouer, isFalse,
+        reason: 'toucher le plateau ne la rallume pas');
+
+    // Retour au menu : elle revient.
+    await t.tap(find.byKey(const Key('board-home')));
+    await t.pump(const Duration(milliseconds: 200));
+    expect(MenuMusic.instance.devraitJouer, isTrue,
+        reason: 'de retour sur l\'accueil, elle reprend');
+
+    await shutdownApp(t);
+  });
+
   testWidgets('« Jouer » donne le plateau SANS le panneau', (t) async {
     resetPawnAnimationCache();
     await t.pumpWidget(const LudoPolyApp());
