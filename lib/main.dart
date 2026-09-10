@@ -3652,19 +3652,38 @@ class _ControlPanel extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // ---- EN TÊTE : le jeu manuel, puis les cartes chance ----
+                // ---- L'ACCUEIL DE « SYSTÈME » : TROIS CADRES ----
                 //
-                // Ces deux cadres étaient au milieu du panneau, coincés
-                // entre le Setup et les Overlays : il fallait descendre
-                // pour les atteindre alors que ce sont eux qu'on vient
-                // chercher en ouvrant Système.
+                // Jeu normal, Jeu manuel, Pions à la maison — SUR LA MÊME
+                // LIGNE, dans cet ordre. C'est l'ordre d'usage : on
+                // regarde d'abord à qui c'est le tour, on force ensuite
+                // une couleur et une valeur, on installe enfin une fin de
+                // partie.
                 //
-                // Ils passent donc AVANT les onglets, et restent donc
-                // visibles quel que soit l'onglet — c'est ce qui a été
-                // demandé, et c'est cohérent : ils ne commandent pas une
-                // page, ils commandent la partie.
-                _manualCard(theme, cs),
-                const SizedBox(height: 8),
+                // Les trois sont AU-DESSUS des onglets : ils ne
+                // commandent pas une page, ils commandent la partie, et
+                // restent donc visibles quel que soit l'onglet ouvert.
+                //
+                // Le seuil est calculé, pas choisi au jugé : la ligne des
+                // six valeurs de dé mesure 188 points, plus 24 de marges
+                // intérieures — un cadre ne descend pas sous 212. Trois
+                // cadres et leurs deux espaces : 3 × 212 + 16 = 652. En
+                // dessous ils s'empilent, faute de quoi un téléphone
+                // afficherait trois colonnes de 120 points où plus rien
+                // ne tient.
+                rowOuColonne(
+                  seuil: 680,
+                  children: [
+                    Expanded(child: _normalCard(theme, cs)),
+                    const SizedBox(width: 8),
+                    Expanded(child: _manualCard(theme, cs)),
+                    const SizedBox(width: 8),
+                    Expanded(child: _homeCard(theme, cs)),
+                  ],
+                ),
+                // Les cartes chance restent juste dessous, là où elles
+                // avaient été montées : la demande porte sur les trois
+                // cadres d'accueil, pas sur elles.
                 _SectionCard(
                   title: 'Cartes chance',
                   child: _ManualCardsCard(
@@ -3913,16 +3932,10 @@ class _ControlPanel extends StatelessWidget {
                     ],
                   ),
 
-                // ---- Two side-by-side cards: Jeu normal / Jeu manuel ----
-                // Trois cartes côte à côte tant qu'il y a la place ; en
-                // dessous elles s'empilent. À l'étroit, « Jeu normal »
-                // débordait — un septième de la largeur ne suffit pas à
-                // « Tour : » et sa pastille de couleur.
-                // « Jeu manuel » et « Cartes chance » sont MONTÉS EN
-                // TÊTE du panneau, au-dessus des onglets : voir plus
-                // haut. Il ne reste ici que « Jeu normal ».
-                _normalCard(theme, cs),
-
+                // « Jeu normal » est monté EN TÊTE du panneau, avec
+                // « Jeu manuel » et « Pions à la maison » : voir plus
+                // haut. Il ne reste plus de carte de partie sur cet
+                // onglet.
                 const SizedBox(height: 12),
 
                 // ---- Pause du plateau ----
@@ -4220,57 +4233,26 @@ class _ControlPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ─── Haut : Couleur à gauche (verticale), Pions dans la Maison
-          //     en haut à DROITE, à l'horizontale — empilés sur un
-          //     téléphone, où deux colonnes ne tiennent pas. ───
-          rowOuColonne(
+          // ─── Haut : la couleur, à l'horizontale ───
+          //
+          // Elle était rangée en colonne verticale parce que « Pions
+          // dans la Maison » lui prenait la droite de la carte. Ce bloc
+          // a son propre cadre désormais : la couleur récupère toute la
+          // largeur et la carte y gagne trois lignes de hauteur.
+          Text('Couleur',
+              style: theme.textTheme.labelSmall
+                  ?.copyWith(color: cs.onSurfaceVariant)),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              // La colonne des couleurs ne prend que la largeur qu'il lui
-              // faut : tout le reste va aux pions, qui en ont besoin pour
-              // tenir sur une seule ligne.
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Couleur',
-                      style: theme.textTheme.labelSmall
-                          ?.copyWith(color: cs.onSurfaceVariant)),
-                  const SizedBox(height: 4),
-                  for (final p in activePlayers)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: _ColorDot(
-                        color: _playerColor(p.color),
-                        selected: p.color == manualPlayer,
-                        onTap: () => onChangeManualPlayer(p.color),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Pions dans la Maison',
-                        style: theme.textTheme.labelSmall
-                            ?.copyWith(color: cs.onSurfaceVariant)),
-                    const SizedBox(height: 4),
-                    // Wrap et non Row : horizontal par nature, mais il passe
-                    // à la ligne au lieu de déborder si la carte rétrécit.
-                    Wrap(
-                      spacing: 4,
-                      runSpacing: 4,
-                      children: [
-                        for (int n = 1; n <= 4; n++)
-                          _MiniDiceButton(
-                            value: n,
-                            onTap: () => onFillManualHome(n),
-                          ),
-                      ],
-                    ),
-                  ],
+              for (final p in activePlayers)
+                _ColorDot(
+                  color: _playerColor(p.color),
+                  selected: p.color == manualPlayer,
+                  onTap: () => onChangeManualPlayer(p.color),
                 ),
-              ),
             ],
           ),
           // ─── Milieu : Valeur dé, à l'horizontale et centrée ───
@@ -4332,7 +4314,12 @@ class _ControlPanel extends StatelessWidget {
                       : 'Rien à annuler',
                   child: OutlinedButton.icon(
                     icon: const Icon(Icons.undo, size: 18),
-                    label: const Text('Retour'),
+                    // Le cadre ne fait plus qu'un tiers du panneau : sans
+                    // coupure nette, le libellé déborde du bouton.
+                    label: const Text('Retour',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8)),
                     onPressed: canStepBack ? onStepBack : null,
                   ),
                 ),
@@ -4345,11 +4332,76 @@ class _ControlPanel extends StatelessWidget {
                       : 'Rien à rejouer',
                   child: OutlinedButton.icon(
                     icon: const Icon(Icons.redo, size: 18),
-                    label: const Text('Rejouer'),
+                    label: const Text('Rejouer',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8)),
                     onPressed: canStepForward ? onStepForward : null,
                   ),
                 ),
               ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// « Pions à la maison » : le raccourci qui installe une fin de partie.
+  ///
+  /// Il vivait à l'étroit dans « Jeu manuel », serré contre la colonne
+  /// des couleurs. Son propre cadre lui donne la place de dire ce qu'il
+  /// fait — et il ne fait pas ce que son nom laisse croire : il ne rentre
+  /// pas N pions DE PLUS, il FIXE le compte à N. Descendre de 3 à 1 fait
+  /// donc ressortir deux pions.
+  Widget _homeCard(ThemeData theme, ColorScheme cs) {
+    return _SectionCard(
+      title: 'Pions à la maison',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Fixe combien de pions sont rentrés. De 3 à 1, deux '
+            'ressortent.',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: cs.onSurfaceVariant),
+          ),
+          const SizedBox(height: 10),
+          // La MÊME couleur que « Jeu manuel » : les deux sélecteurs
+          // commandent le même choix et ne peuvent pas se contredire.
+          // Sans lui, ce cadre ne dirait pas de QUI il parle.
+          Text('Couleur',
+              style: theme.textTheme.labelSmall
+                  ?.copyWith(color: cs.onSurfaceVariant)),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final p in activePlayers)
+                _ColorDot(
+                  color: _playerColor(p.color),
+                  selected: p.color == manualPlayer,
+                  onTap: () => onChangeManualPlayer(p.color),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text('Combien',
+              style: theme.textTheme.labelSmall
+                  ?.copyWith(color: cs.onSurfaceVariant)),
+          const SizedBox(height: 4),
+          // Wrap et non Row : horizontal par nature, mais il passe à la
+          // ligne au lieu de déborder si la carte rétrécit.
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (int n = 1; n <= 4; n++)
+                _MiniDiceButton(
+                  value: n,
+                  onTap: () => onFillManualHome(n),
+                ),
             ],
           ),
         ],

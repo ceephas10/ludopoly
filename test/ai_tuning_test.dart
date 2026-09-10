@@ -36,12 +36,19 @@ void main() {
       expect(state.aiTurbo, isFalse, reason: 'éteint au lancement');
       expect(find.text('⚡ ACTIF'), findsNothing);
 
+      // Le panneau a gagné deux cadres en tête (« Jeu normal » et
+      // « Pions à la maison ») : ce commutateur est passé SOUS le bord
+      // de la surface de test. Il existe toujours — il faut juste
+      // l'amener à l'écran avant de le toucher, comme le ferait un
+      // joueur qui fait défiler le panneau.
+      await t.ensureVisible(find.text('Mode Accélérateur IA'));
       await t.tap(find.text('Mode Accélérateur IA'));
       await t.pump(const Duration(milliseconds: 300));
       expect(state.aiTurbo, isTrue);
       expect(find.text('⚡ ACTIF'), findsOneWidget,
           reason: "l'état actif doit se voir");
 
+      await t.ensureVisible(find.text('Mode Accélérateur IA'));
       await t.tap(find.text('Mode Accélérateur IA'));
       await t.pump(const Duration(milliseconds: 300));
       expect(state.aiTurbo, isFalse);
@@ -266,6 +273,8 @@ void main() {
       await openRules(t);
 
       for (final level in AiDifficulty.values) {
+        // Idem : les cadres d'accueil ont repoussé les chips vers le bas.
+        await t.ensureVisible(find.text(level.label));
         await t.tap(find.text(level.label));
         await t.pump(const Duration(milliseconds: 300));
 
@@ -294,10 +303,12 @@ void main() {
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
       await openRules(t);
 
+      await t.ensureVisible(find.text(AiDifficulty.imbattable.label));
       await t.tap(find.text(AiDifficulty.imbattable.label));
       await t.pump(const Duration(milliseconds: 300));
       expect(state.aiDifficulty, AiDifficulty.imbattable);
 
+      await t.ensureVisible(find.text('Commandes'));
       await t.tap(find.text('Commandes'));
       await t.pump(const Duration(milliseconds: 300));
       await openRules(t);
