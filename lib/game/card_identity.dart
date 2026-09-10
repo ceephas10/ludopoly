@@ -63,6 +63,13 @@ class CardIdentity {
 }
 
 /// L'identité d'une carte, déduite de son action.
+///
+/// Le libellé est COURT — deux ou trois mots, souvent moins. Il se lit
+/// sur une carte large d'une case, posée dans une base : « CAPTURE → MA
+/// BOÎTE » y rentrait au chausse-pied et ne se lisait plus. Ce qui
+/// identifie la carte n'est de toute façon pas ce texte mais son CODE,
+/// la lettre ou le chiffre qui ne change jamais ; le libellé ne fait que
+/// rappeler l'effet.
 CardIdentity cardIdentity(ChanceCard c) {
   switch (c.action) {
     case CardAction.move:
@@ -70,17 +77,17 @@ CardIdentity cardIdentity(ChanceCard c) {
       return c.value >= 0
           ? CardIdentity(
               family: CardFamily.motion,
-              label: '+$n CASES',
+              label: '+$n',
               icon: Icons.keyboard_double_arrow_right)
           : CardIdentity(
               family: CardFamily.motion,
-              label: '−$n CASES',
+              label: '−$n',
               icon: Icons.keyboard_double_arrow_left);
 
     case CardAction.teleport:
       return const CardIdentity(
           family: CardFamily.motion,
-          label: 'DEVANT LA SORTIE',
+          label: 'AVANT SORTIE',
           icon: Icons.flag);
 
     case CardAction.releaseAll:
@@ -92,36 +99,36 @@ CardIdentity cardIdentity(ChanceCard c) {
     case CardAction.returnToBase:
       return const CardIdentity(
           family: CardFamily.hinder,
-          label: 'RETOUR BOÎTE',
+          label: 'EN BOÎTE',
           icon: Icons.replay);
 
     case CardAction.setState:
       return c.pawnState == CardPawnState.invulnerable
           ? CardIdentity(
               family: CardFamily.guard,
-              label: 'INVULNÉRABLE ${c.value} T',
+              label: 'BOUCLIER ${c.value}T',
               icon: Icons.shield)
           : CardIdentity(
               family: CardFamily.hinder,
-              label: 'FIGÉ ${c.value} T',
+              label: 'FIGÉ ${c.value}T',
               icon: Icons.ac_unit);
 
     case CardAction.captureAhead:
       return const CardIdentity(
           family: CardFamily.capture,
-          label: 'CAPTURE DEVANT',
+          label: 'MANGE DEVANT',
           icon: Icons.my_location);
 
     case CardAction.captureBehind:
       return const CardIdentity(
           family: CardFamily.capture,
-          label: 'CAPTURE DERRIÈRE',
+          label: 'MANGE DERRIÈRE',
           icon: Icons.undo);
 
     case CardAction.captureToBox:
       return const CardIdentity(
           family: CardFamily.capture,
-          label: 'CAPTURE → MA BOÎTE',
+          label: 'MANGÉ → BOÎTE',
           icon: Icons.inbox);
 
     case CardAction.modifyDice:
@@ -129,22 +136,22 @@ CardIdentity cardIdentity(ChanceCard c) {
         case CardDiceMode.limit:
           return CardIdentity(
               family: CardFamily.dice,
-              label: 'DEMI-DÉ ${c.value} T',
+              label: 'DEMI-DÉ ${c.value}T',
               icon: Icons.exposure_neg_1);
         case CardDiceMode.double:
           return CardIdentity(
               family: CardFamily.dice,
-              label: 'DOUBLE-DÉ ${c.value} T',
+              label: 'DOUBLE ${c.value}T',
               icon: Icons.exposure_plus_2);
         case CardDiceMode.twoDice:
           return CardIdentity(
               family: CardFamily.dice,
-              label: 'DEUX DÉS ${c.value} T',
+              label: '2 DÉS ${c.value}T',
               icon: Icons.filter_2);
         case null:
           return CardIdentity(
               family: CardFamily.dice,
-              label: 'DÉ MODIFIÉ ${c.value} T',
+              label: 'DÉ TRUQUÉ ${c.value}T',
               icon: Icons.casino);
       }
 
@@ -152,19 +159,19 @@ CardIdentity cardIdentity(ChanceCard c) {
       // La carte-dé porte sa face, pas un pictogramme : « la carte qui
       // fait jouer 2 » se reconnaît au dé qui montre 2.
       return CardIdentity(
-          family: CardFamily.dice, label: 'LE DÉ JOUE ${c.value}',
+          family: CardFamily.dice, label: 'DÉ ${c.value}',
           dieValue: c.value);
 
     case CardAction.noExit:
       return const CardIdentity(
           family: CardFamily.hinder,
-          label: 'PAS DE SORTIE',
+          label: 'NE SORT PAS',
           icon: Icons.block);
 
     case CardAction.skipTurn:
       return CardIdentity(
           family: CardFamily.hinder,
-          label: 'SAUTE ${c.value} TOURS',
+          label: 'SAUTE ${c.value}T',
           icon: Icons.timer_off);
   }
 }

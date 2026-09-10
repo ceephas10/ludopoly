@@ -267,9 +267,16 @@ class CardMini extends StatelessWidget {
     return LayoutBuilder(builder: (context, c) {
       final w = c.maxWidth;
       final h = c.maxHeight;
-      // Sous ~34 px de large l'étiquette devient illisible : on ne garde
-      // alors que le pictogramme et le code, qui eux restent lisibles.
-      final roomy = w >= 34 && h >= 46;
+      // L'étiquette ne tient plus en dessous de cette taille : on ne
+      // garde alors que le PICTOGRAMME et le CODE, qui suffisent à
+      // reconnaître la carte — c'est même leur seule raison d'être.
+      //
+      // Sur un TÉLÉPHONE, la carte fait 23 points de large : le libellé
+      // n'y tiendrait qu'à quatre points de haut, illisible. On l'enlève
+      // et l'on donne toute la place au pictogramme et au code — qui
+      // sont, eux, parfaitement lisibles, et qui suffisent : c'est même
+      // la raison d'être du code.
+      final roomy = w >= 30 && h >= 42;
       return ClipRRect(
         borderRadius: BorderRadius.circular(radius),
         child: DecoratedBox(
@@ -291,7 +298,9 @@ class CardMini extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                CardGlyph(card: card, size: w * 0.52, color: ident.color),
+                CardGlyph(card: card,
+                    size: w * (roomy ? 0.52 : 0.62),
+                    color: ident.color),
                 if (roomy)
                   FittedBox(
                     fit: BoxFit.scaleDown,
@@ -307,23 +316,33 @@ class CardMini extends StatelessWidget {
                       ),
                     ),
                   ),
-                // Le rang, en pastille dorée, au même endroit que sur un
-                // dos : les deux se lisent de la même façon.
+                // LE CODE, en pastille dorée. C'est LUI qui identifie la
+                // carte — la lettre A→L d'une immédiate, le chiffre 1→12
+                // d'une différée — et il ne change jamais, ni d'une
+                // partie à l'autre ni d'un mélange au suivant.
+                //
+                // La pastille portait le RANG dans la main (1 à 4). Mais
+                // le rang ne dit pas QUELLE carte on tient : il change dès
+                // qu'on en joue une, et deux cartes différentes y
+                // affichaient le même chiffre. Le code, lui, se retient.
                 Container(
-                  width: w * 0.30,
-                  height: w * 0.30,
+                  width: w * (roomy ? 0.34 : 0.42),
+                  height: w * (roomy ? 0.34 : 0.42),
                   alignment: Alignment.center,
                   decoration: const BoxDecoration(
                       color: _gold, shape: BoxShape.circle),
                   child: FittedBox(
                     fit: BoxFit.scaleDown,
-                    child: Text(
-                      '$number',
-                      style: const TextStyle(
-                        color: _ink,
-                        fontSize: 11,
-                        height: 1.0,
-                        fontWeight: FontWeight.w900,
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(horizontal: w * 0.03),
+                      child: Text(
+                        cardCode(card),
+                        style: const TextStyle(
+                          color: _ink,
+                          fontSize: 11,
+                          height: 1.0,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
                     ),
                   ),

@@ -355,8 +355,11 @@ void main() {
       }
     });
 
-    testWidgets('MA carte se reconnaît ; celles des autres restent des dos',
-        (t) async {
+    // TOUTES les cartes se lisent, y compris celles des autres. Elles
+    // étaient face cachée : un dos muet, qui n'apprenait rien à personne.
+    // Chacune porte donc son pictogramme et son CODE — c'est le code qui
+    // dit LAQUELLE, et il ne change jamais.
+    testWidgets('toutes les cartes se lisent, chacune à son code', (t) async {
       await bootApp(t);
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
       final c = state.controller;
@@ -364,23 +367,30 @@ void main() {
       final me = c.currentColor;
       final other = c.turnOrder.firstWhere((x) => x != me);
 
-      expect(find.byType(CardBack), findsNothing,
-          reason: 'aucune carte, aucun dos');
-      expect(find.byType(CardMini), findsNothing);
+      expect(find.byType(CardMini), findsNothing,
+          reason: 'aucune carte, rien à lire');
 
-      final card = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_6');
-      c.upgrades.addToHand(me, card);
-      c.upgrades.addToHand(
-          other, kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_2'));
+      final mienne = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_6');
+      final sienne = kDeferredCards.singleWhere((x) => x.id == 'DEF_DICE_2');
+      c.upgrades.addToHand(me, mienne);
+      c.upgrades.addToHand(other, sienne);
       await t.pump(const Duration(milliseconds: 300));
 
-      // La mienne : je dois savoir ce qu'elle fait sans la retourner.
-      expect(find.byType(CardMini), findsOneWidget,
-          reason: 'ma carte porte son pictogramme et son effet');
-      // Celle de l'adversaire : un dos, et rien de plus.
-      expect(find.byType(CardBack), findsOneWidget,
-          reason: 'la carte de l\'autre reste cachée');
-      // Dans les deux cas, l'instruction complète reste fermée.
+      expect(find.byType(CardMini), findsNWidgets(2),
+          reason: 'la mienne ET celle de l\'autre se lisent');
+      expect(find.byType(CardBack), findsNothing,
+          reason: 'plus aucun dos muet sur le plateau');
+
+      // Le CODE de chacune est écrit dessus, et ce sont deux codes
+      // différents : c'est ce qui permet de les distinguer d'un coup.
+      expect(cardCode(mienne), '9');
+      expect(cardCode(sienne), '5');
+      for (final code in [cardCode(mienne), cardCode(sienne)]) {
+        expect(find.text(code), findsWidgets, reason: 'code $code affiché');
+      }
+
+      // L'instruction COMPLÈTE, elle, reste fermée : lisible n'est pas
+      // ouverte.
       expect(find.byType(CardFace), findsNothing,
           reason: 'la face pleine ne s\'ouvre qu\'au toucher');
 
