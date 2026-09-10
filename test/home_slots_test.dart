@@ -85,10 +85,8 @@ void main() {
       final couleur = state.manualPlayerForTest;
 
       // On rentre un pion PAR LE PANNEAU, comme on le ferait à la main :
-      // « Pions à la maison », bouton 1.
-      final cadre = find.ancestor(
-          of: find.text('Pions à la maison'), matching: find.byType(Card));
-      await t.tap(find.descendant(of: cadre, matching: find.text('1')));
+      // « Pions maison », rangée « Combien », bouton 1.
+      await t.tap(find.byKey(const ValueKey('home-count-1')));
       await t.pump(const Duration(milliseconds: 400));
 
       final pions = c.state.pawnsByColor[couleur]!;

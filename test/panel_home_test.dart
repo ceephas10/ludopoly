@@ -1,15 +1,14 @@
-// L'ACCUEIL DU PANNEAU « SYSTÈME » : trois cadres SUR UNE MÊME LIGNE —
-// Jeu normal, Jeu manuel, Pions à la maison.
+// L'ACCUEIL DU PANNEAU « SYSTÈME ».
 //
-// Une mise en page se casse sans bruit : un cadre déplacé, un cadre
-// renvoyé dans un onglet, et rien ne le signale à la compilation. D'où
-// ce test, qui lit les positions à l'écran plutôt que le code.
+// Deux cadres l'un sous l'autre, alignés : « Pions maison » — la
+// couleur, le dé, le nombre de pions rentrés — puis « Jeu normal ». Ils
+// sont AU-DESSUS des onglets : ils ne commandent pas une page, ils
+// commandent la partie, et survivent donc au changement de page.
 //
-// Il vérifie aussi les deux conséquences du choix : les cadres sont
-// AU-DESSUS des onglets, donc ils survivent au changement de page ; et
-// ils restent sur une ligne MÊME SUR UN TÉLÉPHONE, où chaque cadre
-// tombe à une centaine de points — ce qui n'est tenable que si tout ce
-// qu'ils contiennent sait passer à la ligne.
+// Et tout en bas, collée, la barre « Retour / Rejouer » : elle ne défile
+// pas avec le reste. C'est un ORDRE et une STRUCTURE, donc des choses
+// qui se cassent sans bruit — d'où ce test, qui lit les positions à
+// l'écran plutôt que le code.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,59 +18,94 @@ import 'package:ludopoly/main.dart';
 
 import 'app_boot.dart';
 
-const _titres = ['Jeu normal', 'Jeu manuel', 'Pions à la maison'];
-
 void main() {
   setUp(useLargeSurface);
   tearDown(resetSurface);
 
   Offset coin(WidgetTester t, String titre) => t.getTopLeft(find.text(titre));
 
-  testWidgets('les trois cadres sont sur la même ligne, dans l\'ordre',
+  testWidgets('« Pions maison » est au-dessus de « Jeu normal », aligné',
       (t) async {
     await bootApp(t);
 
-    for (final titre in _titres) {
-      expect(find.text(titre), findsOneWidget, reason: titre);
-    }
+    expect(find.text('Pions maison'), findsOneWidget);
+    expect(find.text('Jeu normal'), findsOneWidget);
+    // Les deux anciens cadres n'existent plus sous leurs anciens noms.
+    expect(find.text('Jeu manuel'), findsNothing);
+    expect(find.text('Pions à la maison'), findsNothing);
 
-    final coins = [for (final titre in _titres) coin(t, titre)];
+    final maison = coin(t, 'Pions maison');
+    final normal = coin(t, 'Jeu normal');
 
-    // MÊME LIGNE : les trois titres sont à la même hauteur.
-    expect(coins[1].dy, coins[0].dy,
-        reason: '« Jeu manuel » doit être à la hauteur de « Jeu normal »');
-    expect(coins[2].dy, coins[0].dy,
-        reason: '« Pions à la maison » aussi');
+    expect(maison.dy, lessThan(normal.dy),
+        reason: '« Pions maison » vient au-dessus');
+    expect(maison.dx, normal.dx,
+        reason: 'et les deux cadres commencent au même bord');
 
-    // ET DANS L'ORDRE, de gauche à droite.
-    expect(coins[0].dx, lessThan(coins[1].dx));
-    expect(coins[1].dx, lessThan(coins[2].dx));
-
-    // Les trois précèdent les onglets : c'est ce qui les rend visibles
-    // quelle que soit la page ouverte.
-    expect(coins[2].dy, lessThan(coin(t, 'Commandes').dy),
-        reason: 'les trois cadres sont au-dessus des onglets');
+    // Les deux précèdent les onglets.
+    expect(normal.dy, lessThan(coin(t, 'Commandes').dy),
+        reason: 'les cadres sont au-dessus des onglets');
 
     await shutdownApp(t);
   });
 
-  testWidgets('changer d\'onglet ne les fait pas disparaître', (t) async {
+  testWidgets('la phrase d\'attente du lancer a disparu', (t) async {
+    await bootApp(t);
+    expect(find.text('En attente du lancer'), findsNothing);
+    expect(find.textContaining('attente du lancer'), findsNothing);
+    await shutdownApp(t);
+  });
+
+  testWidgets('« Retour / Rejouer » : plus de titre, et collé en bas',
+      (t) async {
+    await bootApp(t);
+
+    expect(find.text('Retour / Rejouer'), findsNothing,
+        reason: 'le titre du cadre est retiré');
+
+    final retour = find.widgetWithText(OutlinedButton, 'Retour');
+    final rejouer = find.widgetWithText(OutlinedButton, 'Rejouer');
+    expect(retour, findsOneWidget);
+    expect(rejouer, findsOneWidget);
+
+    final avant = t.getTopLeft(retour);
+    // Il est en BAS : sous les onglets, et sous les cadres d'accueil.
+    expect(avant.dy, greaterThan(coin(t, 'Jeu normal').dy),
+        reason: 'la barre est en bas du panneau, pas dans le contenu');
+
+    // ET IL NE DÉFILE PAS. On fait défiler le panneau ; le contenu monte,
+    // la barre ne bouge pas d'un pixel.
+    final contenuAvant = coin(t, 'Jeu normal');
+    await t.drag(find.byType(SingleChildScrollView).first,
+        const Offset(0, -600));
+    await t.pump(const Duration(milliseconds: 300));
+
+    expect(coin(t, 'Jeu normal').dy, lessThan(contenuAvant.dy),
+        reason: 'le contenu doit vraiment avoir défilé, sinon ce test '
+            'ne prouve rien');
+    expect(t.getTopLeft(retour), avant,
+        reason: 'la barre est collée : le contenu défile au-dessus d\'elle');
+
+    await shutdownApp(t);
+  });
+
+  testWidgets('changer d\'onglet ne fait pas disparaître les cadres',
+      (t) async {
     await bootApp(t);
 
     await t.tap(find.text('Règles'));
     await t.pump(const Duration(milliseconds: 300));
 
-    // La page a bien changé…
-    expect(find.text('Setup'), findsNothing);
-    // … et les trois cadres sont toujours là.
-    for (final titre in _titres) {
-      expect(find.text(titre), findsOneWidget, reason: titre);
-    }
+    expect(find.text('Setup'), findsNothing, reason: 'la page a changé');
+    expect(find.text('Pions maison'), findsOneWidget);
+    expect(find.text('Jeu normal'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'Retour'), findsOneWidget,
+        reason: 'et la barre du bas reste, quelle que soit la page');
 
     await shutdownApp(t);
   });
 
-  testWidgets('« Pions à la maison » fixe le compte, dans les deux sens',
+  testWidgets('« Combien de pions rentrés » fixe le compte, dans les deux sens',
       (t) async {
     await bootApp(t);
     final state = t.state<BoardScreenState>(find.byType(BoardScreen));
@@ -82,38 +116,28 @@ void main() {
         .where((p) => p.location == PawnLocation.home)
         .length;
 
-    // Le cadre, et lui seul : « Valeur dé » propose les mêmes chiffres
-    // dans le cadre d'à côté.
-    final cadre = find.ancestor(
-        of: find.text('Pions à la maison'), matching: find.byType(Card));
-    Finder bouton(String n) =>
-        find.descendant(of: cadre, matching: find.text(n));
-
     expect(rentres(), 0, reason: 'personne n\'est rentré au départ');
 
-    await t.tap(bouton('3'));
+    // Par la CLÉ : le cadre porte deux rangées de chiffres, la valeur du
+    // dé et le nombre de pions rentrés.
+    await t.tap(find.byKey(const ValueKey('home-count-3')));
     await t.pump(const Duration(milliseconds: 200));
     expect(rentres(), 3, reason: 'le bouton FIXE le compte à 3');
 
-    // Et il le fait redescendre — c'est ce que dit le cadre.
-    await t.tap(bouton('1'));
+    await t.tap(find.byKey(const ValueKey('home-count-1')));
     await t.pump(const Duration(milliseconds: 200));
     expect(rentres(), 1, reason: 'de 3 à 1, deux pions ressortent');
 
     await shutdownApp(t);
   });
 
-  testWidgets('sur un téléphone aussi, les trois cadres tiennent la ligne',
-      (t) async {
-    // 390 points de large : chaque cadre en reçoit 114. Les pastilles de
-    // couleur, les six valeurs de dé et les compteurs passent à la
-    // ligne, Retour et Rejouer se rangent l'un sous l'autre — et rien ne
-    // déborde, ce que ce test vérifie AUSSI : un débordement de mise en
-    // page fait échouer le test de lui-même.
+  testWidgets('sur un téléphone, la structure tient', (t) async {
+    // Un débordement de mise en page fait échouer le test de lui-même :
+    // c'est aussi ce que ce test vérifie.
     BoardScreenState.muteStepSounds = true;
     MenuMusic.muted = true;
-    final vue = TestWidgetsFlutterBinding.instance.platformDispatcher.views
-        .first;
+    final vue =
+        TestWidgetsFlutterBinding.instance.platformDispatcher.views.first;
     vue.physicalSize = const Size(390, 844);
     vue.devicePixelRatio = 1.0;
 
@@ -122,11 +146,14 @@ void main() {
         const MaterialApp(home: BoardScreen(showBoard: false)));
     await waitForBoard(t);
 
-    final coins = [for (final titre in _titres) coin(t, titre)];
-    expect(coins[1].dy, coins[0].dy, reason: 'même ligne, sur téléphone');
-    expect(coins[2].dy, coins[0].dy, reason: 'les trois');
-    expect(coins[0].dx, lessThan(coins[1].dx), reason: 'et dans l\'ordre');
-    expect(coins[1].dx, lessThan(coins[2].dx));
+    final maison = coin(t, 'Pions maison');
+    final normal = coin(t, 'Jeu normal');
+    expect(maison.dy, lessThan(normal.dy));
+    expect(maison.dx, normal.dx, reason: 'alignés, même sur un téléphone');
+
+    final retour = t.getBottomLeft(find.widgetWithText(OutlinedButton, 'Retour'));
+    expect(retour.dy, greaterThan(700),
+        reason: 'la barre est bien posée au bas de l\'écran');
 
     await shutdownApp(t);
   });

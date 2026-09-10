@@ -3676,17 +3676,6 @@ class _ControlPanel extends StatelessWidget {
     }
   }
 
-  String _phaseText() {
-    switch (phase) {
-      case TurnPhase.rolling:
-        return 'En attente du lancer';
-      case TurnPhase.moving:
-        return 'Dé $diceValue — choisis un pion';
-      case TurnPhase.gameOver:
-        return 'Partie terminée';
-    }
-  }
-
   /// Device-size presets for the board width override.
   static const Map<String, ({IconData icon, double? width})> _devicePresets = {
     'Smartphone':   (icon: Icons.smartphone,    width: 360),
@@ -3715,51 +3704,40 @@ class _ControlPanel extends StatelessWidget {
               // on borne la colonne, comme le fait la page Options.
               constraints: BoxConstraints(
                   maxWidth: fullWidth ? 760 : double.infinity),
-              child: SingleChildScrollView(
+              // LE PIED DE PAGE EST COLLÉ EN BAS.
+              //
+              // « Retour » et « Rejouer » remontaient avec le reste dès
+              // qu'on faisait défiler le panneau : on les cherchait au
+              // moment précis où on en a besoin. Ils sortent donc du flux
+              // — le contenu défile au-dessus d'eux, ils ne bougent plus.
+              //
+              // C'est un Expanded : le panneau a toujours une hauteur
+              // bornée (colonne à côté du plateau, ou plein écran en
+              // « Système »), la barre se pose donc sur son bord bas.
+              child: Column(
+                mainAxisSize: MainAxisSize.max,
+                children: [
+                  Expanded(
+                    child: SingleChildScrollView(
             padding: const EdgeInsets.all(12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // ---- L'ACCUEIL DE « SYSTÈME » : TROIS CADRES ----
+                // ---- L'ACCUEIL DE « SYSTÈME » ----
                 //
-                // Jeu normal, Jeu manuel, Pions à la maison — SUR LA MÊME
-                // LIGNE, dans cet ordre. C'est l'ordre d'usage : on
-                // regarde d'abord à qui c'est le tour, on force ensuite
-                // une couleur et une valeur, on installe enfin une fin de
-                // partie.
+                // « Pions maison » AU-DESSUS de « Jeu normal », les deux
+                // sur toute la largeur : ils commencent donc au même
+                // bord et se lisent l'un sous l'autre. C'est l'ordre
+                // demandé — on prépare la position (couleur, dé, pions
+                // rentrés), puis on joue.
                 //
-                // Les trois sont AU-DESSUS des onglets : ils ne
-                // commandent pas une page, ils commandent la partie, et
-                // restent donc visibles quel que soit l'onglet ouvert.
+                // Ils restent au-dessus des onglets : ils ne commandent
+                // pas une page, ils commandent la partie.
                 //
-                // SUR UNE LIGNE, TOUJOURS — même sur un téléphone, où
-                // chaque cadre tombe à une centaine de points. C'est ce
-                // qui a été demandé deux fois, donc c'est ce qui est
-                // fait ; en échange, tout ce qu'ils contiennent doit
-                // savoir se replier : les pastilles de couleur, les
-                // valeurs de dé et les compteurs passent à la ligne, et
-                // Retour / Rejouer se rangent l'un sous l'autre.
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // « Jeu normal », et JUSTE EN DESSOUS le cadre
-                    // Retour / Rejouer : c'est la colonne de gauche
-                    // entière, pas une case de la ligne.
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _normalCard(theme, cs),
-                          _undoCard(theme, cs),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(child: _manualCard(theme, cs)),
-                    const SizedBox(width: 6),
-                    Expanded(child: _homeCard(theme, cs)),
-                  ],
-                ),
+                // « Retour / Rejouer » n'est plus ici : il est collé en
+                // bas du panneau, voir le pied de page.
+                _pionsMaisonCard(theme, cs),
+                _normalCard(theme, cs),
                 // Les cartes chance restent juste dessous, là où elles
                 // avaient été montées : la demande porte sur les trois
                 // cadres d'accueil, pas sur elles.
@@ -4163,6 +4141,10 @@ class _ControlPanel extends StatelessWidget {
               ],
             ),
           ),
+                  ),
+                  _piedRetourRejouer(theme, cs),
+                ],
+              ),
           ),
         ),
         );
@@ -4198,14 +4180,6 @@ class _ControlPanel extends StatelessWidget {
                 padding: EdgeInsets.zero,
               ),
             ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _phaseText(),
-            style: theme.textTheme.bodySmall?.copyWith(
-              fontStyle: FontStyle.italic,
-              color: cs.onSurfaceVariant,
-            ),
           ),
           if (consecutiveSixes > 0)
             Padding(
@@ -4314,72 +4288,83 @@ class _ControlPanel extends StatelessWidget {
     );
   }
 
-  /// « Retour / Rejouer » — son propre cadre, sous « Jeu normal ».
+  /// LA BARRE « RETOUR / REJOUER », collée en bas du panneau.
   ///
-  /// Les deux boutons vivaient au bas du Jeu manuel, ce qui les liait à
-  /// une carte dont ils ne dépendent pas : ils annulent et rétablissent
-  /// le DERNIER coup, qu'il ait été joué à la main ou normalement.
-  Widget _undoCard(ThemeData theme, ColorScheme cs) {
-    return _SectionCard(
-      title: 'Retour / Rejouer',
-      padding: const EdgeInsets.all(8),
-      child: rowOuColonne(
-        seuil: 210,
-        children: [
-          Expanded(
-            child: Tooltip(
-              message: canStepBack
-                  ? 'Annule : ${stepBackLabel ?? "le dernier coup"}'
-                  : 'Rien à annuler',
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.undo, size: 18),
-                // Le cadre ne fait qu'un tiers du panneau : sans coupure
-                // nette, le libellé déborde du bouton.
-                label: const Text('Retour',
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
-                style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8)),
-                onPressed: canStepBack ? onStepBack : null,
+  /// Elle avait un cadre et un titre ; les deux sont retirés. Un titre
+  /// n'apprend rien au-dessus de deux boutons qui portent déjà leur nom,
+  /// et le cadre coûtait une hauteur qu'un téléphone n'a pas.
+  ///
+  /// Elle ne défile pas : les deux commandes qu'on cherche le plus vite
+  /// sont les deux qu'on ne doit jamais avoir à chercher.
+  Widget _piedRetourRejouer(ThemeData theme, ColorScheme cs) {
+    return Material(
+      color: cs.surface,
+      elevation: 3,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        child: rowOuColonne(
+          seuil: 210,
+          children: [
+            Expanded(
+              child: Tooltip(
+                message: canStepBack
+                    ? 'Annule : ${stepBackLabel ?? "le dernier coup"}'
+                    : 'Rien à annuler',
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.undo, size: 18),
+                  label: const Text('Retour',
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8)),
+                  onPressed: canStepBack ? onStepBack : null,
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Tooltip(
-              message: canStepForward
-                  ? 'Rejoue : ${stepForwardLabel ?? "le coup annulé"}'
-                  : 'Rien à rejouer',
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.redo, size: 18),
-                label: const Text('Rejouer',
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
-                style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8)),
-                onPressed: canStepForward ? onStepForward : null,
+            const SizedBox(width: 8),
+            Expanded(
+              child: Tooltip(
+                message: canStepForward
+                    ? 'Rejoue : ${stepForwardLabel ?? "le coup annulé"}'
+                    : 'Rien à rejouer',
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.redo, size: 18),
+                  label: const Text('Rejouer',
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8)),
+                  onPressed: canStepForward ? onStepForward : null,
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _manualCard(ThemeData theme, ColorScheme cs) {
+  /// « PIONS MAISON » — la couleur, le dé, et le nombre de pions rentrés.
+  ///
+  /// C'était deux cadres, « Jeu manuel » et « Pions à la maison », réunis
+  /// sur demande. Ils partageaient déjà le même sélecteur de couleur,
+  /// dessiné deux fois : il n'y en a plus qu'un, et les deux commandes
+  /// qu'il sert sont l'une sous l'autre.
+  ///
+  /// « Combien » ne fait pas ce que son nom laisse croire : il ne rentre
+  /// pas N pions DE PLUS, il FIXE le compte à N. Descendre de 3 à 1 fait
+  /// donc ressortir deux pions.
+  Widget _pionsMaisonCard(ThemeData theme, ColorScheme cs) {
+    Widget titre(String t) => Text(t,
+        style: theme.textTheme.labelSmall
+            ?.copyWith(color: cs.onSurfaceVariant));
+
     return _SectionCard(
-      title: 'Jeu manuel',
+      title: 'Pions maison',
       padding: const EdgeInsets.all(8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ─── Haut : la couleur, à l'horizontale ───
-          //
-          // Elle était rangée en colonne verticale parce que « Pions
-          // dans la Maison » lui prenait la droite de la carte. Ce bloc
-          // a son propre cadre désormais : la couleur récupère toute la
-          // largeur et la carte y gagne trois lignes de hauteur.
-          Text('Couleur',
-              style: theme.textTheme.labelSmall
-                  ?.copyWith(color: cs.onSurfaceVariant)),
+          // ─── La couleur : une seule fois, pour tout le cadre ───
+          titre('Couleur'),
           const SizedBox(height: 4),
           Wrap(
             spacing: 8,
@@ -4393,34 +4378,25 @@ class _ControlPanel extends StatelessWidget {
                 ),
             ],
           ),
-          // ─── Milieu : Valeur dé, à l'horizontale et centrée ───
+          // ─── La valeur du dé, et le lancer ───
           const SizedBox(height: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
+          titre('Valeur dé'),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
             children: [
-              Text('Valeur dé',
-                  style: theme.textTheme.labelSmall
-                      ?.copyWith(color: cs.onSurfaceVariant)),
-              const SizedBox(height: 4),
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 4,
-                runSpacing: 4,
-                children: [
-                  for (int v = 1; v <= 6; v++)
-                    _MiniDiceButton(
-                      value: v,
-                      selected: v == manualValue,
-                      onTap: () => onChangeManualValue(v),
-                    ),
-                ],
-              ),
+              for (int v = 1; v <= 6; v++)
+                _MiniDiceButton(
+                  value: v,
+                  selected: v == manualValue,
+                  onTap: () => onChangeManualValue(v),
+                ),
             ],
           ),
-          // ─── Lancer : joue la couleur et la valeur choisies ───
+          const SizedBox(height: 8),
           // Hauteur bridée et libellé sur UNE ligne : dans une colonne
           // étroite un bouton libre empile ses lettres à la verticale.
-          const SizedBox(height: 10),
           SizedBox(
             height: 32,
             child: FilledButton.icon(
@@ -4441,66 +4417,9 @@ class _ControlPanel extends StatelessWidget {
                   (busy || phase == TurnPhase.gameOver) ? null : onManualRoll,
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  /// « Pions à la maison » : le raccourci qui installe une fin de partie.
-  ///
-  /// Il vivait à l'étroit dans « Jeu manuel », serré contre la colonne
-  /// des couleurs. Son propre cadre lui donne la place de dire ce qu'il
-  /// fait — et il ne fait pas ce que son nom laisse croire : il ne rentre
-  /// pas N pions DE PLUS, il FIXE le compte à N. Descendre de 3 à 1 fait
-  /// donc ressortir deux pions.
-  Widget _homeCard(ThemeData theme, ColorScheme cs) {
-    return _SectionCard(
-      title: 'Pions à la maison',
-      padding: const EdgeInsets.all(8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // L'EXPLICATION, tant qu'il y a de la place pour elle.
-          //
-          // Sur un téléphone le cadre tombe à une centaine de points :
-          // ces deux phrases y prennent cinq lignes et poussent les
-          // boutons hors de vue. Ce qui compte alors, ce sont les
-          // commandes ; l'explication attend un écran plus large.
-          LayoutBuilder(builder: (context, c) {
-            if (c.maxWidth < 150) return const SizedBox(height: 4);
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Text(
-                'Fixe combien de pions sont rentrés. De 3 à 1, deux '
-                'ressortent.',
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: cs.onSurfaceVariant),
-              ),
-            );
-          }),
-          // La MÊME couleur que « Jeu manuel » : les deux sélecteurs
-          // commandent le même choix et ne peuvent pas se contredire.
-          // Sans lui, ce cadre ne dirait pas de QUI il parle.
-          Text('Couleur',
-              style: theme.textTheme.labelSmall
-                  ?.copyWith(color: cs.onSurfaceVariant)),
-          const SizedBox(height: 4),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final p in activePlayers)
-                _ColorDot(
-                  color: _playerColor(p.color),
-                  selected: p.color == manualPlayer,
-                  onTap: () => onChangeManualPlayer(p.color),
-                ),
-            ],
-          ),
+          // ─── Combien de pions sont déjà rentrés ───
           const SizedBox(height: 10),
-          Text('Combien',
-              style: theme.textTheme.labelSmall
-                  ?.copyWith(color: cs.onSurfaceVariant)),
+          titre('Combien de pions rentrés'),
           const SizedBox(height: 4),
           // Wrap et non Row : horizontal par nature, mais il passe à la
           // ligne au lieu de déborder si la carte rétrécit.
@@ -4510,6 +4429,11 @@ class _ControlPanel extends StatelessWidget {
             children: [
               for (int n = 1; n <= 4; n++)
                 _MiniDiceButton(
+                  // Une clé, parce que le cadre porte DEUX rangées de
+                  // chiffres — la valeur du dé et le nombre de pions
+                  // rentrés. L'œil les distingue par leur titre, un
+                  // test non.
+                  key: ValueKey('home-count-$n'),
                   value: n,
                   onTap: () => onFillManualHome(n),
                 ),
@@ -8214,6 +8138,7 @@ class _MiniDiceButton extends StatelessWidget {
   final VoidCallback onTap;
   final bool selected;
   const _MiniDiceButton({
+    super.key,
     required this.value,
     required this.onTap,
     this.selected = false,
