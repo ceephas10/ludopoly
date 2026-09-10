@@ -1356,13 +1356,24 @@ class BoardScreenState extends State<BoardScreen>
     return _controller.upgrades.lastTwoDice ?? (a: 1, b: 1);
   }
 
-  /// La couleur dont les cartes de base sont cliquables : celle qui a la
-  /// main, et seulement si un HUMAIN la tient. Une carte qu'on n'a pas le
-  /// droit de jouer reste close.
+  /// LA BASE dont les cartes répondent au doigt.
+  ///
+  /// Celle du joueur qui a la main, et seulement si un HUMAIN la tient.
+  ///
+  /// En mode ÉQUIPE, dès qu'il n'a plus de carte à lui, c'est la base de
+  /// son PARTENAIRE : « si vert n'a pas de carte et que bleu en a dans sa
+  /// base, vert peut jouer celles de bleu ». Les cartes en question sont
+  /// posées dans la base de bleu — c'est donc là qu'on va les toucher, et
+  /// nulle part ailleurs.
   PlayerColor? get _cardTapSeat {
     if (!_controller.upgrades.chanceEnabled) return null;
     final seat = _deferredSeat;
     if (_isAiColor(seat)) return null;
+    if (_controller.upgrades.handOf(seat).isNotEmpty) return seat;
+    final partner = _controller.partnerOf(seat);
+    if (partner != null && _controller.upgrades.handOf(partner).isNotEmpty) {
+      return partner;
+    }
     return seat;
   }
 
@@ -1376,11 +1387,17 @@ class BoardScreenState extends State<BoardScreen>
 
   void _openHandCard(int slot) {
     if (_paused) return;
-    final seat = _cardTapSeat;
-    if (seat == null) return;
-    final hand = _controller.upgrades.handOf(seat);
+    // La BASE touchée — la sienne, ou celle du partenaire en équipe.
+    final base = _cardTapSeat;
+    if (base == null) return;
+    final hand = _controller.upgrades.handOf(base);
     if (slot < 0 || slot >= hand.length) return;
-    setState(() => _handCard = (card: hand[slot], by: seat, slot: slot));
+    // `by` est CELUI QUI JOUE, jamais celui qui détient : tout ce qui
+    // suit — droit de jouer, cibles possibles — se juge du point de vue
+    // du joueur courant. Le moteur, lui, saura retirer la carte de la
+    // bonne main.
+    setState(() =>
+        _handCard = (card: hand[slot], by: _deferredSeat, slot: slot));
   }
 
   /// Ouvre la carte du rang [slot], comme un clic sur son dos.
@@ -1621,12 +1638,13 @@ class BoardScreenState extends State<BoardScreen>
 
   void _holdHandCard(int slot) {
     if (_paused) return;
-    final seat = _cardTapSeat;
-    if (seat == null) return;
-    final hand = _controller.upgrades.handOf(seat);
+    // La BASE touchée ; `by` reste CELUI QUI JOUE — voir [_openHandCard].
+    final base = _cardTapSeat;
+    if (base == null) return;
+    final hand = _controller.upgrades.handOf(base);
     if (slot < 0 || slot >= hand.length) return;
     _heldSince = DateTime.now();
-    setState(() => _heldCard = (card: hand[slot], by: seat));
+    setState(() => _heldCard = (card: hand[slot], by: _deferredSeat));
   }
 
   /// Le doigt se lève. DEUX gestes, un seul contact :
@@ -1708,8 +1726,8 @@ class BoardScreenState extends State<BoardScreen>
 
   /// [c] tient-il une carte différée jouable à cet instant précis ?
   /// Faux dès que les cases Chance sont éteintes : sa main est vide.
-  bool _hasPlayableDeferred(PlayerColor c) => _controller.upgrades
-      .handOf(c)
+  bool _hasPlayableDeferred(PlayerColor c) => _controller
+      .reachableHand(c)
       .any((card) => _controller.canPlayDeferred(c, card));
 
   /// Laisse le dé affiché [_dicePause] avant de jouer le coup forcé. Le
@@ -3103,8 +3121,9 @@ class BoardScreenState extends State<BoardScreen>
                     onToggleVortex: setVortexEnabled,
                     chanceEnabled: _controller.upgrades.chanceEnabled,
                     onToggleChance: setChanceEnabled,
-                    deferredHand:
-                        _controller.upgrades.handOf(_deferredSeat),
+                    // La main ATTEIGNABLE : la sienne, ou celle du
+                    // partenaire quand on n'a plus rien (mode équipe).
+                    deferredHand: _controller.reachableHand(_deferredSeat),
                     canPlayDeferred: (c) =>
                         _controller.canPlayDeferred(_deferredSeat, c),
                     deferredPawnTargets: (c) =>
@@ -3633,6 +3652,28 @@ class _ControlPanel extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // ---- EN TÊTE : le jeu manuel, puis les cartes chance ----
+                //
+                // Ces deux cadres étaient au milieu du panneau, coincés
+                // entre le Setup et les Overlays : il fallait descendre
+                // pour les atteindre alors que ce sont eux qu'on vient
+                // chercher en ouvrant Système.
+                //
+                // Ils passent donc AVANT les onglets, et restent donc
+                // visibles quel que soit l'onglet — c'est ce qui a été
+                // demandé, et c'est cohérent : ils ne commandent pas une
+                // page, ils commandent la partie.
+                _manualCard(theme, cs),
+                const SizedBox(height: 8),
+                _SectionCard(
+                  title: 'Cartes chance',
+                  child: _ManualCardsCard(
+                    player: manualPlayer,
+                    onApply: onApplyManualCard,
+                  ),
+                ),
+                const SizedBox(height: 4),
+
                 // ---- Les trois pages du panneau ----
                 Padding(
                   padding: const EdgeInsets.symmetric(
@@ -3786,13 +3827,23 @@ class _ControlPanel extends StatelessWidget {
                                 showSelectedIcon: false,
                               ),
                               const SizedBox(height: 12),
-                              Row(
+                              // `Wrap` et non `Row` : sur un téléphone,
+                              // « Taille board » et « Redémarrer jeu » ne
+                              // tiennent pas sur une ligne — 48 points de
+                              // trop, et Flutter peignait ses rayures
+                              // jaunes et noires par-dessus le panneau.
+                              // À l'étroit, le bouton passe simplement à
+                              // la ligne.
+                              Wrap(
+                                alignment: WrapAlignment.spaceBetween,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                spacing: 8,
+                                runSpacing: 2,
                                 children: [
                                   Text('Taille board',
                                       style: theme.textTheme.labelSmall
                                           ?.copyWith(
                                               color: cs.onSurfaceVariant)),
-                                  const Spacer(),
                                   TextButton.icon(
                                     onPressed: onRestart,
                                     icon: const Icon(Icons.restart_alt,
@@ -3867,44 +3918,10 @@ class _ControlPanel extends StatelessWidget {
                 // dessous elles s'empilent. À l'étroit, « Jeu normal »
                 // débordait — un septième de la largeur ne suffit pas à
                 // « Tour : » et sa pastille de couleur.
-                LayoutBuilder(builder: (context, c) {
-                  final cards = <Widget>[
-                    _normalCard(theme, cs),
-                    _manualCard(theme, cs),
-                    _SectionCard(
-                      title: 'Cartes chance',
-                      child: _ManualCardsCard(
-                        player: manualPlayer,
-                        onApply: onApplyManualCard,
-                      ),
-                    ),
-                  ];
-                  if (c.maxWidth < 620) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        for (final w in cards)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: w,
-                          ),
-                      ],
-                    );
-                  }
-                  // Sans IntrinsicHeight : forcer les trois cartes à la
-                  // même hauteur faisait déborder la plus chargée de
-                  // quelques pixels dès que sa colonne rétrécissait.
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(flex: 2, child: cards[0]),
-                      const SizedBox(width: 8),
-                      Expanded(flex: 3, child: cards[1]),
-                      const SizedBox(width: 8),
-                      Expanded(flex: 3, child: cards[2]),
-                    ],
-                  );
-                }),
+                // « Jeu manuel » et « Cartes chance » sont MONTÉS EN
+                // TÊTE du panneau, au-dessus des onglets : voir plus
+                // haut. Il ne reste ici que « Jeu normal ».
+                _normalCard(theme, cs),
 
                 const SizedBox(height: 12),
 
@@ -3949,7 +3966,15 @@ class _ControlPanel extends StatelessWidget {
                     ),
                     title: Row(
                       children: [
-                        const Text('Mode Accélérateur IA'),
+                        // `Flexible` : le titre d'un `SwitchListTile` est
+                        // coincé entre l'icône et l'interrupteur. Sur un
+                        // téléphone il ne lui reste que 195 points, et
+                        // « Mode Accélérateur IA » débordait de 135 —
+                        // rayures jaunes et noires par-dessus le panneau.
+                        const Flexible(
+                          child: Text('Mode Accélérateur IA',
+                              overflow: TextOverflow.ellipsis),
+                        ),
                         if (aiTurbo) ...[
                           const SizedBox(width: 8),
                           Container(
@@ -6310,14 +6335,20 @@ class BoardView extends StatelessWidget {
   /// Écart entre deux cartes du bloc, en cases. Les cartes ont GRANDI —
   /// elles étaient trop petites pour qu'on distingue le pictogramme d'un
   /// coup d'œil — et l'écart a suivi, sinon elles se chevaucheraient.
-  static const double cardSlotStep = 1.15;
+  static const double cardSlotStep = 1.075;
 
-  /// Largeur et hauteur d'une carte du bloc, en cases. Le bloc de quatre
-  /// occupe donc 4 × 1,15 = 4,6 cases sur les 6 de la base : il reste une
-  /// marge de 0,7 case de chaque côté.
-  static const double cardW = 1.05;
-  static const double cardH = 1.47;
+  /// Largeur et hauteur d'une carte du bloc, en cases.
+  ///
+  /// Le bloc de quatre occupe 4 × 1,075 = 4,3 cases : exactement le blanc
+  /// intérieur de la base, qui va de 0,85 à 5,15. Les cartes ne mordent
+  /// donc plus sur la bande de couleur, et l'écart entre deux d'entre
+  /// elles reste de 0,075 case.
+  static const double cardW = 1.00;
+  static const double cardH = 1.40;
 
+  /// Le bloc est CENTRÉ sur le blanc intérieur de la base, pas sur la
+  /// base entière : les deux ont le même milieu (3,0), mais c'est la
+  /// largeur du blanc qui commande.
   static const List<double> _cardSpotsX = [
     3.0 - 1.5 * cardSlotStep,
     3.0 - 0.5 * cardSlotStep,
@@ -6606,20 +6637,24 @@ class BoardView extends StatelessWidget {
                           );
                         }
                         final mine = p.color == tappableCardSeat;
-                        // MES cartes se reconnaissent sans être
-                        // retournées : pictogramme de l'effet, code, et
-                        // l'effet en trois mots. Celles des autres
-                        // restent un dos muet, numéroté à partir de 1
-                        // pour qu'on puisse désigner « sa deuxième ».
-                        final art = mine
-                            ? CardMini(
-                                card: hand[slot],
-                                number: slot + 1,
-                                radius: cell * 0.10)
-                            : CardBack(
-                                radius: cell * 0.10,
-                                number: slot + 1,
-                              );
+                        // TOUTES LES CARTES SE LISENT, celles des autres
+                        // comprises. Elles étaient face cachée : un dos
+                        // muet, qui n'apprenait rien à personne et forçait
+                        // à retenir ce que chacun tenait.
+                        //
+                        // Chacune porte donc son pictogramme, son CODE —
+                        // la lettre ou le chiffre qui ne change jamais —
+                        // et son effet en deux ou trois mots. Le code
+                        // suffit à la reconnaître d'un coup d'œil, et
+                        // c'est tout l'objet de ces codes.
+                        //
+                        // [mine] ne décide plus de ce qu'on VOIT, mais de
+                        // ce qu'on peut TOUCHER.
+                        final art = CardMini(
+                          card: hand[slot],
+                          number: slot + 1,
+                          radius: cell * 0.10,
+                        );
                         if (!mine || onDeferredCardTap == null) {
                           return IgnorePointer(child: art);
                         }
