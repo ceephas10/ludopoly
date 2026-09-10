@@ -12,6 +12,7 @@
 // Si l'IA se fige, le test échoue en disant précisément où.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludopoly/game/game_controller.dart';
 import 'package:ludopoly/game/pawn.dart';
@@ -28,6 +29,43 @@ String fingerprint(GameController c) => [
   c.lastRoll,
   for (final p in c.state.allPawns) '${p.location.name}:${p.position}',
 ].join('|');
+
+/// Où en est la zone de touche du premier coup jouable : existe-t-elle,
+/// et est-elle réellement à l'écran ? C'est la seule chose que le test
+/// fait pour avancer un tour humain ; s'il gèle, c'est là qu'il faut
+/// regarder.
+String _zoneEtat(WidgetTester tester, List<Pawn> coups) {
+  if (coups.isEmpty) return 'aucun coup';
+  final p = coups.first;
+  final zone = find.byKey(ValueKey('hit_${p.color.name}_${p.id}'));
+  if (zone.evaluate().isEmpty) return '${p.color.name}#${p.id} : ABSENTE';
+  final r = tester.getRect(zone);
+  final ecran =
+      tester.binding.platformDispatcher.views.first.physicalSize;
+  final dedans = r.left >= 0 &&
+      r.top >= 0 &&
+      r.right <= ecran.width &&
+      r.bottom <= ecran.height;
+  // QUI reçoit vraiment la touche à cet endroit ? Une zone `opaque`
+  // posée par-dessus absorbe le clic sans rien en faire : le pion ne
+  // bouge pas et rien ne le dit. On déroule donc la pile.
+  final pile = tester
+      .hitTestOnBinding(r.center)
+      .path
+      .whereType<BoxHitTestEntry>()
+      .take(8)
+      .map((e) {
+        final b = e.target;
+        final c = b.debugCreator;
+        final w = c is DebugCreator ? c.element.widget : null;
+        return w == null
+            ? '${b.runtimeType}'
+            : '${w.runtimeType}${w.key ?? ""}';
+      })
+      .join(' → ');
+  return '${p.color.name}#${p.id} : $r '
+      '${dedans ? "à l'écran" : "HORS ÉCRAN ($ecran)"} · sous le doigt : $pile';
+}
 
 void main() {
   // Le panneau de commandes déborde sur la surface 800×600 par défaut, ce
@@ -138,18 +176,27 @@ void main() {
           final now = fingerprint(c);
           if (now == last) {
             idleMs += 100;
-            // Le tour le plus lent d'un ordinateur : 900 ms avant le lancer,
-            // 700 ms avant le coup, puis le trajet et l'éventuelle pause de
-            // capture. 12 s simulées sans le moindre changement, c'est figé.
-            expect(
-              idleMs,
-              lessThan(12000),
-              reason:
-                  'partie figée au tour de ${c.currentColor.name} '
+            if (idleMs >= 12000) {
+              // Le tour le plus lent d'un ordinateur : 900 ms avant le
+              // lancer, 700 ms avant le coup, puis le trajet et
+              // l'éventuelle pause de capture. 12 s simulées sans le
+              // moindre changement, c'est figé.
+              //
+              // Le diagnostic n'est monté qu'ICI : il fait un test de
+              // touche, et le construire à chaque pompage coûterait plus
+              // cher que la partie elle-même.
+              fail('partie figée au tour de ${c.currentColor.name} '
                   '(phase ${c.phase.name}, dé ${c.diceValue}, '
                   'coups jouables ${c.movablePawns().length}) — '
-                  'aucun changement depuis 12 s simulées',
-            );
+                  'aucun changement depuis 12 s simulées'
+                  ' · carte en attente ${state.pendingChoiceCard?.id}'
+                  ' · carte ouverte ${state.openedHandCard?.id}'
+                  ' · carte montrée ${state.revealedCard?.id}'
+                  ' · pions à désigner ${state.targetPawns.length}'
+                  ' · verrous ${state.verrousForTest}'
+                  ' · zone du 1er coup : '
+                  '${_zoneEtat(tester, c.movablePawns())}');
+            }
           } else {
             idleMs = 0;
             last = now;

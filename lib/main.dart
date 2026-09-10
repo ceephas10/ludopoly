@@ -412,6 +412,16 @@ class BoardScreenState extends State<BoardScreen>
   @visibleForTesting
   bool get paused => _paused;
 
+  /// L'ÉTAT DES VERROUS, en clair. Un plateau qui ne répond plus, c'est
+  /// toujours un verrou resté fermé : une animation qu'on croit encore en
+  /// vol, un siège encore marqué occupé, un dé qui roule pour l'éternité.
+  /// Le test de la boucle IA l'imprime quand il constate un gel — sans
+  /// lui, on sait que la partie est figée mais pas par quoi.
+  @visibleForTesting
+  String get verrousForTest => 'animation=$_animating '
+      'sièges occupés=${_busySeats.map((c) => c.name).toList()} '
+      'dé en vol=$_diceRolling pause=$_paused';
+
   /// Déclenche le lancer du joueur, comme un clic sur le dé. Les tests
   /// s'en servent pour vérifier que la pause rend la commande INERTE.
   @visibleForTesting
@@ -6582,6 +6592,10 @@ class BoardView extends StatelessWidget {
       builder: (context, c) {
         final side = c.biggest.shortestSide;
         final cell = side / 15.0;
+        // Le cadre RÉEL du Stack, retenu ici : c'est lui qui borne les
+        // touches, et il n'est plus accessible sous ce nom dans les
+        // passes de dessin (où `c` désigne autre chose).
+        final cadre = c.biggest;
 
         // Hauteur visible du pion. Elle vaut exactement le côté du socle
         // peint sous lui dans la base : les deux tombent donc l'un sur
@@ -7118,12 +7132,38 @@ class BoardView extends StatelessWidget {
                 final isMovable = picking
                     ? targetPawns.contains(pawn)
                     : movablePawns.contains(pawn);
+                // LA ZONE RESTE DANS LE PLATEAU.
+                //
+                // Le Stack laisse DÉBORDER ce qu'il peint (`Clip.none`,
+                // plus haut) pour que la tête d'un pion de la rangée du
+                // haut ne soit pas coupée. Mais Flutter n'envoie jamais
+                // une touche à un enfant situé hors du cadre de son
+                // parent : la part qui dépasse est visible et MORTE.
+                //
+                // Or la zone est haute et remontée, pour couvrir la tête.
+                // Sur les cases 23, 24 et 25 — la rangée du haut — c'est
+                // son MILIEU qui tombait dans cette part morte : le pion
+                // ne répondait plus au clic, et la partie restait bloquée
+                // sur un joueur qui tapait dans le vide.
+                //
+                // On rabat donc la zone dans le cadre. Le bas ne bouge
+                // pas : on ne perd que ce qui, de toute façon, ne
+                // répondait pas.
+                final brutG = center.dx - hitW / 2;
+                final brutH = center.dy - hitUp;
+                final g =
+                    brutG.clamp(0.0, math.max(0.0, cadre.width - 1)).toDouble();
+                final ht = brutH
+                    .clamp(0.0, math.max(0.0, cadre.height - 1))
+                    .toDouble();
+                final d = math.min(brutG + hitW, cadre.width);
+                final b = math.min(brutH + hitH, cadre.height);
                 yield Positioned(
                   key: ValueKey('hit_${pawn.color.name}_${pawn.id}'),
-                  left: center.dx - hitW / 2,
-                  top:  center.dy - hitUp,
-                  width: hitW,
-                  height: hitH,
+                  left: g,
+                  top: ht,
+                  width: math.max(1.0, d - g),
+                  height: math.max(1.0, b - ht),
                   child: MouseRegion(
                     cursor: showDetails
                         ? SystemMouseCursors.help
