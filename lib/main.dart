@@ -3674,20 +3674,20 @@ class _ControlPanel extends StatelessWidget {
                 // commandent pas une page, ils commandent la partie, et
                 // restent donc visibles quel que soit l'onglet ouvert.
                 //
-                // Le seuil est calculé, pas choisi au jugé : la ligne des
-                // six valeurs de dé mesure 188 points, plus 24 de marges
-                // intérieures — un cadre ne descend pas sous 212. Trois
-                // cadres et leurs deux espaces : 3 × 212 + 16 = 652. En
-                // dessous ils s'empilent, faute de quoi un téléphone
-                // afficherait trois colonnes de 120 points où plus rien
-                // ne tient.
-                rowOuColonne(
-                  seuil: 680,
+                // SUR UNE LIGNE, TOUJOURS — même sur un téléphone, où
+                // chaque cadre tombe à une centaine de points. C'est ce
+                // qui a été demandé deux fois, donc c'est ce qui est
+                // fait ; en échange, tout ce qu'ils contiennent doit
+                // savoir se replier : les pastilles de couleur, les
+                // valeurs de dé et les compteurs passent à la ligne, et
+                // Retour / Rejouer se rangent l'un sous l'autre.
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(child: _normalCard(theme, cs)),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
                     Expanded(child: _manualCard(theme, cs)),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
                     Expanded(child: _homeCard(theme, cs)),
                   ],
                 ),
@@ -4103,22 +4103,29 @@ class _ControlPanel extends StatelessWidget {
   Widget _normalCard(ThemeData theme, ColorScheme cs) {
     return _SectionCard(
       title: 'Jeu normal',
+      // Un tiers du panneau, et sur un téléphone une centaine de points :
+      // les marges intérieures se resserrent, sinon il ne reste plus rien
+      // pour le contenu.
+      padding: const EdgeInsets.all(8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
+          // `Wrap` et non `Row` : la pastille de couleur passe sous
+          // « Tour : » quand la largeur ne suffit plus aux deux.
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 6,
+            runSpacing: 2,
             children: [
               Text('Tour :', style: theme.textTheme.bodyMedium),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Chip(
-                  label: Text(currentPlayer.name,
-                      overflow: TextOverflow.ellipsis),
-                  backgroundColor: _playerColor(currentPlayer.color),
-                  labelStyle: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w600),
-                  visualDensity: VisualDensity.compact,
-                ),
+              Chip(
+                label: Text(currentPlayer.name,
+                    overflow: TextOverflow.ellipsis),
+                backgroundColor: _playerColor(currentPlayer.color),
+                labelStyle: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w600),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
               ),
             ],
           ),
@@ -4240,6 +4247,7 @@ class _ControlPanel extends StatelessWidget {
   Widget _manualCard(ThemeData theme, ColorScheme cs) {
     return _SectionCard(
       title: 'Jeu manuel',
+      padding: const EdgeInsets.all(8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -4315,7 +4323,8 @@ class _ControlPanel extends StatelessWidget {
           ),
           // ─── Retour / Rejouer (undo / redo) — bas de carte ───
           const SizedBox(height: 12),
-          Row(
+          rowOuColonne(
+            seuil: 210,
             children: [
               Expanded(
                 child: Tooltip(
@@ -4367,16 +4376,28 @@ class _ControlPanel extends StatelessWidget {
   Widget _homeCard(ThemeData theme, ColorScheme cs) {
     return _SectionCard(
       title: 'Pions à la maison',
+      padding: const EdgeInsets.all(8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'Fixe combien de pions sont rentrés. De 3 à 1, deux '
-            'ressortent.',
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: cs.onSurfaceVariant),
-          ),
-          const SizedBox(height: 10),
+          // L'EXPLICATION, tant qu'il y a de la place pour elle.
+          //
+          // Sur un téléphone le cadre tombe à une centaine de points :
+          // ces deux phrases y prennent cinq lignes et poussent les
+          // boutons hors de vue. Ce qui compte alors, ce sont les
+          // commandes ; l'explication attend un écran plus large.
+          LayoutBuilder(builder: (context, c) {
+            if (c.maxWidth < 150) return const SizedBox(height: 4);
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                'Fixe combien de pions sont rentrés. De 3 à 1, deux '
+                'ressortent.',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: cs.onSurfaceVariant),
+              ),
+            );
+          }),
           // La MÊME couleur que « Jeu manuel » : les deux sélecteurs
           // commandent le même choix et ne peuvent pas se contredire.
           // Sans lui, ce cadre ne dirait pas de QUI il parle.

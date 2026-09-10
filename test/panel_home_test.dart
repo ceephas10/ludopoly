@@ -7,7 +7,9 @@
 //
 // Il vérifie aussi les deux conséquences du choix : les cadres sont
 // AU-DESSUS des onglets, donc ils survivent au changement de page ; et
-// ils s'empilent sur un téléphone, où trois colonnes ne tiennent pas.
+// ils restent sur une ligne MÊME SUR UN TÉLÉPHONE, où chaque cadre
+// tombe à une centaine de points — ce qui n'est tenable que si tout ce
+// qu'ils contiennent sait passer à la ligne.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -101,12 +103,13 @@ void main() {
     await shutdownApp(t);
   });
 
-  testWidgets('sur un téléphone, les trois cadres s\'empilent', (t) async {
-    // Trois colonnes de 120 points ne tiennent pas : la ligne des six
-    // valeurs de dé en réclame 188 à elle seule. En dessous du seuil, les
-    // cadres se rangent donc l'un sous l'autre — sans quoi la page
-    // déborderait, ce que ce test vérifie AUSSI : un débordement de mise
-    // en page fait échouer le test de lui-même.
+  testWidgets('sur un téléphone aussi, les trois cadres tiennent la ligne',
+      (t) async {
+    // 390 points de large : chaque cadre en reçoit 114. Les pastilles de
+    // couleur, les six valeurs de dé et les compteurs passent à la
+    // ligne, Retour et Rejouer se rangent l'un sous l'autre — et rien ne
+    // déborde, ce que ce test vérifie AUSSI : un débordement de mise en
+    // page fait échouer le test de lui-même.
     BoardScreenState.muteStepSounds = true;
     MenuMusic.muted = true;
     final vue = TestWidgetsFlutterBinding.instance.platformDispatcher.views
@@ -120,10 +123,10 @@ void main() {
     await waitForBoard(t);
 
     final coins = [for (final titre in _titres) coin(t, titre)];
-    expect(coins[0].dx, coins[1].dx, reason: 'même colonne');
-    expect(coins[0].dy, lessThan(coins[1].dy), reason: 'Jeu normal en tête');
-    expect(coins[1].dy, lessThan(coins[2].dy),
-        reason: 'puis Jeu manuel, puis Pions à la maison');
+    expect(coins[1].dy, coins[0].dy, reason: 'même ligne, sur téléphone');
+    expect(coins[2].dy, coins[0].dy, reason: 'les trois');
+    expect(coins[0].dx, lessThan(coins[1].dx), reason: 'et dans l\'ordre');
+    expect(coins[1].dx, lessThan(coins[2].dx));
 
     await shutdownApp(t);
   });
