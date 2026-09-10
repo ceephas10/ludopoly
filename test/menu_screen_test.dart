@@ -168,12 +168,13 @@ void main() {
     await t.pumpWidget(const LudoPolyApp());
     await t.pump();
 
-    // Dans Système, on allume les cartes chance.
+    // Dans Système, on ÉTEINT les cartes chance — elles sont allumées
+    // d'origine, c'est donc l'extinction qu'il faut voir voyager.
     await t.tap(find.byKey(const Key('menu-system')));
     await waitForBoard(t);
     final sys = t.state<BoardScreenState>(find.byType(BoardScreen));
-    expect(sys.controller.upgrades.chanceEnabled, isFalse);
-    sys.setChanceEnabled(true);
+    expect(sys.controller.upgrades.chanceEnabled, isTrue);
+    sys.setChanceEnabled(false);
     await t.pump();
 
     // Retour au menu, puis on entre par « Jouer ».
@@ -183,7 +184,7 @@ void main() {
     await waitForBoard(t);
 
     final game = t.state<BoardScreenState>(find.byType(BoardScreen));
-    expect(game.controller.upgrades.chanceEnabled, isTrue,
+    expect(game.controller.upgrades.chanceEnabled, isFalse,
         reason: 'ce qu\'on règle dans Système doit valoir pour les autres '
             'écrans, sinon le réglage ne sert à rien');
 

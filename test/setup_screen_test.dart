@@ -61,8 +61,9 @@ void main() {
     // Le vert passe à l'ordinateur.
     await t.tap(find.byKey(const Key('setup-seat-Vert')));
     await t.pump();
-    // Les cartes chance entrent dans la partie.
-    await t.tap(find.byKey(const Key('setup-option-Cartes chance')));
+    // Les deux options sont ALLUMÉES d'origine : on éteint le Vortex, et
+    // c'est cette extinction qu'on doit retrouver sur le plateau.
+    await t.tap(find.byKey(const Key('setup-option-Cases spéciales')));
     await t.pump();
 
     // On valide les réglages, puis on entre par « Système ».
@@ -75,9 +76,10 @@ void main() {
         [PlayerColor.blue, PlayerColor.green],
         reason: 'deux joueurs : les couleurs opposées');
     expect(state.aiSeats, {PlayerColor.green});
-    expect(state.controller.upgrades.chanceEnabled, isTrue);
+    expect(state.controller.upgrades.chanceEnabled, isTrue,
+        reason: 'une option laissée cochée reste allumée');
     expect(state.controller.upgrades.vortexEnabled, isFalse,
-        reason: 'une option non cochée reste éteinte');
+        reason: 'une option décochée doit s\'éteindre');
 
     await shutdownApp(t);
   });

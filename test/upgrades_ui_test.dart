@@ -31,7 +31,10 @@ void main() {
       );
 
   group('🎛️ Les interrupteurs des Améliorations', () {
-    testWidgets('éteints par défaut, allumables et re-éteignables', (t) async {
+    // ALLUMÉS par défaut. Ils étaient éteints, et « Jouer » menait donc à
+    // un plateau sans cases Vortex ni cases Chance — il fallait aller les
+    // chercher dans Options ou dans Système. Elles font partie du jeu.
+    testWidgets('allumés par défaut, éteignables et rallumables', (t) async {
       await bootApp(t);
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
       await openRules(t);
@@ -40,44 +43,46 @@ void main() {
       expect(find.text('Améliorations LudoPoly'), findsOneWidget);
       expect(find.text('Cases Vortex / Trou noir'), findsOneWidget);
       expect(find.text('Cases Chance'), findsOneWidget);
-      expect(state.controller.upgrades.vortexEnabled, isFalse);
-      expect(state.controller.upgrades.chanceEnabled, isFalse);
+      expect(state.controller.upgrades.vortexEnabled, isTrue);
+      expect(state.controller.upgrades.chanceEnabled, isTrue);
 
       await t.ensureVisible(switchOf('Cases Vortex / Trou noir'));
       await t.tap(switchOf('Cases Vortex / Trou noir'));
       await t.pump(const Duration(milliseconds: 300));
-      expect(state.controller.upgrades.vortexEnabled, isTrue);
-      expect(state.controller.upgrades.chanceEnabled, isFalse,
+      expect(state.controller.upgrades.vortexEnabled, isFalse);
+      expect(state.controller.upgrades.chanceEnabled, isTrue,
           reason: 'les deux interrupteurs sont indépendants');
 
       await t.ensureVisible(switchOf('Cases Chance'));
       await t.tap(switchOf('Cases Chance'));
       await t.pump(const Duration(milliseconds: 300));
-      expect(state.controller.upgrades.chanceEnabled, isTrue);
+      expect(state.controller.upgrades.chanceEnabled, isFalse);
 
       await t.tap(switchOf('Cases Vortex / Trou noir'));
       await t.pump(const Duration(milliseconds: 300));
-      expect(state.controller.upgrades.vortexEnabled, isFalse,
-          reason: 'l\'interrupteur doit aussi ÉTEINDRE');
+      expect(state.controller.upgrades.vortexEnabled, isTrue,
+          reason: 'l\'interrupteur doit aussi RALLUMER');
 
       await shutdownApp(t);
     });
 
-    testWidgets('le plateau dessine les cases quand on allume', (t) async {
+    testWidgets('le plateau dessine les cases DÈS L\'OUVERTURE', (t) async {
       await bootApp(t);
       final state = t.state<BoardScreenState>(find.byType(BoardScreen));
 
       BoardView board() => t.widget<BoardView>(find.byType(BoardView));
+      // Sans avoir rien touché : c'est la demande — on ouvre le plateau et
+      // les cases sont là.
+      expect(board().showVortexCells, isTrue,
+          reason: 'les spirales Vortex doivent se dessiner d\'entrée');
+      expect(board().showChanceCells, isTrue,
+          reason: 'les cases « ? » doivent se dessiner d\'entrée');
+
+      state.setVortexEnabled(false);
+      state.setChanceEnabled(false);
+      await t.pump(const Duration(milliseconds: 300));
       expect(board().showVortexCells, isFalse);
       expect(board().showChanceCells, isFalse);
-
-      state.setVortexEnabled(true);
-      state.setChanceEnabled(true);
-      await t.pump(const Duration(milliseconds: 300));
-      expect(board().showVortexCells, isTrue,
-          reason: 'les spirales Vortex doivent se dessiner');
-      expect(board().showChanceCells, isTrue,
-          reason: 'les cases « ? » doivent se dessiner');
 
       await shutdownApp(t);
     });

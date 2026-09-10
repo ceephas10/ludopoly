@@ -616,15 +616,16 @@ class BoardScreenState extends State<BoardScreen>
 
 
   /// Durée de l'animation de lancer du Studio — MESURÉE sur les fichiers
-  /// `Dice_<couleur>_throw_<valeur>.webp` : 20 images, 500 ms, sans
-  /// répétition. Elles s'arrêtent d'elles-mêmes sur la face sortie ; on
-  /// repasse ensuite au PNG net. Un test vérifie que cette valeur suit les
-  /// fichiers si le Studio les refait.
+  /// `Dice_<couleur>_throw_<valeur>.webp` : 15 images de 33 ms, soit
+  /// 495 ms, sans répétition. Elles s'arrêtent d'elles-mêmes sur la face
+  /// sortie ; on repasse ensuite au PNG net.
   ///
-  /// Le découpage : 300 ms de culbute, 100 ms de PALIER où le dé montre
-  /// son volume, 100 ms de bascule à plat. C'est le palier qui fait qu'on
-  /// voit un objet se poser, et non une image se figer.
-  static const Duration _diceThrowDuration = Duration(milliseconds: 500);
+  /// La valeur SUIT LES FICHIERS, elle ne les commande pas : trop courte,
+  /// on coupe le lancer ; trop longue, le dé reste figé sur sa dernière
+  /// image. Elle est passée à 500 ms le temps des dés rendus (20 × 25 ms)
+  /// et revient à 495 avec les dés d'origine. `dice_throw_test.dart`
+  /// mesure les fichiers et refuse tout écart.
+  static const Duration _diceThrowDuration = Duration(milliseconds: 495);
 
   @visibleForTesting
   static Duration get diceThrowDurationForTest => _diceThrowDuration;

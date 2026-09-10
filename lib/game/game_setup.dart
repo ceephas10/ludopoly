@@ -15,8 +15,8 @@ class GameSetup {
     this.aiSeats = const {},
     this.difficulty = AiDifficulty.defaultLevel,
     this.teamMode = false,
-    this.vortex = false,
-    this.chance = false,
+    this.vortex = true,
+    this.chance = true,
     this.aiTurbo = false,
     this.background = const BackgroundConfig(),
   });
@@ -34,10 +34,15 @@ class GameSetup {
   /// Mode 2 contre 2. N'a de sens qu'à quatre.
   final bool teamMode;
 
-  /// Cases spéciales : vortex et trous noirs.
+  /// Cases spéciales : vortex et trous noirs. ALLUMÉES par défaut.
+  ///
+  /// Elles étaient éteintes, et « Jouer » menait donc à un plateau sans
+  /// elles — il fallait passer par Options ou par le panneau Système pour
+  /// les allumer. Or elles font partie du jeu : c'est ce que « Jouer »
+  /// doit donner.
   final bool vortex;
 
-  /// Cases Chance et leurs cartes.
+  /// Cases Chance et leurs cartes. ALLUMÉES par défaut, voir [vortex].
   final bool chance;
 
   /// Accélérateur : raccourcit les temps d'attente de l'ordinateur.
