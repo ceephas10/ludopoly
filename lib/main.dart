@@ -2556,6 +2556,31 @@ class BoardScreenState extends State<BoardScreen>
     }
   }
 
+  /// LE RACCOURCI DE LA CASE CHANCE, depuis le panneau Système.
+  ///
+  /// Pose le pion [pawnId] de la couleur choisie sur la case Chance de sa
+  /// couleur, et laisse le jeu TIRER. Le tirage est le vrai : même talon,
+  /// même pièce jetée entre immédiate et différée, même présentation de
+  /// quatre secondes. Seul le voyage jusqu'à la case est sauté.
+  ///
+  /// Le coup est rangé dans l'historique : « Retour » le défait comme
+  /// n'importe quel autre.
+  void _envoyerSurLaCaseChance(int pawnId) {
+    final pion = _game.pawnsByColor[_manualPlayer]![pawnId.clamp(0, 3)];
+    _controller.pushHistory(
+        '${_manualPlayer.name} · pion ${pawnId + 1} sur la case Chance');
+    setState(() {
+      // Un pion qui revenait de capture est encore dessiné à son ancienne
+      // place : on coupe ce retour, sinon il traverserait le plateau.
+      _stopReturnTravel(pion);
+      _controller.sendToChanceCell(pion);
+      _flushUpgradeNotices();
+    });
+    // La carte tirée se montre — et si elle réclame une cible, elle la
+    // demande, exactement comme après un coup de dé.
+    _openDrawnCardIfAny();
+  }
+
   /// Manual setup helper: force EXACTLY [targetCount] of [_manualPlayer]'s
   /// pawns into the **home** (center). Bi-directional:
   ///   - If current_in_home < target: pull pawns IN, taking the MOST
@@ -3188,6 +3213,9 @@ class BoardScreenState extends State<BoardScreen>
                       _scheduleAiTurn();
                     },
                     onApplyManualCard: applyManualCard,
+                    onLandOnChance: _controller.upgrades.chanceEnabled
+                        ? _envoyerSurLaCaseChance
+                        : null,
                     ranking: _controller.ranking,
                     busy: _animating,
                     playerCount: _playerCount,
@@ -3560,6 +3588,11 @@ class _ControlPanel extends StatelessWidget {
   final void Function(ChanceCard card, PlayerColor player, int pawnId)
       onApplyManualCard;
 
+  /// Envoie le pion choisi sur la CASE CHANCE de sa couleur et tire la
+  /// carte, comme s'il y était arrivé par un coup de dé. `null` quand les
+  /// cases Chance sont éteintes : il n'y aurait rien à tirer.
+  final void Function(int pawnId)? onLandOnChance;
+
   /// Ordre d'arrivée courant : 1er, 2e, 3e, 4e.
   final List<PlayerColor> ranking;
 
@@ -3629,6 +3662,7 @@ class _ControlPanel extends StatelessWidget {
     required this.aiDifficulty,
     required this.onChangeAiDifficulty,
     required this.onApplyManualCard,
+    required this.onLandOnChance,
     required this.ranking,
     required this.busy,
   });
@@ -3734,6 +3768,7 @@ class _ControlPanel extends StatelessWidget {
                   child: _ManualCardsCard(
                     player: manualPlayer,
                     onApply: onApplyManualCard,
+                    onLandOnChance: onLandOnChance,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -5562,7 +5597,15 @@ class _ManualCardsCard extends StatefulWidget {
   final PlayerColor player;
   final void Function(ChanceCard card, PlayerColor player, int pawnId) onApply;
 
-  const _ManualCardsCard({required this.player, required this.onApply});
+  /// Le raccourci « case Chance » : il pose le pion dessus et tire une
+  /// carte. `null` quand les cases Chance sont éteintes.
+  final void Function(int pawnId)? onLandOnChance;
+
+  const _ManualCardsCard({
+    required this.player,
+    required this.onApply,
+    required this.onLandOnChance,
+  });
 
   @override
   State<_ManualCardsCard> createState() => _ManualCardsCardState();
@@ -5621,8 +5664,12 @@ class _ManualCardsCardState extends State<_ManualCardsCard> {
         Text(card.descriptionFr,
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: cs.onSurfaceVariant)),
-        // Une carte immédiate s'applique à UN pion : lequel ?
-        if (immediate) ...[
+        // QUEL PION ? La carte immédiate s'applique à l'un d'eux, et le
+        // raccourci « case Chance » y envoie l'un d'eux : le même
+        // sélecteur sert aux deux, il ne dépend donc plus du genre de la
+        // carte choisie au-dessus. (Une différée « Donner » l'ignore :
+        // elle va dans la main, pas sur un pion.)
+        ...[
           const SizedBox(height: 8),
           Row(
             children: [
@@ -5663,6 +5710,29 @@ class _ManualCardsCardState extends State<_ManualCardsCard> {
               child: Text(_showJson ? 'Masquer JSON' : 'Voir JSON'),
             ),
           ],
+        ),
+        // ─── LE RACCOURCI DE LA CASE CHANCE ───
+        //
+        // Les deux boutons du dessus posent une carte CHOISIE. Celui-ci
+        // ne choisit rien : il pose le pion sur la case Chance de sa
+        // couleur et laisse le jeu tirer, exactement comme s'il y était
+        // arrivé par un coup de dé — même talon, même pièce jetée entre
+        // immédiate et différée, même présentation. C'est le seul moyen
+        // de voir ce que voit un joueur, sans amener un pion jusque-là.
+        const SizedBox(height: 8),
+        Tooltip(
+          message: widget.onLandOnChance == null
+              ? 'Les cases Chance sont éteintes : rien à tirer'
+              : 'Pose le pion sur sa case Chance et tire la carte',
+          child: FilledButton.icon(
+            key: const Key('cards-land-on-chance'),
+            icon: const Icon(Icons.card_giftcard, size: 18),
+            label: const Text('Sur la case Chance',
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            onPressed: widget.onLandOnChance == null
+                ? null
+                : () => widget.onLandOnChance!(_pawnId),
+          ),
         ),
         if (_showJson)
           Container(

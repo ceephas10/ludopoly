@@ -1228,6 +1228,24 @@ class GameController {
     }
   }
 
+  /// POSE [p] SUR LA CASE CHANCE DE SA COULEUR, et tire la carte comme
+  /// s'il y était arrivé par un coup de dé.
+  ///
+  /// C'est le raccourci du panneau Système — « un bouton uniquement pour
+  /// la case chance » : on veut voir une carte sans avoir à amener un
+  /// pion jusque-là à coups de dés. Le tirage, lui, est le VRAI tirage :
+  /// même talon, même pièce jetée entre immédiate et différée, même
+  /// application. Seul le voyage est sauté.
+  ///
+  /// Ne fait rien si les cases Chance sont éteintes : il n'y aurait pas
+  /// de carte à tirer.
+  void sendToChanceCell(Pawn p) {
+    if (!upgrades.chanceEnabled) return;
+    p.location = PawnLocation.ring;
+    p.position = SpecialCells.chanceCellOf(p.color);
+    _applyChanceOnLanding(p);
+  }
+
   /// Case Chance — appliquée à l'atterrissage d'un coup de dé sur l'une
   /// des 4 cases neutres : tire la carte du dessus du talon immédiat et
   /// l'applique au pion tombé sur la case.
