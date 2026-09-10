@@ -1354,11 +1354,40 @@ class GameController {
   /// [c] peut-il jouer [card] maintenant ? Une carte « Avant » se joue
   /// avant le lancer, une carte « Après » après ; et l'on ne joue qu'UNE
   /// carte différée par tour.
+  /// QUI DÉTIENT [card] parmi ceux dont [c] peut se servir ?
+  ///
+  /// [c] lui-même, dans le cas ordinaire. En mode ÉQUIPE, si [c] n'a plus
+  /// AUCUNE carte, c'est son partenaire : « si vert n'a pas de carte et
+  /// que bleu en a dans sa base, vert peut jouer celles de bleu ».
+  ///
+  /// La condition — n'avoir plus rien à soi — est celle de la règle
+  /// « aide ton partenaire » déjà en place sur les pions : on ne pioche
+  /// pas chez l'autre tant qu'on a de quoi jouer.
+  ///
+  /// Rend `null` si personne d'accessible ne la tient.
+  PlayerColor? deferredHolder(PlayerColor c, ChanceCard card) {
+    if (upgrades.handOf(c).contains(card)) return c;
+    if (!teamMode) return null;
+    if (upgrades.handOf(c).isNotEmpty) return null;
+    final partner = _partners[c];
+    if (partner == null) return null;
+    return upgrades.handOf(partner).contains(card) ? partner : null;
+  }
+
+  /// Les cartes que [c] peut jouer ce tour-ci : les siennes, ou celles de
+  /// son partenaire quand il n'en a plus. Voir [deferredHolder].
+  List<ChanceCard> reachableHand(PlayerColor c) {
+    final mine = upgrades.handOf(c);
+    if (mine.isNotEmpty || !teamMode) return mine;
+    final partner = _partners[c];
+    return partner == null ? mine : upgrades.handOf(partner);
+  }
+
   bool canPlayDeferred(PlayerColor c, ChanceCard card) {
     if (phase == TurnPhase.gameOver) return false;
     if (currentColor != c) return false;
     if (upgrades.hasPlayedThisTurn(c)) return false;
-    if (!upgrades.handOf(c).contains(card)) return false;
+    if (deferredHolder(c, card) == null) return false;
     // §9 de la spec : « le programme doit toujours vérifier qu'une action
     // est légalement possible avant de l'exécuter ». Une carte-dé qui ne
     // donnerait AUCUN coup jouable serait brûlée pour rien — on la refuse
@@ -1428,8 +1457,11 @@ class GameController {
   /// d'un trait — d'abord ce qui rapporte gros, ensuite ce qui gêne
   /// l'adversaire, enfin ce qui se protège.
   AiCardPlay? pickAiDeferred(PlayerColor c) {
+    // `reachableHand` et non `handOf` : en équipe, l'ordinateur pioche
+    // aussi chez son partenaire quand il n'a plus rien — même règle que
+    // pour un joueur humain.
     final playable = [
-      for (final card in upgrades.handOf(c))
+      for (final card in reachableHand(c))
         if (canPlayDeferred(c, card)) card,
     ];
     if (playable.isEmpty) return null;
@@ -1607,7 +1639,9 @@ class GameController {
         return null;
     }
 
-    upgrades.removeFromHand(c, card);
+    // La carte quitte la main de CELUI QUI LA TENAIT — qui n'est pas
+    // forcément [c] : en équipe, on peut jouer celle de son partenaire.
+    upgrades.removeFromHand(deferredHolder(c, card) ?? c, card);
     upgrades.markPlayed(c);
     upgrades.addNotice('${_fr[c]} joue « ${card.nameFr} »');
     return forcedDice;
